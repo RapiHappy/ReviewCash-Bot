@@ -10,8 +10,8 @@ from aiogram.types import LabeledPrice, PreCheckoutQuery
 from aiohttp import web
 
 # ================= КОНФИГУРАЦИЯ =================
-BOT_TOKEN = "8312086729:AAFNuJ5kfKhdsvYnlBns-7ug6FACR9KwedY"
-CRYPTO_BOT_TOKEN = "523403:AAfde4Y1g0j4tOcAafdu78d4KJirmN2JQRT"
+BOT_TOKEN = "8312086729:AAHQ-cg8Pc_j52qVaf2a8H2RBf_Ol5MbuQQ"
+CRYPTO_BOT_TOKEN = "523619:AA8kStzJyemJLPzeCiyXWkmYbiMdsWtqg6v"
 WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/"
 
 STAR_PRICE_RUB = 1.5
