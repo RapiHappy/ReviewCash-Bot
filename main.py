@@ -9,8 +9,8 @@ from aiogram.types import LabeledPrice, PreCheckoutQuery
 
 # ================= КОНФИГУРАЦИЯ =================
 # Твои токены (ОСТОРОЖНО, ОНИ СЕЙЧАС В ОТКРЫТОМ ДОСТУПЕ!)
-BOT_TOKEN = "8312086729:AAHWC-7XDZDxb1d3fpApYeBsVWRaxR63OMg"
-CRYPTO_BOT_TOKEN = "523403:AASSagT4q6GFFuxUKNEBhRbH8oVbEQrvjfn"
+BOT_TOKEN = "8312086729:AAFNuJ5kfKhdsvYnlBns-7ug6FACR9KwedY"
+CRYPTO_BOT_TOKEN = "523403:AAfde4Y1g0j4tOcAafdu78d4KJirmN2JQRT"
 
 # Эту ссылку мы получим на следующем шаге (GitHub Pages)
 # Пока оставь пустой или замени, когда создашь сайт
