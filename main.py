@@ -14,7 +14,7 @@ CRYPTO_BOT_TOKEN = "523403:AAfde4Y1g0j4tOcAafdu78d4KJirmN2JQRT"
 
 # Эту ссылку мы получим на следующем шаге (GitHub Pages)
 # Пока оставь пустой или замени, когда создашь сайт
-WEBAPP_URL = "https://твое_имя.github.io/reviewcash" 
+WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/" 
 
 STAR_PRICE_RUB = 1.5 
 
