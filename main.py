@@ -6,17 +6,14 @@ import aiohttp
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import LabeledPrice, PreCheckoutQuery
+from aiohttp import web
 
 # ================= КОНФИГУРАЦИЯ =================
-# Твои токены (ОСТОРОЖНО, ОНИ СЕЙЧАС В ОТКРЫТОМ ДОСТУПЕ!)
 BOT_TOKEN = "8312086729:AAFNuJ5kfKhdsvYnlBns-7ug6FACR9KwedY"
 CRYPTO_BOT_TOKEN = "523403:AAfde4Y1g0j4tOcAafdu78d4KJirmN2JQRT"
-
-# Эту ссылку мы получим на следующем шаге (GitHub Pages)
-# Пока оставь пустой или замени, когда создашь сайт
 WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/" 
 
-STAR_PRICE_RUB = 1.5 
+STAR_PRICE_RUB = 1.5  # Курс: 1 звезда = 1.5 рубля
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -31,18 +28,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_user(user_id):
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT balance_rub, balance_stars FROM users WHERE user_id=?", (user_id,))
-    res = c.fetchone()
-    if not res:
-        c.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
-        conn.commit()
-        return (0, 0)
-    conn.close()
-    return res
-
 def add_balance(user_id, amount, currency="RUB"):
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -53,70 +38,90 @@ def add_balance(user_id, amount, currency="RUB"):
     conn.commit()
     conn.close()
 
-# ================= ХЕНДЛЕРЫ =================
+# ================= ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT =================
+async def handle_ping(request):
+    return web.Response(text="Бот в сети и готов к работе!")
+
+# ================= ХЕНДЛЕРЫ БОТА =================
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    get_user(message.from_user.id)
     markup = types.ReplyKeyboardMarkup(
-        keyboard=[[types.KeyboardButton(text="📱 Открыть приложение", web_app=types.WebAppInfo(url=WEBAPP_URL))]],
+        keyboard=[[types.KeyboardButton(text="📱 Открыть Приложение", web_app=types.WebAppInfo(url=WEBAPP_URL))]],
         resize_keyboard=True
     )
-    await message.answer("Привет! Открой приложение для заработка 👇", reply_markup=markup)
+    await message.answer(
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        "Добро пожаловать в **ReviewCash**. Здесь ты можешь заказать продвижение или заработать на отзывах.\n\n"
+        "Нажми кнопку ниже, чтобы войти в личный кабинет 👇",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
 
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: types.Message):
     try:
         data = json.loads(message.web_app_data.data)
+        amount_rub = float(data.get('amount', 0))
+
         if data['action'] == 'pay_stars':
-            amount_rub = float(data['amount'])
-            stars_amount = int(amount_rub / STAR_PRICE_RUB)
+            stars_count = int(amount_rub / STAR_PRICE_RUB)
             await bot.send_invoice(
                 chat_id=message.chat.id,
                 title="Пополнение баланса",
-                description=f"Покупка {stars_amount} Stars",
-                payload=f"topup_{stars_amount}",
+                description=f"Покупка пакета: {stars_count} Stars",
+                payload=f"stars_{stars_count}",
                 currency="XTR",
-                prices=[LabeledPrice(label="Stars", amount=stars_amount)] 
+                prices=[LabeledPrice(label="Stars", amount=stars_amount)]
             )
+
         elif data['action'] == 'pay_crypto':
-            amount_rub = float(data['amount'])
             async with aiohttp.ClientSession() as session:
-                url = "https://pay.crypt.bot/api/createInvoice"
                 headers = {'Crypto-Pay-API-Token': CRYPTO_BOT_TOKEN}
-                amount_usdt = amount_rub / 100 
+                # Конвертируем рубли в USDT (условно курс 100)
+                amount_usdt = round(amount_rub / 100, 2)
                 params = {
                     'asset': 'USDT',
-                    'amount': str(round(amount_usdt, 2)),
-                    'description': f'Пополнение на {amount_rub} RUB',
+                    'amount': str(amount_usdt),
+                    'description': f'Пополнение счета {message.from_user.id}',
                     'payload': str(message.from_user.id)
                 }
-                async with session.get(url, headers=headers, params=params) as resp:
-                    result = await resp.json()
-                    if result['ok']:
-                        await message.answer(f"🔗 Оплата ({round(amount_usdt, 2)} USDT):\n{result['result']['pay_url']}")
+                async with session.get("https://pay.crypt.bot/api/createInvoice", headers=headers, params=params) as resp:
+                    res = await resp.json()
+                    if res['ok']:
+                        await message.answer(f"💰 К оплате: **{amount_usdt} USDT**\n\nОплати по ссылке ниже 👇\n{res['result']['pay_url']}", parse_mode="Markdown")
                     else:
-                        await message.answer("Ошибка крипто-бота.")
-        elif data['action'] == 'deposit' and data['method'] == 'T-Bank':
-             # Просто уведомление, так как оплата была по ссылке/QR
-             await message.answer(f"⏳ Заявка на пополнение {data['amount']}₽ через Т-Банк принята. Ожидайте зачисления.")
+                        await message.answer("❌ Ошибка CryptoBot. Попробуйте позже.")
 
     except Exception as e:
-        logging.error(e)
+        logging.error(f"Ошибка данных: {e}")
 
+# --- ОБРАБОТКА STARS (ПЛАТЕЖИ) ---
 @dp.pre_checkout_query()
-async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+async def pre_checkout(query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(query.id, ok=True)
 
 @dp.message(F.successful_payment)
-async def process_successful_payment(message: types.Message):
-    stars_paid = message.successful_payment.total_amount
-    add_balance(message.from_user.id, stars_paid, "STARS")
-    await message.answer(f"✅ Успешно! Начислено {stars_paid} ⭐")
+async def success_pay(message: types.Message):
+    stars_count = message.successful_payment.total_amount
+    add_balance(message.from_user.id, stars_count, "STARS")
+    await message.answer(f"⭐ Успешно! Вы получили {stars_count} звезд на баланс.")
 
+# ================= ЗАПУСК =================
 async def main():
     init_db()
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    
+    # Настройка веб-сервера для пинга
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080) # Порт для Render
+    
+    print("Бот запущен...")
+    await asyncio.gather(
+        site.start(),
+        dp.start_polling(bot)
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
