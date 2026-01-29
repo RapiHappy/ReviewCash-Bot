@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import json
@@ -107,17 +108,28 @@ async def success_pay(message: types.Message):
     await message.answer(f"⭐ Успешно! Вы получили {stars_count} звезд на баланс.")
 
 # ================= ЗАПУСК =================
+ # Добавь этот импорт в самое начало файла
+
+# ... твой остальной код ...
+
 async def main():
     init_db()
+    
+    # Render передает порт через переменную окружения PORT
+    # Если её нет (локальный запуск), используем 8080
+    port = int(os.environ.get("PORT", 8080))
     
     # Настройка веб-сервера для пинга
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080) # Порт для Render
     
-    print("Бот запущен...")
+    # Слушаем на 0.0.0.0 и на порту, который выдал Render
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    print(f"Бот запущен на порту {port}...")
+    
     await asyncio.gather(
         site.start(),
         dp.start_polling(bot)
