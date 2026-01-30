@@ -2,94 +2,156 @@ import os
 import asyncio
 import logging
 import json
-import asyncpg
-import aiohttp
-import ssl
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import LabeledPrice, PreCheckoutQuery
+from aiogram.types import LabeledPrice, PreCheckoutQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
+from supabase import create_client, Client
+from aiocryptopay import CryptoPay, Networks
 
 # ================= КОНФИГУРАЦИЯ =================
 BOT_TOKEN = "8312086729:AAHQ-cg8Pc_j52qVaf2a8H2RBf_Ol5MbuQQ"
-DB_URL = os.environ.get("postgresql://postgres:Rayaz95195!@db.frnxihdfouxbuzodyiaq.supabase.co:6543/postgres?sslmode=require")
 WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/"
+
+# Переменные окружения
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN")
+
+STAR_PRICE_RUB = 1.5 # Курс 1 звезда = 1.5 рубля
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Настройка SSL для обхода ошибок сертификатов в облаке
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
+# Инициализация Supabase
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logging.info("✅ Supabase API подключен")
 
-# ================= БАЗА ДАННЫХ =================
-async def init_db():
-    while True: # Цикл для повторных попыток при сбое сети
-        try:
-            conn = await asyncpg.connect(DB_URL, ssl=ctx)
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    balance_rub REAL DEFAULT 0,
-                    balance_stars INTEGER DEFAULT 0,
-                    reg_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            await conn.close()
-            logging.info("--- СВЯЗЬ С SUPABASE УСТАНОВЛЕНА ---")
-            break
-        except Exception as e:
-            logging.error(f"Ошибка БД (пробуем снова через 5 сек): {e}")
-            await asyncio.sleep(5)
+# Инициализация CryptoPay (используем Testnet если токен тестовый)
+# Если работаешь с реальными деньгами, смени Testnet на Mainnet
+crypto = CryptoPay(token=CRYPTO_TOKEN, network=Networks.MAIN_NET if CRYPTO_TOKEN and not "test" in CRYPTO_TOKEN.lower() else Networks.TEST_NET)
+
+# ================= РАБОТА С БАЗОЙ ДАННЫХ =================
 
 async def get_or_create_user(user_id, username, first_name):
-    conn = await asyncpg.connect(DB_URL, ssl=ctx)
+    if not supabase: return
     try:
-        user = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-        if not user:
-            await conn.execute(
-                "INSERT INTO users (user_id, username, first_name) VALUES ($1, $2, $3)",
-                user_id, username, first_name
+        response = supabase.table("users").select("*").eq("user_id", user_id).execute()
+        if not response.data:
+            supabase.table("users").insert({
+                "user_id": user_id,
+                "username": username or "NoUsername",
+                "first_name": first_name or "NoName",
+                "balance_rub": 0,
+                "balance_stars": 0
+            }).execute()
+            logging.info(f"🆕 Создан пользователь: {user_id}")
+    except Exception as e:
+        logging.error(f"Ошибка БД (get_user): {e}")
+
+async def add_balance(user_id, amount, currency="RUB"):
+    if not supabase: return
+    try:
+        response = supabase.table("users").select("*").eq("user_id", user_id).execute()
+        if response.data:
+            user = response.data[0]
+            if currency == "RUB":
+                new_val = float(user.get('balance_rub', 0)) + float(amount)
+                supabase.table("users").update({"balance_rub": new_val}).eq("user_id", user_id).execute()
+            elif currency == "STARS":
+                new_val = int(user.get('balance_stars', 0)) + int(amount)
+                supabase.table("users").update({"balance_stars": new_val}).eq("user_id", user_id).execute()
+            logging.info(f"💰 Баланс +{amount} {currency} для {user_id}")
+    except Exception as e:
+        logging.error(f"Ошибка баланса: {e}")
+
+# ================= ХЕНДЛЕРЫ БОТА =================
+
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    asyncio.create_task(get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name))
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[[types.KeyboardButton(text="📱 Открыть Приложение", web_app=types.WebAppInfo(url=WEBAPP_URL))]],
+        resize_keyboard=True
+    )
+    await message.answer(f"Привет, {message.from_user.first_name}! Выбери способ пополнения в приложении.", reply_markup=markup)
+
+# ОБРАБОТКА ДАННЫХ ИЗ WEB APP
+@dp.message(F.web_app_data)
+async def handle_webapp_data(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        action = data.get('action')
+        amount_rub = float(data.get('amount', 0))
+
+        # 1. ОПЛАТА ЗВЕЗДАМИ
+        if action == 'pay_stars':
+            stars_count = max(int(amount_rub / STAR_PRICE_RUB), 1)
+            await bot.send_invoice(
+                chat_id=message.chat.id,
+                title="Пополнение баланса",
+                description=f"Пакет {stars_count} звезд",
+                payload=f"stars_{stars_count}",
+                currency="XTR",
+                prices=[LabeledPrice(label="Stars", amount=stars_count)]
             )
-            user = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
-        return user
-    finally:
-        await conn.close()
 
-# ================= ВЕБ-СЕРВЕР =================
+        # 2. ОПЛАТА КРИПТОЙ
+        elif action == 'pay_crypto':
+            # Примерный перевод в USDT (в идеале тянуть курс по API)
+            amount_usdt = round(amount_rub / 95, 2) 
+            invoice = await crypto.create_invoice(asset='USDT', amount=amount_usdt)
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Оплатить USDT", url=invoice.bot_invoice_url)],
+                [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"chk_{invoice.invoice_id}_{amount_rub}")]
+            ])
+            await message.answer(f"Счет на {amount_rub} руб. ({amount_usdt} USDT) через CryptoBot:", reply_markup=kb)
+
+    except Exception as e:
+        logging.error(f"Ошибка WebApp Data: {e}")
+
+# Проверка крипто-платежа
+@dp.callback_query(F.data.startswith("chk_"))
+async def check_crypto(callback: types.CallbackQuery):
+    _, inv_id, amount = callback.data.split("_")
+    invoices = await crypto.get_invoices(invoice_ids=int(inv_id))
+    
+    if invoices and invoices.status == 'paid':
+        await add_balance(callback.from_user.id, float(amount), "RUB")
+        await callback.message.edit_text(f"✅ Успешно! Зачислено {amount} руб.")
+    else:
+        await callback.answer("❌ Оплата не найдена", show_alert=True)
+
+# Хендлеры для Stars
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def success_stars(message: types.Message):
+    stars = message.successful_payment.total_amount
+    await add_balance(message.from_user.id, stars, "STARS")
+    await message.answer(f"⭐ Звезды ({stars}) начислены на ваш баланс!")
+
+# ================= СЕРВЕР И ЗАПУСК =================
+
 async def handle_ping(request):
-    return web.Response(text="OK", status=200)
+    return web.Response(text="Bot Alive", status=200)
 
-async def run_web_server():
+async def main():
+    # Запуск веб-сервера для Render на порту 8080
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
+    await web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080))).start()
 
-# ================= ХЕНДЛЕРЫ =================
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    try:
-        await get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-        markup = types.ReplyKeyboardMarkup(
-            keyboard=[[types.KeyboardButton(text="📱 Открыть Приложение", web_app=types.WebAppInfo(url=WEBAPP_URL))]],
-            resize_keyboard=True
-        )
-        await message.answer(f"👋 Привет! Твой профиль в облаке.", reply_markup=markup)
-    except Exception as e:
-        await message.answer("⚠️ Ошибка связи с базой. Но я работаю!")
-        logging.error(f"Start error: {e}")
-
-async def main():
-    await run_web_server() # Сначала сервер, чтобы Render был доволен
-    await init_db()        # Потом база
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
