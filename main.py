@@ -14,7 +14,7 @@ from supabase import create_client
 from aiocryptopay import AioCryptoPay, Networks
 
 # ========= НАСТРОЙКИ =========
-BOT_TOKEN = os.environ.get("8312086729:AAFCo7umh4toeSXrcGRrC4tMh9EaH2a6HeU")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8312086729:AAFCo7umh4toeSXrcGRrC4tMh9EaH2a6HeU")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN")
