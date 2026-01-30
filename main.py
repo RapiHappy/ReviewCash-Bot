@@ -23,7 +23,7 @@ WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/"
 STAR_PRICE_RUB = 1.5
 REF_PERCENT = 0.05
 
-ADMINS = {123456789}  # впиши свой Telegram user_id
+ADMINS = {6482440657}  # впиши свой Telegram user_id
 
 logging.basicConfig(level=logging.INFO)
 
