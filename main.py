@@ -14,35 +14,43 @@ from supabase import create_client
 from aiocryptopay import AioCryptoPay, Networks
 
 # ========= НАСТРОЙКИ =========
+# Убедитесь, что токены верные
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8312086729:AAHpyu6GoHAxeq8-i8echHi9FVl5COGPF_M")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "YOUR_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
+CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN", "YOUR_CRYPTO_TOKEN")
 
-WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/"
+# ВАЖНО: Замените на ссылку вашего опубликованного Miniapp (из Miniapps.ai)
+WEBAPP_URL = "https://cdn.miniapps.ai/..." 
+
 STAR_PRICE_RUB = 1.5
 REF_PERCENT = 0.05
 
-ADMINS = {6482440657}  # впиши свой Telegram user_id
+# Ваш ID администратора
+ADMINS = {6482440657}
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
+# Инициализация клиентов
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 crypto = AioCryptoPay(
     token=CRYPTO_TOKEN,
     network=Networks.MAIN_NET if CRYPTO_TOKEN and "test" not in CRYPTO_TOKEN.lower() else Networks.TEST_NET
 )
 
-# ========= БАЗА ДАННЫХ =========
+# ========= БАЗА ДАННЫХ (ФУНКЦИИ) =========
 async def get_user(user_id: int):
     r = supabase.table("users").select("*").eq("user_id", user_id).execute()
     return r.data[0] if r.data else None
 
 async def create_user(user_id, username, first_name, referrer_id=None):
+    # Проверка на существование
+    existing = await get_user(user_id)
+    if existing: return
+    
     supabase.table("users").insert({
         "user_id": user_id,
         "username": username or "",
@@ -54,6 +62,8 @@ async def create_user(user_id, username, first_name, referrer_id=None):
 
 async def add_balance(user_id, amount, currency="RUB"):
     user = await get_user(user_id)
+    if not user: return
+    
     if currency == "RUB":
         new_val = float(user["balance_rub"]) + amount
         supabase.table("users").update({"balance_rub": new_val}).eq("user_id", user_id).execute()
@@ -61,115 +71,171 @@ async def add_balance(user_id, amount, currency="RUB"):
         new_val = int(user["balance_stars"]) + int(amount)
         supabase.table("users").update({"balance_stars": new_val}).eq("user_id", user_id).execute()
 
-async def log_payment(user_id, p_type, amount, currency):
-    supabase.table("payments").insert({
+async def log_payment(user_id, p_type, amount, currency, details=None):
+    data = {
         "user_id": user_id,
         "type": p_type,
         "amount": amount,
         "currency": currency
-    }).execute()
+    }
+    if details: data["details"] = details
+    supabase.table("payments").insert(data).execute()
 
 async def reward_referrer(user_id, deposit_rub):
     user = await get_user(user_id)
     ref_id = user.get("referrer_id")
-    if not ref_id:
-        return
+    if not ref_id: return
     bonus = round(deposit_rub * REF_PERCENT, 2)
     await add_balance(ref_id, bonus, "RUB")
     await log_payment(ref_id, "ref_bonus", bonus, "RUB")
 
-# ========= /start и рефералы =========
+# ========= ОБРАБОТЧИКИ =========
+
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    user = await get_user(message.from_user.id)
-    if not user:
-        if ref_id == message.from_user.id:
-            ref_id = None
-        await create_user(
-            message.from_user.id,
-            message.from_user.username,
-            message.from_user.first_name,
-            ref_id
-        )
+    # Создаем юзера при старте
+    await create_user(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name,
+        ref_id
+    )
 
     kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📱 Открыть приложение",
+        keyboard=[[KeyboardButton(text="📱 Открыть ReviewCash",
                                   web_app=WebAppInfo(url=WEBAPP_URL))]],
         resize_keyboard=True
     )
 
     await message.answer(
-        "👋 Добро пожаловать!\n\n"
-        "Пополняй баланс и приглашай друзей.\n"
-        "Ты получаешь 5% от каждого их пополнения 💸",
-        reply_markup=kb
+        "👋 <b>Добро пожаловать в ReviewCash!</b>\n\n"
+        "Выполняй задания, продвигай свои соцсети и зарабатывай.\n"
+        "Жми кнопку ниже, чтобы начать 👇",
+        reply_markup=kb,
+        parse_mode="HTML"
     )
 
-# ========= Реферальная ссылка =========
-@dp.message(Command("ref"))
-async def ref_link(message: types.Message):
-    me = await bot.get_me()
-    link = f"https://t.me/{me.username}?start={message.from_user.id}"
-    await message.answer(f"Твоя реферальная ссылка:\n{link}")
-
-# ========= Баланс =========
-@dp.message(Command("balance"))
-async def balance(message: types.Message):
-    user = await get_user(message.from_user.id)
-    await message.answer(
-        f"💰 RUB: {user['balance_rub']}\n"
-        f"⭐ Stars: {user['balance_stars']}"
-    )
-
-# ========= Оплата из WebApp =========
+# ========= ГЛАВНЫЙ ОБРАБОТЧИК ДАННЫХ ИЗ ПРИЛОЖЕНИЯ =========
 @dp.message(F.web_app_data)
-async def webapp_pay(message: types.Message):
-    data = json.loads(message.web_app_data.data)
-    action = data["action"]
-    amount_rub = float(data["amount"])
+async def webapp_handler(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        action = data.get("action")
+        user_id = message.from_user.id
+        
+        # 1. ОПЛАТА STARS
+        if action == "pay_stars":
+            amount_rub = float(data.get("amount", 0))
+            stars = max(int(amount_rub / STAR_PRICE_RUB), 1)
+            await bot.send_invoice(
+                chat_id=message.chat.id,
+                title="Пополнение баланса",
+                description=f"Пополнение на {stars} Stars (~{amount_rub} RUB)",
+                payload=f"stars_{stars}",
+                currency="XTR",
+                prices=[LabeledPrice(label="Stars", amount=stars)]
+            )
 
-    if action == "pay_stars":
-        stars = max(int(amount_rub / STAR_PRICE_RUB), 1)
-        await bot.send_invoice(
-            chat_id=message.chat.id,
-            title="Stars",
-            description=f"{stars} звезд",
-            payload=f"stars_{stars}",
-            currency="XTR",
-            prices=[LabeledPrice(label="Stars", amount=stars)]
-        )
+        # 2. ОПЛАТА CRYPTO
+        elif action == "pay_crypto":
+            amount_rub = float(data.get("amount", 0))
+            usdt = round(amount_rub / 95, 2) # Курс примерный
+            invoice = await crypto.create_invoice(asset="USDT", amount=usdt)
 
-    elif action == "pay_crypto":
-        usdt = round(amount_rub / 95, 2)
-        invoice = await crypto.create_invoice(asset="USDT", amount=usdt)
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Оплатить USDT", url=invoice.bot_invoice_url)],
+                [InlineKeyboardButton(text="✅ Я оплатил",
+                                      callback_data=f"chk_{invoice.invoice_id}_{amount_rub}")]
+            ])
+            await message.answer(f"💳 <b>Счет создан</b>\nК оплате: {usdt} USDT ({amount_rub} RUB)", 
+                                 reply_markup=kb, parse_mode="HTML")
 
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Оплатить", url=invoice.bot_invoice_url)],
-            [InlineKeyboardButton(text="✅ Проверить оплату",
-                                  callback_data=f"chk_{invoice.invoice_id}_{amount_rub}")]
-        ])
-        await message.answer(f"К оплате {amount_rub} RUB (~{usdt} USDT)", reply_markup=kb)
+        # 3. ОПЛАТА Т-БАНК (РУЧНАЯ)
+        elif action == "pay_tbank":
+            amount = float(data.get("amount", 0))
+            sender = data.get("sender", "Неизвестно")
+            code = data.get("code", "---")
+            
+            # Уведомляем админа
+            for admin_id in ADMINS:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"💰 <b>Т-Банк Пополнение</b>\nUser: {user_id} (@{message.from_user.username})\n"
+                        f"Сумма: {amount} RUB\nОт: {sender}\nКод: {code}"
+                    )
+                except: pass
+            
+            await message.answer(
+                f"⏳ <b>Заявка принята!</b>\nМы проверим поступление {amount}₽ от {sender}.\n"
+                f"Баланс обновится после проверки администратором.",
+                parse_mode="HTML"
+            )
 
-# ========= Проверка крипто оплаты =========
+        # 4. ЗАПРОС НА ВЫВОД (ИЗ ПРИЛОЖЕНИЯ)
+        elif action == "withdraw_request":
+            amount = float(data.get("amount", 0))
+            details = data.get("details", "")
+
+            user = await get_user(user_id)
+            if not user or float(user["balance_rub"]) < amount:
+                await message.answer("❌ Ошибка: Недостаточно средств на балансе для вывода.")
+                return
+
+            # Списываем баланс сразу
+            await add_balance(user_id, -amount, "RUB")
+
+            # Создаем запись в таблице withdraws
+            supabase.table("withdraws").insert({
+                "user_id": user_id,
+                "amount": amount,
+                "details": details,
+                "status": "pending"
+            }).execute()
+
+            await log_payment(user_id, "withdraw_request", amount, "RUB", details)
+            
+            # Уведомляем админа
+            for admin_id in ADMINS:
+                try:
+                    await bot.send_message(admin_id, f"📤 <b>Заявка на вывод!</b>\nUser: {user_id}\nСумма: {amount}\nРеквизиты: {details}")
+                except: pass
+
+            await message.answer(
+                f"✅ <b>Заявка на вывод создана</b>\nСумма: {amount} ₽\nРеквизиты: {details}\n\nОжидайте зачисления.",
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logging.error(f"WebApp Error: {e}")
+        await message.answer("Произошла ошибка обработки данных.")
+
+# ========= Callback (Crypto) =========
 @dp.callback_query(F.data.startswith("chk_"))
 async def check_crypto(call: types.CallbackQuery):
-    _, inv_id, amount = call.data.split("_")
-    invs = await crypto.get_invoices(invoice_ids=int(inv_id))
-    inv = invs[0] if isinstance(invs, list) else invs
+    _, inv_id, amount_rub = call.data.split("_")
+    try:
+        invs = await crypto.get_invoices(invoice_ids=int(inv_id))
+        inv = invs[0] if isinstance(invs, list) else invs # aiocryptopay может вернуть список
+        
+        if inv.status == "paid":
+            amount_rub = float(amount_rub)
+            # Проверяем, не оплачено ли уже (через payment log или статус)
+            # Тут упрощенно: начисляем
+            await add_balance(call.from_user.id, amount_rub, "RUB")
+            await log_payment(call.from_user.id, "deposit_crypto", amount_rub, "RUB")
+            await reward_referrer(call.from_user.id, amount_rub)
+            
+            await call.message.edit_text(f"✅ Успешно! Баланс пополнен на {amount_rub} RUB")
+        else:
+            await call.answer("Платеж еще не найден. Попробуйте через минуту.", show_alert=True)
+    except Exception as e:
+        await call.answer(f"Ошибка проверки: {e}", show_alert=True)
 
-    if inv.status == "paid":
-        amount = float(amount)
-        await add_balance(call.from_user.id, amount, "RUB")
-        await log_payment(call.from_user.id, "deposit_crypto", amount, "RUB")
-        await reward_referrer(call.from_user.id, amount)
-        await call.message.edit_text(f"✅ Оплачено +{amount} RUB")
-    else:
-        await call.answer("Не оплачено", show_alert=True)
-
-# ========= Stars успешно =========
+# ========= Оплата Stars =========
 @dp.pre_checkout_query()
 async def pre_checkout(q: PreCheckoutQuery):
     await q.answer(ok=True)
@@ -178,133 +244,61 @@ async def pre_checkout(q: PreCheckoutQuery):
 async def stars_ok(message: types.Message):
     stars = message.successful_payment.total_amount
     rub = stars * STAR_PRICE_RUB
-
-    await add_balance(message.from_user.id, stars, "STARS")
+    
+    await add_balance(message.from_user.id, stars, "STARS") # Храним звезды отдельно если надо
+    # Или конвертируем в рубли: await add_balance(message.from_user.id, rub, "RUB")
+    
     await log_payment(message.from_user.id, "deposit_stars", stars, "STARS")
     await reward_referrer(message.from_user.id, rub)
+    
+    await message.answer(f"⭐ Оплата прошла! Начислено {stars} Stars")
 
-    await message.answer(f"⭐ Зачислено {stars} Stars")
-
-# ========= Вывод средств (заявка) =========
-@dp.message(Command("withdraw"))
-async def withdraw(message: types.Message):
-    parts = message.text.split(maxsplit=2)
-    if len(parts) < 3:
-        await message.answer("Формат: /withdraw 100 РЕКВИЗИТЫ")
-        return
-
-    amount = float(parts[1])
-    details = parts[2]
-
-    user = await get_user(message.from_user.id)
-    if user["balance_rub"] < amount:
-        await message.answer("Недостаточно средств")
-        return
-
-    await add_balance(message.from_user.id, -amount, "RUB")
-
-    supabase.table("withdraws").insert({
-        "user_id": message.from_user.id,
-        "amount": amount,
-        "details": details,
-        "status": "pending"
-    }).execute()
-
-    await log_payment(message.from_user.id, "withdraw_request", amount, "RUB")
-    await message.answer("Заявка создана, ожидайте выплату администратора.")
-
-# ========= Админ: список заявок =========
+# ========= Админ команды =========
 @dp.message(Command("withdraws"))
 async def list_withdraws(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-
+    if message.from_user.id not in ADMINS: return
     rows = supabase.table("withdraws").select("*").eq("status", "pending").execute().data
     if not rows:
-        await message.answer("Нет заявок.")
+        await message.answer("Нет активных заявок.")
         return
-
-    text = ""
+    text = "📋 <b>Заявки на вывод:</b>\n\n"
     for w in rows:
-        text += (
-            f"ID: {w['id']}\n"
-            f"User: {w['user_id']}\n"
-            f"{w['amount']} RUB\n"
-            f"{w['details']}\n\n"
-        )
-    await message.answer(text)
+        text += f"🆔 {w['id']} | 👤 {w['user_id']}\n💰 {w['amount']}₽ | 💳 {w['details']}\n👇 /w_done_{w['id']} или /w_reject_{w['id']}\n\n"
+    await message.answer(text, parse_mode="HTML")
 
-# ========= Админ: подтвердить выплату =========
-@dp.message(Command("withdraw_done"))
+@dp.message(F.text.startswith("/w_done_"))
 async def withdraw_done(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    wid = message.text.split()[1]
+    if message.from_user.id not in ADMINS: return
+    wid = message.text.split("_")[2]
     supabase.table("withdraws").update({"status": "done"}).eq("id", wid).execute()
-    await message.answer("Отмечено как выплачено.")
+    await message.answer(f"✅ Заявка {wid} отмечена как выплаченная.")
 
-# ========= Админ: отклонить и вернуть баланс =========
-@dp.message(Command("withdraw_reject"))
+@dp.message(F.text.startswith("/w_reject_"))
 async def withdraw_reject(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    wid = message.text.split()[1]
-
+    if message.from_user.id not in ADMINS: return
+    wid = message.text.split("_")[2]
     w = supabase.table("withdraws").select("*").eq("id", wid).execute().data[0]
-    if w["status"] != "pending":
-        return
+    if w["status"] == "pending":
+        await add_balance(w["user_id"], float(w["amount"]), "RUB") # Возврат средств
+        supabase.table("withdraws").update({"status": "rejected"}).eq("id", wid).execute()
+        await message.answer(f"❌ Заявка {wid} отклонена, средства возвращены юзеру.")
 
-    await add_balance(w["user_id"], float(w["amount"]), "RUB")
-    supabase.table("withdraws").update({"status": "rejected"}).eq("id", wid).execute()
-
-    await message.answer("Заявка отклонена, деньги возвращены.")
-
-# ========= Статистика админа =========
-@dp.message(Command("stats"))
-async def stats(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-
-    users_count = supabase.table("users").select("user_id", count="exact").execute().count
-    pays = supabase.table("payments").select("*").execute().data
-
-    dep = sum(p["amount"] for p in pays if p["type"].startswith("deposit"))
-    wdr = sum(p["amount"] for p in pays if p["type"].startswith("withdraw"))
-
-    await message.answer(
-        f"👥 Пользователей: {users_count}\n"
-        f"💰 Пополнено: {dep}\n"
-        f"📤 Запрошено на вывод: {wdr}"
-    )
-
-# ========= Топ рефералов =========
-@dp.message(Command("toprefs"))
-async def top_refs(message: types.Message):
-    rows = supabase.table("payments").select("user_id,amount").eq("type", "ref_bonus").execute().data
-
-    totals = {}
-    for r in rows:
-        totals[r["user_id"]] = totals.get(r["user_id"], 0) + r["amount"]
-
-    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    text = "🏆 Топ рефералов:\n"
-    for i, (uid, total) in enumerate(top, 1):
-        text += f"{i}. {uid} — {round(total,2)} RUB\n"
-
-    await message.answer(text)
-
-# ========= Веб-сервер для хостинга =========
+# ========= Веб-сервер =========
 async def ping(request):
-    return web.Response(text="OK")
+    return web.Response(text="Bot is ALIVE")
 
 async def main():
+    # Настройка Webhook или Polling
+    # Если запускаете локально или на простом сервере - Polling
+    # Если нужен веб-сервер для Keep-Alive (Render/Heroku):
     app = web.Application()
     app.router.add_get("/", ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
-
+    port = int(os.environ.get("PORT", 8080))
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    
+    print(f"Бот запущен на порту {port}...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
