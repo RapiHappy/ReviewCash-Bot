@@ -15,7 +15,7 @@ from aiocryptopay import AioCryptoPay, Networks
 
 # ========= НАСТРОЙКИ =========
 # Убедитесь, что токены верные
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8312086729:AAFzCtR07MG4y0GmA9driSBl1VfdTK1BHtw")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8312086729:AAEeP1oK18OOlkibzpOWEQX7krDdoiFW5Qc")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "YOUR_SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
 CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN", "YOUR_CRYPTO_TOKEN")
