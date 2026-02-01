@@ -21,7 +21,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
 CRYPTO_TOKEN = os.environ.get("CRYPTO_BOT_TOKEN", "YOUR_CRYPTO_TOKEN")
 
 # ВАЖНО: Замените на ссылку вашего опубликованного Miniapp (из Miniapps.ai)
-WEBAPP_URL = "https://cdn.miniapps.ai/..." 
+WEBAPP_URL = "https://rapihappy.github.io/ReviewCashBot/" 
 
 STAR_PRICE_RUB = 1.5
 REF_PERCENT = 0.05
