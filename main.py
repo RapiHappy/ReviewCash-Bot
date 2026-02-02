@@ -1,1034 +1,930 @@
-# bot.py
 import os
-import json
+import re
 import hmac
+import json
+import time
+import base64
 import hashlib
 import asyncio
 import logging
-import urllib.parse
-from dataclasses import dataclass
-from datetime import datetime, timezone, date
-from typing import Any, Dict, Optional, List, Tuple
+from urllib.parse import parse_qsl
 
-import asyncpg
 from aiohttp import web
 
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    WebAppInfo, LabeledPrice
-)
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-
-try:
-    from aiocryptopay import AioCryptoPay, Networks
-except Exception:
-    AioCryptoPay = None
-    Networks = None
-
-
-# ----------------- CONFIG -----------------
-
-@dataclass
-class Config:
-    bot_token: str
-    database_url: str
-    webhook_url: str              # e.g. https://your.onrender.com
-    webhook_path: str             # e.g. /tg
-    webapp_url: str               # URL of your Mini App (https://.../app/)
-    port: int
-
-    admin_ids: List[int]
-    admin_basic_user: str
-    admin_basic_pass: str
-
-    # anti-fraud
-    max_devices_per_user: int
-    max_users_per_device: int
-
-    # cooldowns in seconds (example: tg join tasks 1 day)
-    cooldown_by_kind: Dict[str, int]
-
-    # payments
-    cryptobot_token: str
-    cryptobot_network: str        # "MAIN_NET" usually
-    stars_provider_token: str     # for Telegram Stars payments (if used)
-
-    @staticmethod
-    def from_env() -> "Config":
-        def env(name: str, default: str = "") -> str:
-            return os.getenv(name, default).strip()
-
-        def env_int(name: str, default: int) -> int:
-            v = os.getenv(name)
-            return int(v) if v and v.strip() else default
-
-        raw_admin = env("ADMIN_IDS", "")
-        admin_ids = []
-        if raw_admin:
-            for x in raw_admin.split(","):
-                x = x.strip()
-                if x:
-                    try:
-                        admin_ids.append(int(x))
-                    except ValueError:
-                        pass
-
-        cooldown_by_kind = {
-            "tg_channel_join": env_int("COOLDOWN_TG_CHANNEL_JOIN", 24 * 3600),
-            "tg_group_join": env_int("COOLDOWN_TG_GROUP_JOIN", 24 * 3600),
-            "feedback": env_int("COOLDOWN_FEEDBACK", 12 * 3600),
-        }
-
-        return Config(
-            bot_token=env("BOT_TOKEN"),
-            database_url=env("DATABASE_URL"),
-            webhook_url=env("WEBHOOK_URL", ""),   # if empty => polling mode
-            webhook_path=env("WEBHOOK_PATH", "/tg"),
-            webapp_url=env("WEBAPP_URL", ""),
-            port=env_int("PORT", 10000),
-
-            admin_ids=admin_ids,
-            admin_basic_user=env("ADMIN_BASIC_USER", "admin"),
-            admin_basic_pass=env("ADMIN_BASIC_PASS", "admin"),
-
-            max_devices_per_user=env_int("MAX_DEVICES_PER_USER", 3),
-            max_users_per_device=env_int("MAX_USERS_PER_DEVICE", 3),
-
-            cooldown_by_kind=cooldown_by_kind,
-
-            cryptobot_token=env("CRYPTOBOT_TOKEN", ""),
-            cryptobot_network=env("CRYPTOBOT_NETWORK", "MAIN_NET"),
-            stars_provider_token=env("STARS_PROVIDER_TOKEN", ""),  # optional
-        )
-
-
-# ----------------- LOGGING -----------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+from aiogram.types import (
+    LabeledPrice, PreCheckoutQuery,
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 )
-log = logging.getLogger("reviewcash")
 
+from supabase import create_client
+from aiocryptopay import AioCryptoPay, Networks
 
-# ----------------- INITDATA VERIFICATION -----------------
+# -----------------------------
+# CONFIG
+# -----------------------------
+logging.basicConfig(level=logging.INFO)
 
-def verify_telegram_initdata(init_data: str, bot_token: str) -> Tuple[bool, Dict[str, str]]:
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is required (set env var)")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # IMPORTANT: service role, server-only
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
+
+CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "")  # Crypto Pay API token from @CryptoBot
+CRYPTO_NET = os.getenv("CRYPTO_NET", "main").lower()  # main|test
+
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")  # your miniapp public URL
+if not WEBAPP_URL:
+    logging.warning("WEBAPP_URL is empty. /start button web_app will not work properly.")
+
+ADMIN_IDS = set()
+_raw_admins = os.getenv("ADMIN_IDS", "")
+if _raw_admins.strip():
+    try:
+        ADMIN_IDS = set(int(x.strip()) for x in _raw_admins.split(",") if x.strip())
+    except Exception:
+        raise RuntimeError("ADMIN_IDS must be comma-separated ints, e.g. 123,456")
+
+ADMIN_WEB_TOKEN = os.getenv("ADMIN_WEB_TOKEN", "")  # protect /admin
+if not ADMIN_WEB_TOKEN:
+    logging.warning("ADMIN_WEB_TOKEN is empty. /admin will be blocked by default.")
+
+# Money config
+STAR_PRICE_RUB = float(os.getenv("STAR_PRICE_RUB", "1.5"))  # 1 star ~ 1.5 rub (your internal rate)
+REF_PERCENT = float(os.getenv("REF_PERCENT", "0.05"))        # 5%
+
+# Anti-fraud limits
+MAX_DEVICES_PER_USER = int(os.getenv("MAX_DEVICES_PER_USER", "3"))
+MAX_ACCOUNTS_PER_DEVICE = int(os.getenv("MAX_ACCOUNTS_PER_DEVICE", "2"))
+
+# Task limits (cooldowns, seconds) - you asked: Yandex once per 3 days, Google once per 1 day
+LIMIT_YA_SECONDS = int(os.getenv("LIMIT_YA_SECONDS", str(3 * 24 * 3600)))
+LIMIT_GM_SECONDS = int(os.getenv("LIMIT_GM_SECONDS", str(1 * 24 * 3600)))
+
+# -----------------------------
+# INIT
+# -----------------------------
+bot = Bot(BOT_TOKEN)
+dp = Dispatcher()
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+crypto = None
+if CRYPTO_PAY_TOKEN:
+    crypto = AioCryptoPay(
+        token=CRYPTO_PAY_TOKEN,
+        network=Networks.MAIN_NET if CRYPTO_NET == "main" else Networks.TEST_NET
+    )
+
+# -----------------------------
+# Helpers: async wrapper for supabase sync client (avoid blocking loop)
+# -----------------------------
+async def sb_execute(builder):
+    return await asyncio.to_thread(builder.execute)
+
+def now_ts() -> int:
+    return int(time.time())
+
+def sha256_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+def ip_hash(request: web.Request) -> str:
+    ip = request.headers.get("x-forwarded-for", request.remote or "")
+    ip = ip.split(",")[0].strip()
+    return sha256_hex(ip) if ip else ""
+
+def ua_hash(request: web.Request) -> str:
+    ua = request.headers.get("user-agent", "")
+    return sha256_hex(ua) if ua else ""
+
+# -----------------------------
+# Telegram WebApp initData verification
+# Docs: core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+# -----------------------------
+def verify_init_data(init_data: str, bot_token: str, max_age_sec: int = 24 * 3600) -> dict | None:
     """
-    Verifies initData signature (Telegram WebApp).
-    Returns (ok, parsed_dict).
+    Returns parsed data dict if OK, else None.
     """
-    if not init_data or not bot_token:
-        return False, {}
+    if not init_data or "=" not in init_data:
+        return None
 
-    parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
-    received_hash = parsed.get("hash", "")
+    data = dict(parse_qsl(init_data, strict_parsing=False))
+    received_hash = data.get("hash", "")
     if not received_hash:
-        return False, parsed
+        return None
 
-    # build data_check_string
-    items = [(k, v) for k, v in parsed.items() if k != "hash"]
-    items.sort(key=lambda x: x[0])
-    data_check_string = "\n".join([f"{k}={v}" for k, v in items])
+    # auth_date check
+    auth_date = int(data.get("auth_date", "0") or "0")
+    if not auth_date:
+        return None
+    if (now_ts() - auth_date) > max_age_sec:
+        return None
 
-    secret_key = hashlib.sha256(bot_token.encode()).digest()
-    computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    # Build data_check_string: sort by key, exclude 'hash'
+    pairs = []
+    for k in sorted(data.keys()):
+        if k == "hash":
+            continue
+        pairs.append(f"{k}={data[k]}")
+    data_check_string = "\n".join(pairs)
 
-    return hmac.compare_digest(computed_hash, received_hash), parsed
+    # secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    if not hmac.compare_digest(calc_hash, received_hash):
+        return None
+    return data
 
-def extract_user_from_initdata(parsed: Dict[str, str]) -> Optional[Dict[str, Any]]:
-    user_raw = parsed.get("user")
-    if not user_raw:
+def extract_user_from_init_data(parsed: dict) -> dict | None:
+    u = parsed.get("user")
+    if not u:
         return None
     try:
-        return json.loads(user_raw)
+        return json.loads(u)
     except Exception:
         return None
 
+# -----------------------------
+# DB ops
+# -----------------------------
+async def ensure_user(user: dict, referrer_id: int | None = None):
+    uid = int(user["id"])
+    username = user.get("username")
+    first_name = user.get("first_name")
+    last_name = user.get("last_name")
+    photo_url = user.get("photo_url")
 
-# ----------------- DB -----------------
+    # upsert user
+    await sb_execute(
+        supabase.table("users").upsert({
+            "user_id": uid,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "photo_url": photo_url,
+            "last_seen_at": "now()",
+            "referrer_id": referrer_id
+        }, on_conflict="user_id")
+    )
 
-class DB:
-    def __init__(self, dsn: str):
-        self.dsn = dsn
-        self.pool: Optional[asyncpg.Pool] = None
+    # ensure balances row
+    existing = await sb_execute(supabase.table("balances").select("user_id").eq("user_id", uid))
+    if not existing.data:
+        await sb_execute(supabase.table("balances").insert({"user_id": uid}))
 
-    async def connect(self):
-        self.pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=10)
-        log.info("DB pool connected")
+async def anti_fraud_attach_device(uid: int, device_id: str, request: web.Request):
+    if not device_id or len(device_id) < 6:
+        raise web.HTTPForbidden(text="device_id missing")
 
-    async def close(self):
-        if self.pool:
-            await self.pool.close()
+    # count devices for this user
+    r = await sb_execute(
+        supabase.table("devices").select("id,device_id").eq("user_id", uid)
+    )
+    devices = r.data or []
+    known = any(d["device_id"] == device_id for d in devices)
 
-    async def q(self, sql: str, *args):
-        assert self.pool
-        async with self.pool.acquire() as con:
-            return await con.execute(sql, *args)
+    if not known and len(devices) >= MAX_DEVICES_PER_USER:
+        raise web.HTTPForbidden(text="device_limit")
 
-    async def fetch(self, sql: str, *args):
-        assert self.pool
-        async with self.pool.acquire() as con:
-            return await con.fetch(sql, *args)
+    # how many users share this device?
+    r2 = await sb_execute(
+        supabase.table("devices").select("user_id").eq("device_id", device_id)
+    )
+    shared_users = set(int(x["user_id"]) for x in (r2.data or []))
+    if uid not in shared_users and len(shared_users) >= MAX_ACCOUNTS_PER_DEVICE:
+        raise web.HTTPForbidden(text="multiaccount_limit")
 
-    async def fetchrow(self, sql: str, *args):
-        assert self.pool
-        async with self.pool.acquire() as con:
-            return await con.fetchrow(sql, *args)
+    # upsert device link
+    await sb_execute(
+        supabase.table("devices").upsert({
+            "device_id": device_id,
+            "user_id": uid,
+            "last_seen_at": "now()",
+            "ip_hash": ip_hash(request),
+            "user_agent_hash": ua_hash(request),
+        }, on_conflict="device_id,user_id")
+    )
 
-    async def upsert_user(self, u: Dict[str, Any], is_admin: bool):
-        tg_user_id = int(u["id"])
-        await self.q(
-            """
-            insert into users (tg_user_id, username, first_name, last_name, photo_url, is_admin, last_seen_at)
-            values ($1,$2,$3,$4,$5,$6, now())
-            on conflict (tg_user_id) do update set
-              username=excluded.username,
-              first_name=excluded.first_name,
-              last_name=excluded.last_name,
-              photo_url=excluded.photo_url,
-              is_admin=users.is_admin or excluded.is_admin,
-              last_seen_at=now()
-            """,
-            tg_user_id,
-            u.get("username"),
-            u.get("first_name"),
-            u.get("last_name"),
-            u.get("photo_url"),
-            is_admin
+async def get_balances(uid: int) -> dict:
+    r = await sb_execute(supabase.table("balances").select("*").eq("user_id", uid))
+    if not r.data:
+        return {"rub_balance": 0, "stars_balance": 0}
+    b = r.data[0]
+    return {"rub_balance": float(b["rub_balance"]), "stars_balance": int(b["stars_balance"])}
+
+async def add_balance(uid: int, rub_delta: float = 0.0, stars_delta: int = 0):
+    b = await get_balances(uid)
+    new_rub = float(b["rub_balance"]) + float(rub_delta)
+    new_stars = int(b["stars_balance"]) + int(stars_delta)
+    if new_rub < 0:
+        new_rub = 0
+    if new_stars < 0:
+        new_stars = 0
+
+    await sb_execute(
+        supabase.table("balances").upsert({
+            "user_id": uid,
+            "rub_balance": new_rub,
+            "stars_balance": new_stars,
+            "updated_at": "now()"
+        }, on_conflict="user_id")
+    )
+
+async def log_payment(uid: int, provider: str, status: str, amount_rub=None, amount_stars=None, provider_ref=None, meta=None):
+    payload = {
+        "user_id": uid,
+        "provider": provider,
+        "status": status,
+        "amount_rub": amount_rub,
+        "amount_stars": amount_stars,
+        "provider_ref": provider_ref,
+        "meta": meta or {}
+    }
+    await sb_execute(supabase.table("payments").insert(payload))
+
+async def reward_referrer(uid: int, deposit_rub: float):
+    # find referrer
+    r = await sb_execute(supabase.table("users").select("referrer_id").eq("user_id", uid))
+    if not r.data:
+        return
+    ref_id = r.data[0].get("referrer_id")
+    if not ref_id:
+        return
+    bonus = round(float(deposit_rub) * REF_PERCENT, 2)
+    await add_balance(int(ref_id), rub_delta=bonus)
+    await log_payment(int(ref_id), "ref_bonus", "paid", amount_rub=bonus, meta={"from_user": uid})
+
+# -----------------------------
+# TG auto-check helpers
+# -----------------------------
+TG_USERNAME_RE = re.compile(r"(?:https?://)?t\.me/([A-Za-z0-9_]{5,})", re.IGNORECASE)
+
+def parse_tg_chat(target_url: str) -> str | None:
+    """
+    Returns @username if target is public t.me/<username>.
+    Private invite links cannot be checked automatically.
+    """
+    m = TG_USERNAME_RE.search(target_url or "")
+    if not m:
+        return None
+    return "@" + m.group(1)
+
+async def tg_is_member(chat: str, user_id: int) -> bool:
+    """
+    True if user is member/admin/creator (not left/kicked).
+    Uses getChatMember (Bot API). :contentReference[oaicite:4]{index=4}
+    """
+    try:
+        cm = await bot.get_chat_member(chat_id=chat, user_id=user_id)
+        st = (cm.status or "").lower()
+        return st in ("member", "administrator", "creator")
+    except Exception:
+        return False
+
+# -----------------------------
+# MiniApp API (aiohttp)
+# -----------------------------
+async def api_auth(request: web.Request) -> tuple[int, dict, dict]:
+    """
+    Returns (uid, user_obj, parsed_init_data) or raises HTTPUnauthorized.
+    Expects JSON: { initData, deviceId }
+    """
+    body = await request.json()
+    init_data = body.get("initData", "")
+    device_id = body.get("deviceId", "")
+
+    parsed = verify_init_data(init_data, BOT_TOKEN)
+    if not parsed:
+        raise web.HTTPUnauthorized(text="bad_init_data")
+
+    user_obj = extract_user_from_init_data(parsed)
+    if not user_obj or "id" not in user_obj:
+        raise web.HTTPUnauthorized(text="no_user")
+
+    uid = int(user_obj["id"])
+    await ensure_user(user_obj)
+    await anti_fraud_attach_device(uid, device_id, request)
+
+    return uid, user_obj, parsed
+
+async def api_me(request: web.Request):
+    uid, user_obj, _ = await api_auth(request)
+    b = await get_balances(uid)
+    return web.json_response({
+        "ok": True,
+        "user": {
+            "id": uid,
+            "username": user_obj.get("username"),
+            "first_name": user_obj.get("first_name"),
+            "last_name": user_obj.get("last_name"),
+            "photo_url": user_obj.get("photo_url"),
+        },
+        "balances": b
+    })
+
+async def api_tasks_list(request: web.Request):
+    uid, _, _ = await api_auth(request)
+    # show active tasks with qty_left > 0
+    r = await sb_execute(
+        supabase.table("tasks")
+        .select("*")
+        .eq("status", "active")
+        .gt("qty_left", 0)
+        .order("created_at", desc=True)
+        .limit(200)
+    )
+    return web.json_response({"ok": True, "tasks": r.data or []})
+
+async def api_task_create(request: web.Request):
+    uid, _, _ = await api_auth(request)
+    body = await request.json()
+
+    # fields from MiniApp
+    t_type = body.get("type")
+    title = body.get("title", "Задание")
+    target_url = body.get("target_url", "")
+    instructions = body.get("instructions", "")
+    qty = int(body.get("qty_total", 1))
+    reward = float(body.get("reward_rub", 0))
+    check_type = body.get("check_type", "manual")
+
+    if not target_url or qty < 1 or reward <= 0:
+        raise web.HTTPBadRequest(text="bad_task")
+
+    tg_chat = None
+    tg_kind = None
+    if t_type == "tg":
+        tg_chat = parse_tg_chat(target_url)
+        tg_kind = body.get("tg_kind", "channel")
+        if not tg_chat:
+            raise web.HTTPBadRequest(text="tg_target_must_be_public_username")
+
+    # cost to advertiser is your business logic. For now: advertiser pays in app via balance rub.
+    total_cost = float(body.get("cost_rub", 0))
+    if total_cost <= 0:
+        raise web.HTTPBadRequest(text="bad_cost")
+
+    bal = await get_balances(uid)
+    if bal["rub_balance"] < total_cost:
+        raise web.HTTPForbidden(text="insufficient_balance")
+
+    await add_balance(uid, rub_delta=-total_cost)
+
+    r = await sb_execute(
+        supabase.table("tasks").insert({
+            "owner_id": uid,
+            "type": t_type,
+            "tg_chat": tg_chat,
+            "tg_kind": tg_kind,
+            "title": title,
+            "target_url": target_url,
+            "instructions": instructions,
+            "reward_rub": reward,
+            "qty_total": qty,
+            "qty_left": qty,
+            "check_type": check_type,
+            "status": "active"
+        }).select("*").single()
+    )
+
+    # push to users (simple broadcast, can be optimized later)
+    asyncio.create_task(push_new_task(r.data))
+
+    return web.json_response({"ok": True, "task": r.data})
+
+async def api_task_check_and_complete(request: web.Request):
+    """
+    Worker clicks "check" for tg task.
+    body: { initData, deviceId, task_id }
+    """
+    uid, _, _ = await api_auth(request)
+    body = await request.json()
+    task_id = body.get("task_id")
+    if not task_id:
+        raise web.HTTPBadRequest(text="no_task")
+
+    # get task
+    tr = await sb_execute(supabase.table("tasks").select("*").eq("id", task_id).single())
+    task = tr.data
+    if not task or task["status"] != "active" or int(task["qty_left"]) <= 0:
+        raise web.HTTPNotFound(text="task_not_active")
+
+    # cooldowns for ya/gm you asked (server-side)
+    if task["type"] in ("ya", "gm"):
+        cooldown = LIMIT_YA_SECONDS if task["type"] == "ya" else LIMIT_GM_SECONDS
+        cr = await sb_execute(
+            supabase.table("task_completions")
+            .select("created_at")
+            .eq("user_id", uid)
+            .eq("task_id", task_id)
+            .maybe_single()
+        )
+        if cr.data:
+            # already completed once
+            raise web.HTTPForbidden(text="already_completed")
+
+        # also block repeated completions of same type too frequently (optional)
+        # (you can extend: last completion by type, but kept simple here)
+
+    if task["type"] == "tg" and task["check_type"] == "auto":
+        chat = task.get("tg_chat")
+        if not chat:
+            raise web.HTTPBadRequest(text="bad_tg_task")
+        ok = await tg_is_member(chat, uid)
+        if not ok:
+            raise web.HTTPForbidden(text="not_a_member")
+
+        # record completion
+        await sb_execute(
+            supabase.table("task_completions").insert({
+                "task_id": task_id,
+                "user_id": uid,
+                "status": "approved"
+            })
         )
 
-    async def register_device_and_check_limits(
-        self,
-        tg_user_id: int,
-        device_id: str,
-        max_devices_per_user: int,
-        max_users_per_device: int
-    ) -> Tuple[bool, str]:
-        if not device_id:
-            return False, "no_device_id"
-
-        # insert device row
-        await self.q(
-            """
-            insert into devices (device_id, tg_user_id, first_seen_at, last_seen_at)
-            values ($1,$2, now(), now())
-            on conflict (device_id, tg_user_id) do update set last_seen_at=now()
-            """,
-            device_id, tg_user_id
-        )
-
-        # count devices for this user
-        r1 = await self.fetchrow(
-            "select count(distinct device_id) as c from devices where tg_user_id=$1",
-            tg_user_id
-        )
-        devices_cnt = int(r1["c"])
-        if devices_cnt > max_devices_per_user:
-            return False, f"device_limit_exceeded ({devices_cnt}>{max_devices_per_user})"
-
-        # count users on this device
-        r2 = await self.fetchrow(
-            "select count(distinct tg_user_id) as c from devices where device_id=$1",
-            device_id
-        )
-        users_cnt = int(r2["c"])
-        if users_cnt > max_users_per_device:
-            return False, f"multiaccount_limit_exceeded ({users_cnt}>{max_users_per_device})"
-
-        return True, "ok"
-
-    async def get_user(self, tg_user_id: int):
-        return await self.fetchrow("select * from users where tg_user_id=$1", tg_user_id)
-
-    async def add_balance(self, tg_user_id: int, amount_rub: int):
-        await self.q("update users set balance_rub=balance_rub+$2 where tg_user_id=$1", tg_user_id, amount_rub)
-
-    async def sub_balance(self, tg_user_id: int, amount_rub: int) -> bool:
-        r = await self.fetchrow("select balance_rub from users where tg_user_id=$1", tg_user_id)
-        if not r:
-            return False
-        if int(r["balance_rub"]) < amount_rub:
-            return False
-        await self.q("update users set balance_rub=balance_rub-$2 where tg_user_id=$1", tg_user_id, amount_rub)
-        return True
-
-    async def list_tasks(self, only_active: bool = True, limit: int = 50):
-        if only_active:
-            return await self.fetch(
-                """
-                select * from tasks
-                where status='active' and qty_left>0
-                order by id desc
-                limit $1
-                """,
-                limit
-            )
-        return await self.fetch("select * from tasks order by id desc limit $1", limit)
-
-    async def create_task(self, owner_tg_id: int, kind: str, title: str, target: str, instruction: str, reward_rub: int, qty: int):
-        row = await self.fetchrow(
-            """
-            insert into tasks (owner_tg_id, kind, title, target, instruction, reward_rub, qty_total, qty_left, status)
-            values ($1,$2,$3,$4,$5,$6,$7,$7,'active')
-            returning *
-            """,
-            owner_tg_id, kind, title, target, instruction, reward_rub, qty
-        )
-        return row
-
-    async def can_do_kind(self, worker_tg_id: int, kind: str, cooldown_seconds: int) -> Tuple[bool, int]:
-        r = await self.fetchrow("select last_done_at from limits where worker_tg_id=$1 and kind=$2", worker_tg_id, kind)
-        if not r:
-            return True, 0
-        last = r["last_done_at"]
-        now = datetime.now(timezone.utc)
-        diff = (now - last).total_seconds()
-        remain = int(max(0, cooldown_seconds - diff))
-        return remain == 0, remain
-
-    async def record_done_kind(self, worker_tg_id: int, kind: str):
-        await self.q(
-            """
-            insert into limits (worker_tg_id, kind, last_done_at)
-            values ($1,$2, now())
-            on conflict (worker_tg_id, kind) do update set last_done_at=now()
-            """,
-            worker_tg_id, kind
-        )
-
-    async def create_claim(self, task_id: int, worker_tg_id: int) -> Tuple[bool, str]:
-        try:
-            await self.q(
-                "insert into claims (task_id, worker_tg_id, status) values ($1,$2,'pending')",
-                task_id, worker_tg_id
-            )
-        except asyncpg.UniqueViolationError:
-            return False, "already_claimed"
+        # pay instantly
+        reward = float(task["reward_rub"])
+        await add_balance(uid, rub_delta=reward)
 
         # decrement qty_left
-        await self.q(
-            "update tasks set qty_left=qty_left-1 where id=$1 and qty_left>0",
-            task_id
-        )
-        return True, "ok"
-
-    async def set_claim_status(self, claim_id: int, status: str, proof_json: Optional[Dict[str, Any]] = None):
-        await self.q(
-            "update claims set status=$2, proof_json=$3::jsonb, updated_at=now() where id=$1",
-            claim_id, status, json.dumps(proof_json or {})
+        await sb_execute(
+            supabase.table("tasks")
+            .update({"qty_left": int(task["qty_left"]) - 1})
+            .eq("id", task_id)
         )
 
-    async def list_pending_claims(self, limit: int = 50):
-        return await self.fetch(
-            """
-            select c.*, t.title, t.kind, t.target, t.reward_rub
-            from claims c
-            join tasks t on t.id=c.task_id
-            where c.status='pending'
-            order by c.id desc
-            limit $1
-            """,
-            limit
-        )
+        return web.json_response({"ok": True, "paid": True, "reward_rub": reward})
 
-    async def create_withdrawal(self, tg_user_id: int, amount_rub: int, details: str):
-        row = await self.fetchrow(
-            """
-            insert into withdrawals (tg_user_id, amount_rub, details, status)
-            values ($1,$2,$3,'pending')
-            returning *
-            """,
-            tg_user_id, amount_rub, details
-        )
-        return row
-
-    async def list_withdrawals(self, status: Optional[str] = None, limit: int = 50):
-        if status:
-            return await self.fetch("select * from withdrawals where status=$1 order by id desc limit $2", status, limit)
-        return await self.fetch("select * from withdrawals order by id desc limit $1", limit)
-
-    async def set_withdrawal_status(self, wid: int, status: str):
-        await self.q("update withdrawals set status=$2, updated_at=now() where id=$1", wid, status)
-
-    async def users_for_push(self) -> List[int]:
-        rows = await self.fetch("select tg_user_id from users where notifications=true and is_banned=false")
-        return [int(r["tg_user_id"]) for r in rows]
-
-
-# ----------------- BOT UI -----------------
-
-def kb_main(webapp_url: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Открыть приложение", web_app=WebAppInfo(url=webapp_url))],
-        [InlineKeyboardButton(text="💳 Пополнить", callback_data="topup"),
-         InlineKeyboardButton(text="🏦 Вывод", callback_data="withdraw")],
-        [InlineKeyboardButton(text="🔔 Уведомления", callback_data="toggle_notif")]
-    ])
-
-
-def kb_admin() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛡️ Pending proofs", callback_data="admin_claims")],
-        [InlineKeyboardButton(text="🏦 Pending withdrawals", callback_data="admin_withdraws")],
-    ])
-
-
-# ----------------- APP ACTIONS (from Mini App) -----------------
-
-# The Mini App sends tg.sendData(JSON.stringify(payload))
-# We require payload.initData and payload.deviceId
-#
-# payload examples:
-# { action:"auth", initData:"...", deviceId:"..." }
-# { action:"create_task", initData:"...", deviceId:"...", kind:"tg_channel_join", title:"...", target:"https://t.me/...", instruction:"...", reward:15, qty:10 }
-# { action:"list_tasks", initData:"...", deviceId:"..." }
-# { action:"claim_task", initData:"...", deviceId:"...", taskId:123 }
-# { action:"withdraw_request", initData:"...", deviceId:"...", amount:300, details:"карта/тел" }
-
-ALLOWED_KINDS = {"tg_channel_join", "tg_group_join", "feedback"}
-
-
-# ----------------- TELEGRAM AUTO CHECK -----------------
-
-def parse_t_me_target(target: str) -> Optional[str]:
-    """
-    Returns chat username or invite? We support only @username / t.me/username for auto-check.
-    For private invites auto-check is not reliable.
-    """
-    if not target:
-        return None
-    t = target.strip()
-    # allow "https://t.me/username" or "t.me/username" or "@username"
-    if t.startswith("@"):
-        return t[1:]
-    if "t.me/" in t:
-        # strip query
-        t = t.split("?")[0]
-        username = t.split("t.me/")[-1].strip("/")
-        if username and not username.startswith("+"):
-            return username
-    return None
-
-
-async def check_membership(bot: Bot, chat_username: str, user_id: int) -> bool:
-    """
-    True if member (not left/kicked). Requires bot access to chat.
-    """
-    try:
-        cm = await bot.get_chat_member(chat_id=f"@{chat_username}", user_id=user_id)
-        status = getattr(cm, "status", None)
-        return status in ("member", "administrator", "creator")
-    except Exception:
-        return False
-
-
-# ----------------- STATS -----------------
-
-async def bump_daily(db: DB, field: str, delta: int = 1):
-    today = date.today()
-    # upsert stats row
-    await db.q(
-        """
-        insert into stats_daily(day, revenue_rub, payout_rub, tasks_created, tasks_done, users_active)
-        values ($1,0,0,0,0,0)
-        on conflict (day) do nothing
-        """,
-        today
+    # manual tasks: create pending completion, admin approves later
+    await sb_execute(
+        supabase.table("task_completions").insert({
+            "task_id": task_id,
+            "user_id": uid,
+            "status": "pending",
+            "proof_text": body.get("proof_text"),
+            "proof_url": body.get("proof_url")
+        })
     )
-    await db.q(f"update stats_daily set {field}={field}+$2 where day=$1", today, delta)
+    return web.json_response({"ok": True, "pending": True})
 
+async def api_withdraw_create(request: web.Request):
+    uid, _, _ = await api_auth(request)
+    body = await request.json()
+    amount = float(body.get("amount_rub", 0))
+    details = (body.get("details") or "").strip()
+    if amount < 300 or not details:
+        raise web.HTTPBadRequest(text="bad_withdraw")
 
-# ----------------- WEB ADMIN (aiohttp) -----------------
+    bal = await get_balances(uid)
+    if bal["rub_balance"] < amount:
+        raise web.HTTPForbidden(text="insufficient_balance")
 
-def basic_auth_ok(request: web.Request, user: str, pwd: str) -> bool:
-    hdr = request.headers.get("Authorization", "")
-    if not hdr.startswith("Basic "):
-        return False
-    import base64
-    try:
-        raw = base64.b64decode(hdr.split(" ", 1)[1]).decode()
-        u, p = raw.split(":", 1)
-        return hmac.compare_digest(u, user) and hmac.compare_digest(p, pwd)
-    except Exception:
-        return False
+    # reserve funds
+    await add_balance(uid, rub_delta=-amount)
 
-
-async def handle_admin(request: web.Request) -> web.Response:
-    app = request.app
-    cfg: Config = app["cfg"]
-    db: DB = app["db"]
-
-    if not basic_auth_ok(request, cfg.admin_basic_user, cfg.admin_basic_pass):
-        return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="admin"'}, text="Auth required")
-
-    tasks = await db.fetch("select count(*) c from tasks")
-    users = await db.fetch("select count(*) c from users")
-    pend_claims = await db.fetch("select count(*) c from claims where status='pending'")
-    pend_wd = await db.fetch("select count(*) c from withdrawals where status='pending'")
-
-    rows = await db.fetch(
-        "select * from stats_daily order by day desc limit 14"
-    )
-    stats_html = "".join(
-        f"<tr><td>{r['day']}</td><td>{r['revenue_rub']}</td><td>{r['payout_rub']}</td><td>{r['tasks_created']}</td><td>{r['tasks_done']}</td><td>{r['users_active']}</td></tr>"
-        for r in rows
+    wr = await sb_execute(
+        supabase.table("withdraws").insert({
+            "user_id": uid,
+            "amount_rub": amount,
+            "details": details,
+            "status": "pending"
+        }).select("*").single()
     )
 
+    # notify admins
+    await notify_admins(f"📤 Заявка на вывод\nUser: {uid}\nСумма: {amount}₽\nРеквизиты: {details}\nID: {wr.data['id']}")
+
+    return web.json_response({"ok": True, "withdraw": wr.data})
+
+async def api_tbank_request(request: web.Request):
+    """
+    MiniApp sends: { initData, deviceId, amount_rub, sender_name, code }
+    We create pending payment; admin confirms.
+    """
+    uid, _, _ = await api_auth(request)
+    body = await request.json()
+    amount = float(body.get("amount_rub", 0))
+    sender = (body.get("sender_name") or "").strip()
+    code = (body.get("code") or "").strip()
+
+    if amount < 300 or not sender or not code:
+        raise web.HTTPBadRequest(text="bad_tbank")
+
+    pr = await sb_execute(
+        supabase.table("payments").insert({
+            "user_id": uid,
+            "provider": "tbank",
+            "status": "pending",
+            "amount_rub": amount,
+            "provider_ref": code,
+            "meta": {"sender": sender}
+        }).select("*").single()
+    )
+
+    await notify_admins(
+        f"💳 T-Bank пополнение (ожидает)\nUser: {uid}\nСумма: {amount}₽\nОтправитель: {sender}\nКод: {code}\nPayID: {pr.data['id']}"
+    )
+
+    return web.json_response({"ok": True, "payment": pr.data})
+
+# -----------------------------
+# Admin web (very simple)
+# -----------------------------
+def admin_guard(request: web.Request):
+    if not ADMIN_WEB_TOKEN:
+        raise web.HTTPForbidden(text="admin_disabled")
+    token = request.query.get("token", "")
+    if token != ADMIN_WEB_TOKEN:
+        raise web.HTTPUnauthorized(text="bad_token")
+
+async def admin_page(request: web.Request):
+    admin_guard(request)
+    # simple html + JS actions
     html = f"""
     <html><head><meta charset="utf-8"><title>Admin</title></head>
-    <body style="font-family:Arial;padding:20px">
+    <body style="font-family:Arial;max-width:900px;margin:20px auto;">
       <h2>ReviewCash Admin</h2>
-      <ul>
-        <li>Users: {int(users[0]['c'])}</li>
-        <li>Tasks: {int(tasks[0]['c'])}</li>
-        <li>Pending claims: {int(pend_claims[0]['c'])}</li>
-        <li>Pending withdrawals: {int(pend_wd[0]['c'])}</li>
-      </ul>
+      <p>token ok ✅</p>
 
-      <h3>Stats (last 14 days)</h3>
-      <table border="1" cellpadding="6" cellspacing="0">
-        <tr><th>Day</th><th>Revenue</th><th>Payout</th><th>Created</th><th>Done</th><th>Active users</th></tr>
-        {stats_html}
-      </table>
+      <h3>Pending T-Bank</h3>
+      <div id="tbank"></div>
 
-      <p>Tip: add endpoints for approving claims/withdrawals here if you want full web moderation.</p>
+      <h3>Withdraws pending</h3>
+      <div id="wd"></div>
+
+      <script>
+        async function load() {{
+          const t = await fetch('/admin/data?token={ADMIN_WEB_TOKEN}').then(r=>r.json());
+          document.getElementById('tbank').innerHTML = (t.tbank||[]).map(p =>
+            `<div style="padding:10px;border:1px solid #ccc;margin:8px 0;">
+              <b>${{p.amount_rub}} ₽</b> | user ${{p.user_id}} | code ${{p.provider_ref}} | sender ${{(p.meta||{{}}).sender||''}}
+              <button onclick="approveT('${{p.id}}')">Approve</button>
+              <button onclick="rejectT('${{p.id}}')">Reject</button>
+            </div>`
+          ).join('') || '—';
+
+          document.getElementById('wd').innerHTML = (t.withdraws||[]).map(w =>
+            `<div style="padding:10px;border:1px solid #ccc;margin:8px 0;">
+              <b>${{w.amount_rub}} ₽</b> | user ${{w.user_id}} | ${{w.details}}
+              <button onclick="payW('${{w.id}}')">Paid</button>
+              <button onclick="rejW('${{w.id}}')">Reject</button>
+            </div>`
+          ).join('') || '—';
+        }}
+
+        async function approveT(id) {{
+          await fetch('/admin/tbank/approve?token={ADMIN_WEB_TOKEN}', {{
+            method:'POST', headers:{{'content-type':'application/json'}},
+            body: JSON.stringify({{id}})
+          }});
+          load();
+        }}
+        async function rejectT(id) {{
+          await fetch('/admin/tbank/reject?token={ADMIN_WEB_TOKEN}', {{
+            method:'POST', headers:{{'content-type':'application/json'}},
+            body: JSON.stringify({{id}})
+          }});
+          load();
+        }}
+        async function payW(id) {{
+          await fetch('/admin/withdraw/pay?token={ADMIN_WEB_TOKEN}', {{
+            method:'POST', headers:{{'content-type':'application/json'}},
+            body: JSON.stringify({{id}})
+          }});
+          load();
+        }}
+        async function rejW(id) {{
+          await fetch('/admin/withdraw/reject?token={ADMIN_WEB_TOKEN}', {{
+            method:'POST', headers:{{'content-type':'application/json'}},
+            body: JSON.stringify({{id}})
+          }});
+          load();
+        }}
+
+        load();
+      </script>
     </body></html>
     """
     return web.Response(text=html, content_type="text/html")
 
+async def admin_data(request: web.Request):
+    admin_guard(request)
+    tbank = await sb_execute(
+        supabase.table("payments").select("*")
+        .eq("provider", "tbank").eq("status", "pending")
+        .order("created_at", desc=True).limit(100)
+    )
+    wd = await sb_execute(
+        supabase.table("withdraws").select("*")
+        .eq("status", "pending")
+        .order("created_at", desc=True).limit(100)
+    )
+    return web.json_response({"tbank": tbank.data or [], "withdraws": wd.data or []})
 
-# ----------------- MAIN BOT LOGIC -----------------
+async def admin_tbank_approve(request: web.Request):
+    admin_guard(request)
+    body = await request.json()
+    pid = body.get("id")
+    pr = await sb_execute(supabase.table("payments").select("*").eq("id", pid).single())
+    p = pr.data
+    if not p or p["status"] != "pending":
+        return web.json_response({"ok": False})
 
-router = Router()
+    uid = int(p["user_id"])
+    amount = float(p["amount_rub"])
+    await add_balance(uid, rub_delta=amount)
 
-async def push_all(bot: Bot, db: DB, text: str):
-    ids = await db.users_for_push()
-    for uid in ids:
+    await sb_execute(supabase.table("payments").update({"status": "paid"}).eq("id", pid))
+
+    await push_to_user(uid, f"✅ Пополнение T-Bank подтверждено: +{amount}₽")
+    await reward_referrer(uid, amount)
+    return web.json_response({"ok": True})
+
+async def admin_tbank_reject(request: web.Request):
+    admin_guard(request)
+    body = await request.json()
+    pid = body.get("id")
+    await sb_execute(supabase.table("payments").update({"status": "canceled"}).eq("id", pid))
+    return web.json_response({"ok": True})
+
+async def admin_withdraw_pay(request: web.Request):
+    admin_guard(request)
+    body = await request.json()
+    wid = body.get("id")
+    wr = await sb_execute(supabase.table("withdraws").select("*").eq("id", wid).single())
+    w = wr.data
+    if not w or w["status"] != "pending":
+        return web.json_response({"ok": False})
+    await sb_execute(supabase.table("withdraws").update({"status": "paid"}).eq("id", wid))
+    await push_to_user(int(w["user_id"]), f"✅ Выплата одобрена: {w['amount_rub']}₽")
+    return web.json_response({"ok": True})
+
+async def admin_withdraw_reject(request: web.Request):
+    admin_guard(request)
+    body = await request.json()
+    wid = body.get("id")
+    wr = await sb_execute(supabase.table("withdraws").select("*").eq("id", wid).single())
+    w = wr.data
+    if not w or w["status"] != "pending":
+        return web.json_response({"ok": False})
+
+    # refund
+    await add_balance(int(w["user_id"]), rub_delta=float(w["amount_rub"]))
+    await sb_execute(supabase.table("withdraws").update({"status": "rejected"}).eq("id", wid))
+    await push_to_user(int(w["user_id"]), f"❌ Выплата отклонена, средства возвращены.")
+    return web.json_response({"ok": True})
+
+# -----------------------------
+# Push helpers
+# -----------------------------
+async def push_to_user(uid: int, text: str):
+    try:
+        await bot.send_message(uid, text)
+    except Exception:
+        pass
+
+async def notify_admins(text: str):
+    for aid in ADMIN_IDS:
         try:
-            await bot.send_message(uid, text)
+            await bot.send_message(aid, text)
         except Exception:
             pass
 
-@router.message(Command("start"))
-async def cmd_start(m: Message, bot: Bot, db: DB, cfg: Config):
-    u = m.from_user
-    if not u:
-        return
+async def push_new_task(task: dict):
+    # naive broadcast: last 500 users (optimize later)
+    r = await sb_execute(supabase.table("users").select("user_id").order("last_seen_at", desc=True).limit(500))
+    for row in (r.data or []):
+        uid = int(row["user_id"])
+        if uid == int(task["owner_id"]):
+            continue
+        await push_to_user(uid, f"🆕 Появилось новое задание: {task.get('title','Задание')}")
 
-    is_admin = int(u.id) in cfg.admin_ids
-    await db.upsert_user(
-        {
-            "id": u.id,
-            "username": u.username,
-            "first_name": u.first_name,
-            "last_name": u.last_name,
-            "photo_url": None,
-        },
-        is_admin=is_admin
+# -----------------------------
+# Telegram bot: /start + Stars + admin commands (minimal)
+# -----------------------------
+def start_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📱 Открыть ReviewCash", web_app=WebAppInfo(url=WEBAPP_URL))]],
+        resize_keyboard=True
     )
 
-    text = (
-        "👋 Привет! Это ReviewCash.\n\n"
-        "✅ Тут можно выполнять задания и получать баланс.\n"
-        "🚀 Открывай приложение кнопкой ниже.\n\n"
-        "⚠️ Важно: авто-проверка работает только для Telegram-заданий, где бот может проверить участие (getChatMember).\n"
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    # referral: /start <refid>
+    args = message.text.split()
+    ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+
+    u = message.from_user
+    await ensure_user({
+        "id": u.id,
+        "username": u.username,
+        "first_name": u.first_name,
+        "last_name": u.last_name,
+        "photo_url": None  # Bot API does not give photo_url here
+    }, referrer_id=ref_id)
+
+    await message.answer(
+        "👋 <b>Добро пожаловать в ReviewCash!</b>\n\n"
+        "📌 Тут ты можешь:\n"
+        "• выполнять задания и получать ₽\n"
+        "• запускать рекламу (создавать задания)\n"
+        "• пополнять баланс (CryptoBot / Stars / T-Bank)\n\n"
+        "✅ Нажми кнопку ниже, чтобы открыть приложение.",
+        parse_mode="HTML",
+        reply_markup=start_kb()
     )
-    kb = kb_main(cfg.webapp_url) if cfg.webapp_url else None
-    await m.answer(text, reply_markup=kb)
-    if is_admin:
-        await m.answer("🛡️ Ты админ.", reply_markup=kb_admin())
-    await bump_daily(db, "users_active", 1)
 
-@router.callback_query(F.data == "toggle_notif")
-async def toggle_notif(c: CallbackQuery, db: DB):
-    uid = c.from_user.id
-    r = await db.fetchrow("select notifications from users where tg_user_id=$1", uid)
-    if not r:
-        await c.answer("Сначала нажми /start", show_alert=True)
-        return
-    newv = not bool(r["notifications"])
-    await db.q("update users set notifications=$2 where tg_user_id=$1", uid, newv)
-    await c.answer("🔔 Уведомления: " + ("ON" if newv else "OFF"), show_alert=True)
+# ---- Stars invoice (XTR = Telegram Stars) :contentReference[oaicite:5]{index=5}
+@dp.message(Command("topup_stars"))
+async def cmd_topup_stars(message: types.Message):
+    # /topup_stars 100  (stars)
+    parts = message.text.split()
+    stars = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 100
+    if stars < 1:
+        stars = 1
 
-@router.callback_query(F.data == "admin_claims")
-async def admin_claims(c: CallbackQuery, bot: Bot, db: DB, cfg: Config):
-    if int(c.from_user.id) not in cfg.admin_ids:
-        await c.answer("Нет доступа", show_alert=True)
-        return
-    rows = await db.list_pending_claims()
-    if not rows:
-        await c.message.answer("Pending proofs: пусто ✅")
-        await c.answer()
-        return
-    # show top 10
-    msg = "🛡️ Pending proofs:\n\n"
-    for r in rows[:10]:
-        msg += f"claim_id={r['id']} | user={r['worker_tg_id']} | task={r['title']} | reward={r['reward_rub']}₽\n"
-    msg += "\nКоманды:\n/approve_claim <claim_id>\n/reject_claim <claim_id>"
-    await c.message.answer(msg)
-    await c.answer()
+    payload = f"stars_topup:{message.from_user.id}:{stars}:{now_ts()}"
+    await log_payment(message.from_user.id, "stars", "pending", amount_stars=stars, provider_ref=payload)
 
-@router.callback_query(F.data == "admin_withdraws")
-async def admin_withdraws(c: CallbackQuery, db: DB, cfg: Config):
-    if int(c.from_user.id) not in cfg.admin_ids:
-        await c.answer("Нет доступа", show_alert=True)
-        return
-    rows = await db.list_withdrawals(status="pending")
-    if not rows:
-        await c.message.answer("Pending withdrawals: пусто ✅")
-        await c.answer()
-        return
-    msg = "🏦 Pending withdrawals:\n\n"
-    for w in rows[:10]:
-        msg += f"id={w['id']} | user={w['tg_user_id']} | {w['amount_rub']}₽ | {w['details']}\n"
-    msg += "\nКоманды:\n/pay_withdraw <id>\n/reject_withdraw <id>"
-    await c.message.answer(msg)
-    await c.answer()
-
-@router.message(Command("approve_claim"))
-async def approve_claim(m: Message, bot: Bot, db: DB, cfg: Config):
-    if int(m.from_user.id) not in cfg.admin_ids:
-        return
-    parts = m.text.split()
-    if len(parts) != 2:
-        await m.answer("Usage: /approve_claim <claim_id>")
-        return
-    cid = int(parts[1])
-    r = await db.fetchrow("select * from claims where id=$1", cid)
-    if not r:
-        await m.answer("Not found")
-        return
-    if r["status"] != "pending":
-        await m.answer("Already processed")
-        return
-
-    # payout
-    task = await db.fetchrow("select * from tasks where id=$1", int(r["task_id"]))
-    reward = int(task["reward_rub"]) if task else 0
-    await db.add_balance(int(r["worker_tg_id"]), reward)
-    await db.set_claim_status(cid, "approved", proof_json=r["proof_json"] or {})
-    await bump_daily(db, "tasks_done", 1)
-    await bump_daily(db, "payout_rub", reward)
-
-    await m.answer(f"✅ Approved claim {cid}, +{reward}₽ user {r['worker_tg_id']}")
-    try:
-        await bot.send_message(int(r["worker_tg_id"]), f"✅ Задание подтверждено! Начислено +{reward}₽")
-    except Exception:
-        pass
-
-@router.message(Command("reject_claim"))
-async def reject_claim(m: Message, bot: Bot, db: DB, cfg: Config):
-    if int(m.from_user.id) not in cfg.admin_ids:
-        return
-    parts = m.text.split()
-    if len(parts) != 2:
-        await m.answer("Usage: /reject_claim <claim_id>")
-        return
-    cid = int(parts[1])
-    r = await db.fetchrow("select * from claims where id=$1", cid)
-    if not r:
-        await m.answer("Not found")
-        return
-    if r["status"] != "pending":
-        await m.answer("Already processed")
-        return
-    await db.set_claim_status(cid, "rejected", proof_json=r["proof_json"] or {})
-    await m.answer(f"❌ Rejected claim {cid}")
-    try:
-        await bot.send_message(int(r["worker_tg_id"]), "❌ Отчет отклонен админом.")
-    except Exception:
-        pass
-
-@router.message(Command("pay_withdraw"))
-async def pay_withdraw(m: Message, bot: Bot, db: DB, cfg: Config):
-    if int(m.from_user.id) not in cfg.admin_ids:
-        return
-    parts = m.text.split()
-    if len(parts) != 2:
-        await m.answer("Usage: /pay_withdraw <id>")
-        return
-    wid = int(parts[1])
-    w = await db.fetchrow("select * from withdrawals where id=$1", wid)
-    if not w:
-        await m.answer("Not found")
-        return
-    if w["status"] != "pending":
-        await m.answer("Already processed")
-        return
-    await db.set_withdrawal_status(wid, "paid")
-    await m.answer(f"✅ Withdrawal {wid} marked as PAID")
-    try:
-        await bot.send_message(int(w["tg_user_id"]), f"✅ Ваша выплата {int(w['amount_rub'])}₽ одобрена и отправлена!")
-    except Exception:
-        pass
-
-@router.message(Command("reject_withdraw"))
-async def reject_withdraw(m: Message, bot: Bot, db: DB, cfg: Config):
-    if int(m.from_user.id) not in cfg.admin_ids:
-        return
-    parts = m.text.split()
-    if len(parts) != 2:
-        await m.answer("Usage: /reject_withdraw <id>")
-        return
-    wid = int(parts[1])
-    w = await db.fetchrow("select * from withdrawals where id=$1", wid)
-    if not w:
-        await m.answer("Not found")
-        return
-    if w["status"] != "pending":
-        await m.answer("Already processed")
-        return
-    # refund
-    await db.add_balance(int(w["tg_user_id"]), int(w["amount_rub"]))
-    await db.set_withdrawal_status(wid, "rejected")
-    await m.answer(f"❌ Withdrawal {wid} rejected, refunded")
-    try:
-        await bot.send_message(int(w["tg_user_id"]), f"❌ Выплата отклонена. Средства возвращены: +{int(w['amount_rub'])}₽")
-    except Exception:
-        pass
-
-
-@router.message(F.web_app_data)
-async def on_webapp_data(m: Message, bot: Bot, db: DB, cfg: Config):
-    """
-    Receives payload from tg.sendData(...) from your Mini App.
-    """
-    uid = m.from_user.id
-    try:
-        payload = json.loads(m.web_app_data.data)
-    except Exception:
-        await m.answer("❌ Invalid payload")
-        return
-
-    action = payload.get("action")
-    init_data = payload.get("initData", "")
-    device_id = payload.get("deviceId", "")
-
-    ok, parsed = verify_telegram_initdata(init_data, cfg.bot_token)
-    if not ok:
-        await m.answer("❌ initData signature invalid")
-        return
-
-    iu = extract_user_from_initdata(parsed)
-    if not iu or int(iu.get("id", 0)) != int(uid):
-        await m.answer("❌ initData user mismatch")
-        return
-
-    is_admin = int(uid) in cfg.admin_ids
-    await db.upsert_user(iu, is_admin=is_admin)
-
-    # anti-fraud
-    ok2, reason = await db.register_device_and_check_limits(
-        tg_user_id=int(uid),
-        device_id=str(device_id),
-        max_devices_per_user=cfg.max_devices_per_user,
-        max_users_per_device=cfg.max_users_per_device
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Пополнение баланса",
+        description=f"Пополнение на {stars} ⭐",
+        payload=payload,
+        provider_token="",   # for Stars this is empty string in many SDKs; currency is XTR
+        currency="XTR",
+        prices=[LabeledPrice(label="Stars", amount=stars)]
     )
-    if not ok2:
-        await m.answer(f"🚫 Доступ ограничен: {reason}")
+
+@dp.pre_checkout_query()
+async def pre_checkout(q: PreCheckoutQuery):
+    await q.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def on_success_payment(message: types.Message):
+    sp = message.successful_payment
+    payload = sp.invoice_payload or ""
+    if payload.startswith("stars_topup:"):
+        # total_amount for XTR is in stars
+        stars = int(sp.total_amount)
+        uid = message.from_user.id
+        rub_equiv = float(stars) * STAR_PRICE_RUB
+
+        await add_balance(uid, stars_delta=stars)
+        await sb_execute(supabase.table("payments").update({"status": "paid"}).eq("provider_ref", payload))
+
+        await reward_referrer(uid, rub_equiv)
+        await message.answer(f"⭐ Оплата прошла! Начислено {stars} Stars")
+
+# ---- CryptoBot: create invoice (via WebApp action or command)
+@dp.message(Command("topup_crypto"))
+async def cmd_topup_crypto(message: types.Message):
+    if not crypto:
+        return await message.answer("CryptoBot не подключен (CRYPTO_PAY_TOKEN пуст).")
+    parts = message.text.split()
+    amount_rub = float(parts[1]) if len(parts) > 1 else 500.0
+    if amount_rub < 300:
+        amount_rub = 300.0
+
+    # rough conversion, you can replace with real rate later
+    usdt = round(amount_rub / 95, 2)
+    inv = await crypto.create_invoice(asset="USDT", amount=usdt)
+
+    await log_payment(
+        message.from_user.id,
+        "cryptobot",
+        "pending",
+        amount_rub=amount_rub,
+        provider_ref=str(inv.invoice_id),
+        meta={"asset":"USDT","amount":usdt, "pay_url": inv.bot_invoice_url}
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💎 Оплатить USDT", url=inv.bot_invoice_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"crypto_check:{inv.invoice_id}")]
+    ])
+    await message.answer(
+        f"💳 Счёт создан\nК оплате: {usdt} USDT (~{amount_rub}₽)",
+        reply_markup=kb
+    )
+
+@dp.callback_query(F.data.startswith("crypto_check:"))
+async def cb_crypto_check(call: types.CallbackQuery):
+    if not crypto:
+        return await call.answer("CryptoBot не подключен.", show_alert=True)
+
+    inv_id = int(call.data.split(":")[1])
+    invs = await crypto.get_invoices(invoice_ids=inv_id)
+    inv = invs[0] if isinstance(invs, list) else invs
+
+    if inv.status == "paid":
+        # find pending payment row by provider_ref
+        pr = await sb_execute(supabase.table("payments").select("*").eq("provider_ref", str(inv_id)).single())
+        p = pr.data
+        if p and p["status"] != "paid":
+            uid = int(p["user_id"])
+            amount_rub = float(p["amount_rub"] or 0)
+            await add_balance(uid, rub_delta=amount_rub)
+            await sb_execute(supabase.table("payments").update({"status": "paid"}).eq("id", p["id"]))
+            await reward_referrer(uid, amount_rub)
+        await call.message.edit_text("✅ Оплата подтверждена! Баланс пополнен.")
+    else:
+        await call.answer("Платеж ещё не найден. Попробуй позже.", show_alert=True)
+
+# -----------------------------
+# Background: poll Crypto invoices (so user doesn't need button)
+# -----------------------------
+async def crypto_poll_loop():
+    if not crypto:
         return
+    while True:
+        try:
+            # get up to 50 pending cryptobot payments
+            r = await sb_execute(
+                supabase.table("payments")
+                .select("*")
+                .eq("provider", "cryptobot")
+                .eq("status", "pending")
+                .order("created_at", desc=False)
+                .limit(50)
+            )
+            pending = r.data or []
+            if pending:
+                ids = [int(p["provider_ref"]) for p in pending if str(p.get("provider_ref","")).isdigit()]
+                if ids:
+                    invs = await crypto.get_invoices(invoice_ids=ids)
+                    inv_map = {}
+                    if isinstance(invs, list):
+                        for inv in invs:
+                            inv_map[int(inv.invoice_id)] = inv
+                    for p in pending:
+                        inv_id = int(p["provider_ref"])
+                        inv = inv_map.get(inv_id)
+                        if inv and inv.status == "paid":
+                            uid = int(p["user_id"])
+                            amount_rub = float(p["amount_rub"] or 0)
+                            await add_balance(uid, rub_delta=amount_rub)
+                            await sb_execute(supabase.table("payments").update({"status": "paid"}).eq("id", p["id"]))
+                            await reward_referrer(uid, amount_rub)
+                            await push_to_user(uid, f"✅ CryptoBot оплата подтверждена: +{amount_rub}₽")
+        except Exception as e:
+            logging.exception("crypto poll error: %s", e)
 
-    if action == "auth":
-        me = await db.get_user(int(uid))
-        await m.answer(
-            f"✅ Авторизация ок.\nБаланс: {int(me['balance_rub'])}₽\nУведомления: {'ON' if me['notifications'] else 'OFF'}"
-        )
-        return
+        await asyncio.sleep(15)
 
-    if action == "list_tasks":
-        tasks = await db.list_tasks(only_active=True, limit=50)
-        # In real app you'd return JSON back to Mini App via server;
-        # In Telegram WebApp data flow, easiest is to respond in chat.
-        # But your MiniApp can also maintain UI list client-side.
-        text = "📋 Доступные задания:\n\n"
-        for t in tasks[:20]:
-            text += f"#{t['id']} | {t['title']} | {t['reward_rub']}₽ | left {t['qty_left']}\n"
-        await m.answer(text)
-        return
+# -----------------------------
+# AIOHTTP APP (Render needs an open port)
+# -----------------------------
+async def healthz(_):
+    return web.Response(text="OK")
 
-    if action == "create_task":
-        kind = str(payload.get("kind", "")).strip()
-        if kind not in ALLOWED_KINDS:
-            await m.answer("❌ kind not allowed")
-            return
-
-        title = str(payload.get("title", "")).strip()[:80] or "Задание"
-        target = str(payload.get("target", "")).strip()[:400]
-        instruction = str(payload.get("instruction", "")).strip()[:1500]
-        reward = int(payload.get("reward", 0))
-        qty = int(payload.get("qty", 1))
-
-        if reward <= 0 or qty <= 0:
-            await m.answer("❌ reward/qty invalid")
-            return
-
-        # owner pays = reward * qty
-        total_cost = reward * qty
-        okpay = await db.sub_balance(int(uid), total_cost)
-        if not okpay:
-            await m.answer(f"❌ Недостаточно средств. Нужно {total_cost}₽")
-            return
-
-        row = await db.create_task(int(uid), kind, title, target, instruction, reward, qty)
-        await bump_daily(db, "tasks_created", 1)
-        await bump_daily(db, "revenue_rub", total_cost)
-
-        await m.answer(f"✅ Задание создано: #{row['id']} (списано {total_cost}₽)")
-        # push
-        await push_all(bot, db, f"🆕 Новое задание: {title} (+{reward}₽)")
-        return
-
-    if action == "claim_task":
-        task_id = int(payload.get("taskId", 0))
-        t = await db.fetchrow("select * from tasks where id=$1", task_id)
-        if not t or t["status"] != "active" or int(t["qty_left"]) <= 0:
-            await m.answer("❌ Task not available")
-            return
-
-        kind = str(t["kind"])
-        cooldown = int(cfg.cooldown_by_kind.get(kind, 0))
-        okc, remain = await db.can_do_kind(int(uid), kind, cooldown)
-        if not okc:
-            await m.answer(f"⏳ Лимит на выполнение: доступно через {remain//3600}ч {remain%3600//60}м")
-            return
-
-        ok_claim, reason = await db.create_claim(task_id, int(uid))
-        if not ok_claim:
-            await m.answer("❌ Уже выполняешь/выполнял это задание")
-            return
-
-        await m.answer(f"✅ Ты взял задание #{task_id}. Нажми 'Проверить' в приложении/выполни шаги.")
-        return
-
-    if action == "check_tg_task":
-        # auto-check for tg_channel_join / tg_group_join
-        task_id = int(payload.get("taskId", 0))
-        t = await db.fetchrow("select * from tasks where id=$1", task_id)
-        if not t:
-            await m.answer("❌ Task not found")
-            return
-        kind = str(t["kind"])
-        if kind not in ("tg_channel_join", "tg_group_join"):
-            await m.answer("❌ Auto-check not supported for this kind")
-            return
-
-        chat_username = parse_t_me_target(str(t["target"] or ""))
-        if not chat_username:
-            await m.answer("❌ Нужна ссылка формата t.me/username (публичный чат/канал)")
-            return
-
-        is_member = await check_membership(bot, chat_username, int(uid))
-        if not is_member:
-            await m.answer("❌ Не вижу подписку/участие. Убедись что ты вступил и что бот имеет доступ к чату.")
-            return
-
-        # approve by creating a claim if not exists? Here we approve pending claim for this user+task.
-        claim = await db.fetchrow(
-            "select * from claims where task_id=$1 and worker_tg_id=$2",
-            task_id, int(uid)
-        )
-        if not claim:
-            await m.answer("❌ Сначала возьми задание (claim)")
-            return
-        if claim["status"] != "pending":
-            await m.answer(f"ℹ️ Уже обработано: {claim['status']}")
-            return
-
-        reward = int(t["reward_rub"])
-        await db.add_balance(int(uid), reward)
-        await db.set_claim_status(int(claim["id"]), "approved", proof_json={"auto": True, "checked": "getChatMember"})
-        await db.record_done_kind(int(uid), kind)
-        await bump_daily(db, "tasks_done", 1)
-        await bump_daily(db, "payout_rub", reward)
-
-        await m.answer(f"✅ Проверено автоматически! Начислено +{reward}₽")
-        return
-
-    if action == "withdraw_request":
-        amount = int(payload.get("amount", 0))
-        details = str(payload.get("details", "")).strip()[:200]
-
-        if amount < 300:
-            await m.answer("❌ Минимальный вывод: 300₽")
-            return
-        if not details:
-            await m.answer("❌ Укажи реквизиты")
-            return
-
-        okpay = await db.sub_balance(int(uid), amount)
-        if not okpay:
-            await m.answer("❌ Недостаточно средств")
-            return
-
-        w = await db.create_withdrawal(int(uid), amount, details)
-        await m.answer(f"✅ Заявка на вывод создана: #{w['id']} ({amount}₽)")
-        # notify admins
-        for aid in cfg.admin_ids:
-            try:
-                await bot.send_message(aid, f"🏦 New withdrawal #{w['id']} user={uid} amount={amount} details={details}")
-            except Exception:
-                pass
-        return
-
-    if action == "topup_cryptobot":
-        if not cfg.cryptobot_token or not AioCryptoPay:
-            await m.answer("❌ CryptoBot not configured")
-            return
-        amount = int(payload.get("amount", 0))
-        if amount < 300:
-            await m.answer("❌ Минимум 300₽")
-            return
-
-        # create invoice in CryptoBot (USDT etc)
-        crypto = AioCryptoPay(token=cfg.cryptobot_token, network=Networks.MAIN_NET)
-        inv = await crypto.create_invoice(asset="USDT", amount=round(amount / 100, 2), description=f"Topup {uid}")
-        await db.q(
-            "insert into payments (tg_user_id, provider, provider_invoice, amount_rub, status, payload_json) values ($1,'cryptobot',$2,$3,'pending',$4::jsonb)",
-            int(uid), str(inv.invoice_id), amount, json.dumps(inv.model_dump())
-        )
-        await m.answer(f"💳 CryptoBot invoice создан.\nОплати: {inv.pay_url}")
-        return
-
-    if action == "topup_stars":
-        # Telegram Stars invoices require provider token or special flow depending on setup.
-        # Here is a minimal invoice example; you'll need a valid STARS_PROVIDER_TOKEN.
-        if not cfg.stars_provider_token:
-            await m.answer("❌ Stars not configured (STARS_PROVIDER_TOKEN)")
-            return
-        amount = int(payload.get("amount", 0))
-        if amount < 300:
-            await m.answer("❌ Минимум 300₽")
-            return
-
-        prices = [LabeledPrice(label="Пополнение баланса", amount=amount * 100)]  # in smallest units
-        await bot.send_invoice(
-            chat_id=uid,
-            title="Пополнение баланса",
-            description="Пополнение через Stars",
-            payload=f"topup:{uid}:{amount}:{int(datetime.now().timestamp())}",
-            provider_token=cfg.stars_provider_token,
-            currency="RUB",
-            prices=prices
-        )
-        await m.answer("⭐ Отправил счет Stars.")
-        return
-
-    await m.answer("❌ Unknown action")
-
-
-@router.message(F.successful_payment)
-async def on_success_payment(m: Message, db: DB):
-    """
-    Telegram payment success handler.
-    """
-    uid = m.from_user.id
-    sp = m.successful_payment
-    # payload looks like: topup:uid:amount:ts
-    amount_rub = 0
-    try:
-        parts = sp.invoice_payload.split(":")
-        amount_rub = int(parts[2])
-    except Exception:
-        pass
-    if amount_rub > 0:
-        await db.add_balance(uid, amount_rub)
-        await bump_daily(db, "revenue_rub", amount_rub)
-        await m.answer(f"✅ Оплата получена. Баланс пополнен на {amount_rub}₽")
-
-
-# ----------------- APP SERVER + BOT RUN -----------------
-
-async def setup_webhook(bot: Bot, cfg: Config):
-    if not cfg.webhook_url:
-        return
-    url = cfg.webhook_url.rstrip("/") + cfg.webhook_path
-    await bot.set_webhook(url)
-    log.info("Webhook set: %s", url)
-
-async def delete_webhook(bot: Bot):
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
-
-async def create_aiohttp_app(cfg: Config, bot: Bot, dp: Dispatcher, db: DB) -> web.Application:
+def make_app():
     app = web.Application()
-    app["cfg"] = cfg
-    app["bot"] = bot
-    app["dp"] = dp
-    app["db"] = db
+    app.router.add_get("/healthz", healthz)
 
-    # Telegram webhook handler (if enabled)
-    async def tg_webhook(request: web.Request) -> web.Response:
-        update = await request.json()
-        from aiogram.types import Update
-        await dp.feed_update(bot, Update.model_validate(update))
-        return web.Response(text="ok")
+    # MiniApp API (POST JSON with initData/deviceId)
+    app.router.add_post("/api/me", api_me)
+    app.router.add_post("/api/tasks/list", api_tasks_list)
+    app.router.add_post("/api/tasks/create", api_task_create)
+    app.router.add_post("/api/tasks/complete", api_task_check_and_complete)
+    app.router.add_post("/api/withdraws/create", api_withdraw_create)
+    app.router.add_post("/api/topup/tbank", api_tbank_request)
 
-    # routes
-    app.router.add_get("/admin", handle_admin)
-    if cfg.webhook_url:
-        app.router.add_post(cfg.webhook_path, tg_webhook)
-
-    # health
-    async def health(_):
-        return web.Response(text="ok")
-    app.router.add_get("/health", health)
-
+    # Admin web
+    app.router.add_get("/admin", admin_page)
+    app.router.add_get("/admin/data", admin_data)
+    app.router.add_post("/admin/tbank/approve", admin_tbank_approve)
+    app.router.add_post("/admin/tbank/reject", admin_tbank_reject)
+    app.router.add_post("/admin/withdraw/pay", admin_withdraw_pay)
+    app.router.add_post("/admin/withdraw/reject", admin_withdraw_reject)
     return app
 
-def ensure_env(cfg: Config):
-    if not cfg.bot_token:
-        raise RuntimeError("BOT_TOKEN is not set")
-    if not cfg.database_url:
-        raise RuntimeError("DATABASE_URL is not set")
-    if cfg.webapp_url and not (cfg.webapp_url.startswith("https://") or cfg.webapp_url.startswith("http://")):
-        raise RuntimeError("WEBAPP_URL must be a full URL")
-
 async def main():
-    cfg = Config.from_env()
-    ensure_env(cfg)
+    # start aiohttp web server
+    app = make_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
 
-    bot = Bot(cfg.bot_token)
-    dp = Dispatcher()
-    db = DB(cfg.database_url)
+    port = int(os.getenv("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info("Web server started on %s", port)
 
-    await db.connect()
+    # start crypto polling loop
+    if crypto:
+        asyncio.create_task(crypto_poll_loop())
 
-    # inject deps into handlers
-    dp.include_router(router)
-    dp["db"] = db
-    dp["cfg"] = cfg
-
-    # aiogram dependency injection style:
-    # We pass them via middleware-like simple partials using lambda in handler signature.
-    # Easiest: set as globals by using dp.workflow_data:
-    dp.workflow_data.update({"db": db, "cfg": cfg})
-
-    # start mode
-    if cfg.webhook_url:
-        await setup_webhook(bot, cfg)
-        app = await create_aiohttp_app(cfg, bot, dp, db)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", cfg.port)
-        await site.start()
-        log.info("Web server started on port %s", cfg.port)
-        # keep running
-        await asyncio.Event().wait()
-    else:
-        # polling mode (no port)
-        await delete_webhook(bot)
-        log.info("Starting polling mode")
-        await dp.start_polling(bot, db=db, cfg=cfg)
+    # start bot polling
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Bot polling started")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        log.exception("Fatal: %s", e)
-        raise
+    asyncio.run(main())
