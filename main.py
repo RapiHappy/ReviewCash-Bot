@@ -1,18 +1,17 @@
 import os
 import json
 import hmac
-import base64
 import hashlib
 import asyncio
 import logging
 from datetime import datetime, timezone, date
-from urllib.parse import parse_qsl, unquote_plus
+from urllib.parse import parse_qsl
 
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart, Command
+from aiogram.types import Message, CallbackQuery, WebAppInfo
+from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from supabase import create_client, Client
@@ -33,7 +32,7 @@ SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")  # required
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 ADMIN_WEB_SECRET = os.getenv("ADMIN_WEB_SECRET", "change-me")
 
-BASE_URL = os.getenv("BASE_URL", "")  # e.g. https://reviewcash-bot.onrender.com
+BASE_URL = os.getenv("BASE_URL", "")  # e.g. https://reviewcash-bot.onrender.com  (Mini App URL)
 PORT = int(os.getenv("PORT", "10000"))
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "1") == "1"
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/tg/webhook")
@@ -83,7 +82,6 @@ T_WD = "withdrawals"
 T_LIMITS = "user_limits"
 T_STATS = "stats_daily"
 
-
 # -------------------------
 # helpers: supabase safe exec in thread
 # -------------------------
@@ -115,7 +113,14 @@ async def sb_update(table: str, match: dict, updates: dict):
         return q.execute()
     return await sb_exec(_f)
 
-async def sb_select(table: str, match: dict | None = None, columns: str = "*", limit: int | None = None, order: str | None = None, desc: bool = True):
+async def sb_select(
+    table: str,
+    match: dict | None = None,
+    columns: str = "*",
+    limit: int | None = None,
+    order: str | None = None,
+    desc: bool = True
+):
     def _f():
         q = sb.table(table).select(columns)
         if match:
@@ -133,7 +138,6 @@ async def sb_rpc(fn_name: str, params: dict):
         return sb.rpc(fn_name, params).execute()
     return await sb_exec(_f)
 
-
 # -------------------------
 # Telegram initData verify
 # -------------------------
@@ -149,7 +153,6 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     if not received_hash:
         return None
 
-    # build data_check_string
     data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
     data_check_string = "\n".join(data_check_arr)
 
@@ -165,8 +168,8 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
             pairs["user"] = json.loads(pairs["user"])
         except Exception:
             pass
-    return pairs
 
+    return pairs
 
 # -------------------------
 # anti-fraud: device limits
@@ -197,11 +200,9 @@ async def anti_fraud_check_and_touch(user_id: int, device_hash: str, ip: str, us
     users = {row["tg_user_id"] for row in (res.data or []) if "tg_user_id" in row}
 
     if len(users) > MAX_ACCOUNTS_PER_DEVICE:
-        # ban this user
         await sb_update(T_USERS, {"user_id": user_id}, {"is_banned": True})
         return False, f"Слишком много аккаунтов на одном устройстве ({len(users)})."
     return True, None
-
 
 # -------------------------
 # users/balances
@@ -220,10 +221,8 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         upd["referrer_id"] = referrer_id
 
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
-    # ensure balance row
     await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
 
-    # read user
     u = await sb_select(T_USERS, {"user_id": uid}, limit=1)
     return (u.data or [upd])[0]
 
@@ -247,14 +246,11 @@ async def sub_rub(uid: int, amount: float) -> bool:
     await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
     return True
 
-
 # -------------------------
 # stats
 # -------------------------
 async def stats_add(field: str, amount: float):
-    # field: topups_rub / payouts_rub / revenue_rub
     day = _day().isoformat()
-    # read existing
     r = await sb_select(T_STATS, {"day": day}, limit=1)
     if r.data:
         cur = float(r.data[0].get(field) or 0)
@@ -263,7 +259,6 @@ async def stats_add(field: str, amount: float):
         row = {"day": day, "revenue_rub": 0, "payouts_rub": 0, "topups_rub": 0, "active_users": 0}
         row[field] = float(amount)
         await sb_insert(T_STATS, row)
-
 
 # -------------------------
 # limits (ya/gm cooldown)
@@ -285,8 +280,8 @@ async def check_limit(uid: int, key: str, cooldown_sec: int):
     return True, 0
 
 async def touch_limit(uid: int, key: str):
-    await sb_upsert(T_LIMITS, {"user_id": uid, "limit_key": key, "last_at": _now().isoformat()}, on_conflict="user_id,limit_key")
-
+    await sb_upsert(T_LIMITS, {"user_id": uid, "limit_key": key, "last_at": _now().isoformat()},
+                    on_conflict="user_id,limit_key")
 
 # -------------------------
 # Telegram auto-check: member status
@@ -301,12 +296,10 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
     try:
         cm = await bot.get_chat_member(chat_id=chat, user_id=user_id)
         status = getattr(cm, "status", None)
-        # member/administrator/creator
         return status in ("member", "administrator", "creator")
     except Exception as e:
         log.warning("get_chat_member failed: %s", e)
         return False
-
 
 # -------------------------
 # Push helpers
@@ -324,13 +317,11 @@ async def notify_user(uid: int, text: str):
     except Exception:
         pass
 
-
 # =========================================================
 # WEB API (Mini App -> Bot backend)
 # =========================================================
 
 def get_ip(req: web.Request) -> str:
-    # Render / proxies
     xff = req.headers.get("X-Forwarded-For", "")
     if xff:
         return xff.split(",")[0].strip()
@@ -348,6 +339,13 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
 
     return parsed, user
 
+async def require_admin_init(req: web.Request) -> tuple[dict, dict]:
+    parsed, user = await require_init(req)
+    uid = int(user["id"])
+    if uid not in ADMIN_IDS:
+        raise web.HTTPForbidden(text="Not an admin")
+    return parsed, user
+
 async def api_sync(req: web.Request):
     _, user = await require_init(req)
     body = await req.json()
@@ -356,7 +354,6 @@ async def api_sync(req: web.Request):
     ip = get_ip(req)
 
     ref = None
-    # optional: referrer from body/start param
     if isinstance(body.get("referrer_id"), int):
         ref = body["referrer_id"]
 
@@ -371,7 +368,6 @@ async def api_sync(req: web.Request):
 
     bal = await get_balance(int(user["id"]))
 
-    # return tasks "all"
     tasks = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
     return web.json_response({
         "ok": True,
@@ -415,7 +411,6 @@ async def api_task_create(req: web.Request):
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
-    # owner pays cost_rub; if not provided, make simple formula
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
 
@@ -459,7 +454,6 @@ async def api_task_submit(req: web.Request):
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
 
-    # get task
     t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
@@ -468,7 +462,6 @@ async def api_task_submit(req: web.Request):
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
 
-    # limits for YA/GM
     if task.get("type") == "ya":
         ok_lim, rem = await check_limit(uid, "ya_review", YA_COOLDOWN_SEC)
         if not ok_lim:
@@ -478,7 +471,6 @@ async def api_task_submit(req: web.Request):
         if not ok_lim:
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
-    # check duplicate completion
     dup = await sb_select(T_COMP, {"task_id": task_id, "user_id": uid}, limit=1)
     if dup.data:
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
@@ -493,15 +485,12 @@ async def api_task_submit(req: web.Request):
         if not ok_member:
             return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
 
-        # pay immediately
         reward = float(task.get("reward_rub") or 0)
         await add_rub(uid, reward)
         await stats_add("payouts_rub", reward)
 
-        # decrement qty_left
         await sb_update(T_TASKS, {"id": task_id}, {"qty_left": int(task["qty_left"]) - 1})
 
-        # record completion as paid
         await sb_insert(T_COMP, {
             "task_id": task_id,
             "user_id": uid,
@@ -512,7 +501,6 @@ async def api_task_submit(req: web.Request):
 
         return web.json_response({"ok": True, "status": "paid", "earned": reward})
 
-    # manual -> pending moderation
     await sb_insert(T_COMP, {
         "task_id": task_id,
         "user_id": uid,
@@ -521,7 +509,6 @@ async def api_task_submit(req: web.Request):
         "proof_url": proof_url
     })
 
-    # touch limits on submit
     if task.get("type") == "ya":
         await touch_limit(uid, "ya_review")
     if task.get("type") == "gm":
@@ -529,7 +516,6 @@ async def api_task_submit(req: web.Request):
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     return web.json_response({"ok": True, "status": "pending"})
-
 
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
@@ -562,7 +548,6 @@ async def api_withdraw_list(req: web.Request):
     r = await sb_select(T_WD, {"user_id": uid}, order="created_at", desc=True, limit=100)
     return web.json_response({"ok": True, "withdrawals": r.data or []})
 
-
 # -------------------------
 # payments: T-Bank claim from MiniApp
 # -------------------------
@@ -580,7 +565,6 @@ async def api_tbank_claim(req: web.Request):
     if not sender or not code:
         return web.json_response({"ok": False, "error": "Нужно имя отправителя и код"}, status=400)
 
-    # record payment pending
     row = await sb_insert(T_PAY, {
         "user_id": uid,
         "provider": "tbank",
@@ -593,7 +577,6 @@ async def api_tbank_claim(req: web.Request):
     pid = (row.data or [{}])[0].get("id")
     await notify_admin(f"💳 T-Bank: заявка на пополнение {amount}₽\nUser: {uid}\nCode: {code}\nPaymentID: {pid}")
     return web.json_response({"ok": True, "payment_id": pid})
-
 
 # -------------------------
 # payments: CryptoBot invoice create
@@ -610,13 +593,11 @@ async def api_cryptobot_create(req: web.Request):
     if amount < 300:
         return web.json_response({"ok": False, "error": "Минимум 300₽"}, status=400)
 
-    # Create invoice in USDT for simplicity (пример). Реально можешь сделать RUB эквивалент через курс, но это уже отдельно.
-    # Здесь считаем 1 USDT = 100 RUB как заглушка (лучше позже заменить на реальный курс).
+    # Заглушка: 1 USDT = 100 RUB (лучше потом заменить на реальный курс)
     usdt = round(amount / 100.0, 2)
 
     inv = await crypto.create_invoice(asset="USDT", amount=usdt, description=f"Topup {amount} RUB for {uid}")
 
-    # record pending
     await sb_insert(T_PAY, {
         "user_id": uid,
         "provider": "cryptobot",
@@ -628,7 +609,6 @@ async def api_cryptobot_create(req: web.Request):
 
     return web.json_response({"ok": True, "pay_url": inv.pay_url, "invoice_id": inv.invoice_id})
 
-
 # -------------------------
 # CryptoBot webhook
 # -------------------------
@@ -637,7 +617,6 @@ async def cryptobot_webhook(req: web.Request):
         return web.Response(text="no cryptobot", status=200)
     data = await req.json()
 
-    # aiocryptopay expects update format
     try:
         update = data.get("update", {})
         inv = update.get("payload", {}) or update.get("invoice", {}) or update
@@ -647,7 +626,6 @@ async def cryptobot_webhook(req: web.Request):
         if not invoice_id:
             return web.Response(text="ok", status=200)
 
-        # find payment by provider_ref
         pay = await sb_select(T_PAY, {"provider": "cryptobot", "provider_ref": invoice_id}, limit=1)
         if not pay.data:
             return web.Response(text="ok", status=200)
@@ -669,9 +647,125 @@ async def cryptobot_webhook(req: web.Request):
         log.exception("cryptobot webhook error: %s", e)
         return web.Response(text="ok", status=200)
 
+# =========================================================
+# ADMIN API for Mini App (initData auth)  ✅ НОВОЕ
+# =========================================================
+async def api_admin_proof_list(req: web.Request):
+    await require_admin_init(req)
+
+    r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=200)
+    items = r.data or []
+
+    out = []
+    for c in items:
+        task_id = c.get("task_id")
+        uid = c.get("user_id")
+
+        t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
+        task = (t.data or [{}])[0]
+
+        u = await sb_select(T_USERS, {"user_id": int(uid)}, limit=1)
+        user = (u.data or [{}])[0]
+
+        out.append({
+            "id": c.get("id"),
+            "task_id": task_id,
+            "user_id": uid,
+            "status": c.get("status"),
+            "proof_text": c.get("proof_text"),
+            "proof_url": c.get("proof_url"),
+            "created_at": c.get("created_at"),
+            "task": task,
+            "worker": {
+                "user_id": uid,
+                "username": user.get("username"),
+                "first_name": user.get("first_name"),
+                "last_name": user.get("last_name"),
+            }
+        })
+
+    return web.json_response({"ok": True, "proofs": out})
+
+async def api_admin_proof_decision(req: web.Request):
+    await require_admin_init(req)
+    body = await req.json()
+
+    proof_id = body.get("proof_id")
+    approved = bool(body.get("approved"))
+
+    if not proof_id:
+        raise web.HTTPBadRequest(text="Missing proof_id")
+
+    r = await sb_select(T_COMP, {"id": proof_id}, limit=1)
+    if not r.data:
+        return web.json_response({"ok": False, "error": "not found"}, status=404)
+
+    comp = r.data[0]
+    if comp.get("status") != "pending":
+        return web.json_response({"ok": False, "error": "bad status"}, status=400)
+
+    if not approved:
+        await sb_update(T_COMP, {"id": proof_id}, {"status": "rejected"})
+        await notify_user(int(comp["user_id"]), "❌ Отчет отклонен администратором.")
+        return web.json_response({"ok": True})
+
+    task_id = comp["task_id"]
+    t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
+    if not t.data:
+        return web.json_response({"ok": False, "error": "task not found"}, status=404)
+
+    task = t.data[0]
+    if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
+        return web.json_response({"ok": False, "error": "task closed"}, status=400)
+
+    reward = float(task.get("reward_rub") or 0)
+    uid = int(comp["user_id"])
+
+    await add_rub(uid, reward)
+    await stats_add("payouts_rub", reward)
+    await sb_update(T_TASKS, {"id": task_id}, {"qty_left": int(task["qty_left"]) - 1})
+    await sb_update(T_COMP, {"id": proof_id}, {"status": "paid"})
+
+    await notify_user(uid, f"✅ Отчет принят: +{reward:.2f}₽ ({task.get('title')})")
+    return web.json_response({"ok": True})
+
+async def api_admin_withdraw_list(req: web.Request):
+    await require_admin_init(req)
+    r = await sb_select(T_WD, {}, order="created_at", desc=True, limit=200)
+    return web.json_response({"ok": True, "withdrawals": r.data or []})
+
+async def api_admin_withdraw_decision(req: web.Request):
+    await require_admin_init(req)
+    body = await req.json()
+
+    withdraw_id = body.get("withdraw_id")
+    approved = bool(body.get("approved"))
+    if not withdraw_id:
+        raise web.HTTPBadRequest(text="Missing withdraw_id")
+
+    r = await sb_select(T_WD, {"id": withdraw_id}, limit=1)
+    if not r.data:
+        return web.json_response({"ok": False, "error": "not found"}, status=404)
+
+    w = r.data[0]
+    if w.get("status") != "pending":
+        return web.json_response({"ok": False, "error": "bad status"}, status=400)
+
+    uid = int(w["user_id"])
+    amount = float(w["amount_rub"])
+
+    if approved:
+        await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid", "processed_at": _now().isoformat()})
+        await notify_user(uid, f"✅ Выплата одобрена: {amount:.2f}₽")
+        return web.json_response({"ok": True})
+
+    await add_rub(uid, amount)
+    await sb_update(T_WD, {"id": withdraw_id}, {"status": "rejected", "processed_at": _now().isoformat()})
+    await notify_user(uid, f"❌ Выплата отклонена. Средства возвращены: +{amount:.2f}₽")
+    return web.json_response({"ok": True})
 
 # =========================================================
-# ADMIN WEB (simple)
+# ADMIN WEB (simple)  (старое, через X-Admin-Token — оставляем)
 # =========================================================
 def require_admin_web(req: web.Request):
     token = req.headers.get("X-Admin-Token", "")
@@ -679,7 +773,6 @@ def require_admin_web(req: web.Request):
         raise web.HTTPUnauthorized(text="Bad admin token")
 
 async def admin_dashboard(req: web.Request):
-    # very simple html
     return web.Response(
         text="""<html><head><meta charset="utf-8"><title>ReviewCash Admin</title></head>
 <body style="font-family:Arial;padding:20px;">
@@ -715,7 +808,6 @@ async def admin_proof_approve(req: web.Request):
     if comp.get("status") != "pending":
         return web.json_response({"ok": False, "error": "bad status"}, status=400)
 
-    # get task for reward and qty
     task_id = comp["task_id"]
     t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     if not t.data:
@@ -781,7 +873,6 @@ async def admin_withdraw_reject(req: web.Request):
     if w.get("status") != "pending":
         return web.json_response({"ok": False, "error": "bad status"}, status=400)
 
-    # refund
     uid = int(w["user_id"])
     amount = float(w["amount_rub"])
     await add_rub(uid, amount)
@@ -792,7 +883,6 @@ async def admin_withdraw_reject(req: web.Request):
 
 async def admin_list_payments(req: web.Request):
     require_admin_web(req)
-    # optional filter: ?tbank=1
     q = req.query
     match = {}
     if q.get("tbank") == "1":
@@ -820,7 +910,6 @@ async def admin_payment_approve(req: web.Request):
     await notify_user(uid, f"✅ Пополнение подтверждено: +{amount:.2f}₽ (T-Bank)")
     return web.json_response({"ok": True})
 
-
 # =========================================================
 # BOT (start + webapp data)
 # =========================================================
@@ -835,11 +924,9 @@ async def cmd_start(message: Message):
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="🚀 Открыть приложение", web_app={"url": BASE_URL} if BASE_URL else None)
+    if BASE_URL:
+        kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=BASE_URL))
     kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
-    if not BASE_URL:
-        kb = InlineKeyboardBuilder()
-        kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
 
     text = (
         "👋 Добро пожаловать в ReviewCash!\n\n"
@@ -895,7 +982,6 @@ async def on_webapp_data(message: Message):
 
     await message.answer("✅ Данные получены.")
 
-
 # =========================================================
 # aiohttp app + webhook
 # =========================================================
@@ -903,7 +989,6 @@ async def health(req: web.Request):
     return web.Response(text="OK")
 
 async def tg_webhook(req: web.Request):
-    # aiogram webhook handler
     update = await req.json()
     await dp.feed_webhook_update(bot, update)
     return web.Response(text="OK")
@@ -929,10 +1014,16 @@ def make_app():
     app.router.add_post("/api/tbank/claim", api_tbank_claim)
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
 
+    # ✅ admin api for miniapp (initData auth)
+    app.router.add_post("/api/admin/proof/list", api_admin_proof_list)
+    app.router.add_post("/api/admin/proof/decision", api_admin_proof_decision)
+    app.router.add_post("/api/admin/withdraw/list", api_admin_withdraw_list)
+    app.router.add_post("/api/admin/withdraw/decision", api_admin_withdraw_decision)
+
     # cryptobot webhook
     app.router.add_post(CRYPTO_WEBHOOK_PATH, cryptobot_webhook)
 
-    # admin web
+    # admin web (старое)
     app.router.add_get("/admin", admin_dashboard)
     app.router.add_get("/admin/api/proofs", admin_list_proofs)
     app.router.add_post("/admin/api/proofs/{cid}/approve", admin_proof_approve)
@@ -951,7 +1042,6 @@ async def on_startup(app: web.Application):
         await bot.set_webhook(wh_url)
         log.info("Webhook set to %s", wh_url)
     else:
-        # long polling fallback (for local dev)
         asyncio.create_task(dp.start_polling(bot))
         log.info("Polling started")
 
