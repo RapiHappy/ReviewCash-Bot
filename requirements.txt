@@ -1,4 +1,4 @@
 aiogram==3.10.0
-aiohttp
-supabase
-aiocryptopay
+aiohttp==3.9.5
+supabase==2.16.0
+aiocryptopay==0.4.8
