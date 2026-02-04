@@ -2,18 +2,19 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <meta name="api-base" content="https://reviewcash-bot.onrender.com" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>ReviewCash Ultimate Pro</title>
   
   <!-- ERROR HANDLER -->
   <script>
     window.addEventListener('error', function(event) {
-      const errBox = document.getElementById('global-error-box');
+      var errBox = document.getElementById('global-error-box');
       if(errBox) {
         errBox.style.display = 'block';
         errBox.textContent = 'Err: ' + event.message;
       }
-      const loader = document.getElementById('loader');
+      var loader = document.getElementById('loader');
       if(loader) loader.style.display = 'none';
     });
   </script>
