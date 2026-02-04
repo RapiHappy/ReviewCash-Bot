@@ -1034,8 +1034,7 @@ def make_app():
     app = web.Application()
 
     app.router.add_get("/", health)
-    app.router.add_head("/", health)
-
+   
     # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
