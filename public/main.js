@@ -1488,6 +1488,11 @@ window.openModal = function (id) {
         renderWithdrawals();
     }
 };
+
+window.closeModal = function () {
+    document.querySelectorAll('.overlay').forEach(function (o) { return o.classList.remove('active'); });
+};
+
 function (id) {
     document.getElementById(id).classList.add('active');
     if (id === 'm-create') {
