@@ -4,6 +4,7 @@
 // ✅ Убраны дубли `closeModal`
 // ✅ `openModal/closeModal` оставлены в одном экземпляре
 // =========================
+console.log("ReviewCash main.js version:", "2026-02-05_17-xx");
 
 var __assign =
   (this && this.__assign) ||
