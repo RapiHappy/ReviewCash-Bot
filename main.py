@@ -47,9 +47,8 @@ PORT = int(os.getenv("PORT", "10000"))
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "1") == "1"
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/tg/webhook")
 
-# CORS (needed when Mini App is on a different domain, e.g. GitHub Pages)
+# CORS
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-# If empty -> allow only same-origin (no CORS headers added).
 
 # anti-fraud
 MAX_ACCOUNTS_PER_DEVICE = int(os.getenv("MAX_ACCOUNTS_PER_DEVICE", "2"))
@@ -61,15 +60,13 @@ GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)))
 # topup minimum
 MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "300"))
 
-# Stars: how many RUB is 1 Star worth in your system (default: 1 RUB per Star)
+# Stars
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0"))
 
 # CryptoBot
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "")
 CRYPTO_PAY_NETWORK = os.getenv("CRYPTO_PAY_NETWORK", "MAIN_NET")  # MAIN_NET / TEST_NET
 CRYPTO_WEBHOOK_PATH = os.getenv("CRYPTO_WEBHOOK_PATH", "/cryptobot/webhook")
-
-# simple conversion for invoice amount (RUB per 1 USDT), used only to build invoice amount
 CRYPTO_RUB_PER_USDT = float(os.getenv("CRYPTO_RUB_PER_USDT", "100"))
 
 # -------------------------
@@ -93,7 +90,7 @@ if CRYPTO_PAY_TOKEN:
     )
 
 # -------------------------
-# DB table names (match your Supabase)
+# DB table names
 # -------------------------
 T_USERS = "users"
 T_BAL = "balances"
@@ -105,9 +102,9 @@ T_WD = "withdrawals"
 T_LIMITS = "user_limits"
 T_STATS = "stats_daily"
 
-# -------------------------
+# =========================================================
 # helpers: supabase safe exec in thread
-# -------------------------
+# =========================================================
 async def sb_exec(fn):
     return await asyncio.to_thread(fn)
 
@@ -156,9 +153,9 @@ async def sb_select(
         return q.execute()
     return await sb_exec(_f)
 
-# -------------------------
+# =========================================================
 # Telegram initData verify
-# -------------------------
+# =========================================================
 def verify_init_data(init_data: str, token: str) -> dict | None:
     if not init_data:
         return None
@@ -185,40 +182,48 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
-# -------------------------
-# anti-fraud: device limits
-# -------------------------
+# =========================================================
+# Anti-fraud: device limits
+# FIX: use user_id (NOT tg_user_id)
+# =========================================================
 def sha256_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+    return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
 async def anti_fraud_check_and_touch(user_id: int, device_hash: str, ip: str, user_agent: str):
     if not device_hash:
         return True, None
 
-    ip_hash = sha256_hex(ip or "")
-    ua_hash = sha256_hex(user_agent or "")
+    ip_hash = sha256_hex(ip)
+    ua_hash = sha256_hex(user_agent)
 
-    await sb_upsert(T_DEV, {
-        "tg_user_id": user_id,
-        "device_hash": device_hash,
-        "last_seen_at": _now().isoformat(),
-        "ip_hash": ip_hash,
-        "user_agent_hash": ua_hash
-    }, on_conflict="tg_user_id,device_hash")
+    # IMPORTANT: table user_devices should have user_id, device_hash
+    await sb_upsert(
+        T_DEV,
+        {
+            "user_id": user_id,
+            "device_hash": device_hash,
+            "last_seen_at": _now().isoformat(),
+            "ip_hash": ip_hash,
+            "user_agent_hash": ua_hash,
+        },
+        on_conflict="user_id,device_hash"
+    )
 
     def _f():
-        return sb.table(T_DEV).select("tg_user_id").eq("device_hash", device_hash).execute()
+        return sb.table(T_DEV).select("user_id").eq("device_hash", device_hash).execute()
+
     res = await sb_exec(_f)
-    users = {row["tg_user_id"] for row in (res.data or []) if "tg_user_id" in row}
+    users = {row["user_id"] for row in (res.data or []) if "user_id" in row}
 
     if len(users) > MAX_ACCOUNTS_PER_DEVICE:
         await sb_update(T_USERS, {"user_id": user_id}, {"is_banned": True})
         return False, f"Слишком много аккаунтов на одном устройстве ({len(users)})."
+
     return True, None
 
-# -------------------------
-# users/balances
-# -------------------------
+# =========================================================
+# Users / balances
+# =========================================================
 async def ensure_user(user: dict, referrer_id: int | None = None):
     uid = int(user["id"])
     upd = {
@@ -247,7 +252,8 @@ async def get_balance(uid: int):
 async def add_rub(uid: int, amount: float):
     bal = await get_balance(uid)
     new_val = float(bal.get("rub_balance") or 0) + float(amount)
-    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": new_val, "updated_at": _now().isoformat()})
+    # IMPORTANT: do not touch updated_at if your table doesn't have it
+    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": new_val})
     return new_val
 
 async def sub_rub(uid: int, amount: float) -> bool:
@@ -255,12 +261,12 @@ async def sub_rub(uid: int, amount: float) -> bool:
     cur = float(bal.get("rub_balance") or 0)
     if cur < float(amount):
         return False
-    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
+    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": cur - float(amount)})
     return True
 
-# -------------------------
+# =========================================================
 # stats
-# -------------------------
+# =========================================================
 async def stats_add(field: str, amount: float):
     day = _day().isoformat()
     r = await sb_select(T_STATS, {"day": day}, limit=1)
@@ -272,9 +278,9 @@ async def stats_add(field: str, amount: float):
         row[field] = float(amount)
         await sb_insert(T_STATS, row)
 
-# -------------------------
+# =========================================================
 # limits (ya/gm cooldown)
-# -------------------------
+# =========================================================
 async def check_limit(uid: int, key: str, cooldown_sec: int):
     r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
     last_at = None
@@ -283,7 +289,7 @@ async def check_limit(uid: int, key: str, cooldown_sec: int):
     if not last_at:
         return True, 0
     try:
-        dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(last_at).replace("Z", "+00:00"))
     except Exception:
         return True, 0
     diff = (_now() - dt).total_seconds()
@@ -298,9 +304,9 @@ async def touch_limit(uid: int, key: str):
         on_conflict="user_id,limit_key"
     )
 
-# -------------------------
+# =========================================================
 # Telegram auto-check: member status
-# -------------------------
+# =========================================================
 async def tg_is_member(chat: str, user_id: int) -> bool:
     try:
         cm = await bot.get_chat_member(chat_id=chat, user_id=user_id)
@@ -310,9 +316,9 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
         log.warning("get_chat_member failed: %s", e)
         return False
 
-# -------------------------
+# =========================================================
 # Push helpers
-# -------------------------
+# =========================================================
 async def notify_admin(text: str):
     for aid in ADMIN_IDS:
         try:
@@ -327,7 +333,7 @@ async def notify_user(uid: int, text: str):
         pass
 
 # =========================================================
-# WEB API (Mini App -> Bot backend)  (initData)
+# WEB API (Mini App -> backend)  (initData)
 # =========================================================
 def get_ip(req: web.Request) -> str:
     xff = req.headers.get("X-Forwarded-For", "")
@@ -346,6 +352,26 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
         raise web.HTTPUnauthorized(text="No user in initData")
 
     return parsed, user
+
+def parse_task_id(v):
+    """
+    Makes task_id safe for Supabase filter:
+    - if digits -> int (for bigint PK)
+    - else -> string (uuid/text)
+    """
+    if v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        try:
+            return int(s)
+        except Exception:
+            return s
+    return s
 
 async def api_sync(req: web.Request):
     _, user = await require_init(req)
@@ -368,8 +394,8 @@ async def api_sync(req: web.Request):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
     bal = await get_balance(int(user["id"]))
-
     tasks = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
+
     return web.json_response({
         "ok": True,
         "user": {
@@ -442,19 +468,23 @@ async def api_task_submit(req: web.Request):
     uid = int(user["id"])
     body = await req.json()
 
-    task_id = (body.get("task_id") or "").strip()
+    task_id_raw = body.get("task_id")
+    task_id = parse_task_id(task_id_raw)
+
     proof_text = (body.get("proof_text") or "").strip()
     proof_url = (body.get("proof_url") or "").strip() or None
 
-    if not task_id:
+    if task_id is None:
         raise web.HTTPBadRequest(text="Missing task_id")
 
     t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
-    task = t.data[0]
 
-    if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
+    task = t.data[0]
+    qty_left = int(task.get("qty_left") or 0)
+
+    if task.get("status") != "active" or qty_left <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
 
     if task.get("type") == "ya":
@@ -484,7 +514,11 @@ async def api_task_submit(req: web.Request):
         await add_rub(uid, reward)
         await stats_add("payouts_rub", reward)
 
-        await sb_update(T_TASKS, {"id": task_id}, {"qty_left": int(task["qty_left"]) - 1})
+        new_left = max(0, qty_left - 1)
+        upd = {"qty_left": new_left}
+        if new_left == 0:
+            upd["status"] = "closed"
+        await sb_update(T_TASKS, {"id": task_id}, upd)
 
         await sb_insert(T_COMP, {
             "task_id": task_id,
@@ -496,6 +530,7 @@ async def api_task_submit(req: web.Request):
 
         return web.json_response({"ok": True, "status": "paid", "earned": reward})
 
+    # manual
     await sb_insert(T_COMP, {
         "task_id": task_id,
         "user_id": uid,
@@ -668,6 +703,9 @@ async def api_ops_list(req: web.Request):
     ops.sort(key=lambda x: _dt_key(x.get("created_at")), reverse=True)
     return web.json_response({"ok": True, "operations": ops})
 
+# =========================================================
+# BOT HANDLERS
+# =========================================================
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     uid = message.from_user.id
@@ -679,8 +717,8 @@ async def cmd_start(message: Message):
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
 
     kb = InlineKeyboardBuilder()
-    if BASE_URL:
-        miniapp_url = (MINIAPP_URL or (BASE_URL.rstrip("/") + "/app/"))
+    miniapp_url = MINIAPP_URL or ((BASE_URL.rstrip("/") + "/app/") if BASE_URL else "")
+    if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
     kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
 
@@ -855,17 +893,16 @@ async def on_webapp_data(message: Message):
 
     return await message.answer("✅ Данные получены.")
 
-
-# -------------------------
-# CORS middleware (for GitHub Pages / external domains)
-# -------------------------
-
+# =========================================================
+# CORS middleware
+# =========================================================
 def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
     origin = req.headers.get("Origin")
     if not origin:
         return
     if not CORS_ORIGINS:
         return
+
     if "*" in CORS_ORIGINS:
         resp.headers["Access-Control-Allow-Origin"] = "*"
     elif origin in CORS_ORIGINS:
@@ -873,6 +910,7 @@ def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
         resp.headers["Vary"] = "Origin"
     else:
         return
+
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Admin-Token"
     resp.headers["Access-Control-Max-Age"] = "86400"
@@ -888,7 +926,7 @@ async def cors_middleware(req: web.Request, handler):
     return resp
 
 # =========================================================
-# aiohttp app + webhook + static Mini App
+# aiohttp app + webhook + static
 # =========================================================
 async def health(req: web.Request):
     return web.Response(text="OK")
@@ -901,17 +939,11 @@ async def tg_webhook(req: web.Request):
 def make_app():
     app = web.Application(middlewares=[cors_middleware])
 
-    # Health endpoint at "/"
     app.router.add_get("/", health)
-    # Static Mini App at /app/
-    # Put files into ./public:
-    #   public/index.html
-    #   public/main.js
-    #   public/styles.css
+
     base_dir = Path(__file__).resolve().parent
     static_dir = base_dir / "public"
     if static_dir.exists():
-        # Serve index.html on /app/ (so it doesn't show directory listing)
         async def app_index(req: web.Request):
             return web.FileResponse(static_dir / "index.html")
         app.router.add_get("/app", lambda req: web.HTTPFound("/app/"))
@@ -920,10 +952,8 @@ def make_app():
     else:
         log.warning("Static dir not found: %s", static_dir)
 
-    # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
-    # public api for miniapp (initData)
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/submit", api_task_submit)
@@ -934,7 +964,6 @@ def make_app():
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
     app.router.add_post("/api/ops/list", api_ops_list)
 
-    # cryptobot webhook
     app.router.add_post(CRYPTO_WEBHOOK_PATH, cryptobot_webhook)
 
     return app
