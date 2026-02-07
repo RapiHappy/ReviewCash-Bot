@@ -1,11 +1,15 @@
 // =========================
-// ReviewCash MiniApp (single file JS) — FIXED
-// ✅ Убрана синтакс-ошибка: `function (id) {}`
-// ✅ Убраны дубли `closeModal`
-// ✅ `openModal/closeModal` оставлены в одном экземпляре
+// ReviewCash MiniApp (single file JS) — FULL (WORKING CORE)
+// ✅ FIX: понятные ошибки если Mini App открыт НЕ в Telegram (без initData)
+// ✅ FIX: CryptoBot пополнение через /api/pay/cryptobot/create
+// ✅ FIX: Stars пополнение через tg.sendData -> бот отправляет invoice
+// ✅ FIX: /api/admin/* не роняет UI (если не админ / нет эндпоинтов)
+// ✅ FIX: единые openModal/closeModal
 // =========================
-console.log("ReviewCash main.js version:", "2026-02-05_17-xx");
 
+/* -------------------------------------------------------
+   TS helper shims (from your build)
+-------------------------------------------------------- */
 var __assign =
   (this && this.__assign) ||
   function () {
@@ -199,7 +203,9 @@ var __spreadArray =
     return to.concat(ar || Array.prototype.slice.call(from));
   };
 
-// Mock Telegram WebApp for non-Telegram environments
+/* -------------------------------------------------------
+   Telegram + Mock (safe outside TG)
+-------------------------------------------------------- */
 var MockTelegram = {
   WebApp: {
     expand: function () {
@@ -223,7 +229,7 @@ var MockTelegram = {
       alert(
         "DEV MODE: Data sent to bot:\n" +
           data +
-          "\n\nIn real app, this closes the window."
+          "\n\nВ реальном Telegram Mini App окно может закрыться."
       );
     },
     ready: function () {
@@ -232,17 +238,30 @@ var MockTelegram = {
     initData: "",
     initDataUnsafe: {
       user: {
-        id: 123456, // MOCK USER
+        id: 123456,
         username: "miniapp_user",
         first_name: "Alex",
         last_name: "Test",
-        // photo_url intentionally left undefined to test fallback
       },
     },
   },
 };
 
-// HELPER: Get User Data Safely
+var tg =
+  window.Telegram && window.Telegram.WebApp
+    ? window.Telegram.WebApp
+    : MockTelegram.WebApp;
+
+function isInTelegram() {
+  return !!(
+    window.Telegram &&
+    window.Telegram.WebApp &&
+    typeof window.Telegram.WebApp.initData === "string" &&
+    window.Telegram.WebApp.initData.length > 0
+  );
+}
+
+// Get User Data Safely
 function getTgUser() {
   if (
     window.Telegram &&
@@ -255,37 +274,31 @@ function getTgUser() {
   return MockTelegram.WebApp.initDataUnsafe.user;
 }
 
-var tg =
-  window.Telegram && window.Telegram.WebApp
-    ? window.Telegram.WebApp
-    : MockTelegram.WebApp;
-
-// --- API BASE ---
-// GitHub Pages != backend domain. Set in index.html: <meta name="api-base" content="https://YOUR-BACKEND">
-function getApiBase() {
-  var meta = document.querySelector('meta[name="api-base"]');
-  var v = meta ? meta.getAttribute("content") : "";
-  if (v) return String(v).replace(/\/+$/, "");
-
-  // optional: ?api=https%3A%2F%2Fyour-backend
-  var qs = window.location && window.location.search ? window.location.search : "";
-  var m = qs.match(/[?&]api=([^&]+)/);
-  if (m && m[1]) return decodeURIComponent(m[1]).replace(/\/+$/, "");
-
-  // fallback: same-origin (works only if Mini App and backend are on same domain)
-  return window.location.origin;
-}
-
-var API = getApiBase();
-
 function tgInitData() {
-  // Telegram передает строку initData (для проверки подписи на сервере)
   return window.Telegram &&
     window.Telegram.WebApp &&
     typeof window.Telegram.WebApp.initData === "string"
     ? window.Telegram.WebApp.initData
     : "";
 }
+
+/* -------------------------------------------------------
+   API base
+-------------------------------------------------------- */
+function getApiBase() {
+  var meta = document.querySelector('meta[name="api-base"]');
+  var v = meta ? meta.getAttribute("content") : "";
+  if (v) return String(v).replace(/\/+$/, "");
+
+  var qs =
+    window.location && window.location.search ? window.location.search : "";
+  var m = qs.match(/[?&]api=([^&]+)/);
+  if (m && m[1]) return decodeURIComponent(m[1]).replace(/\/+$/, "");
+
+  return window.location.origin;
+}
+
+var API = getApiBase();
 
 function getDeviceHash() {
   var v = localStorage.getItem("device_hash");
@@ -298,10 +311,16 @@ function getDeviceHash() {
 
 function apiPost(path, data) {
   return __awaiter(this, void 0, void 0, function () {
-    var res, j;
+    var res, j, txt;
     return __generator(this, function (_a) {
       switch (_a.label) {
         case 0:
+          // ВАЖНО: если Mini App открыт НЕ в Telegram — initData пустой и сервер даст 401
+          if (!isInTelegram()) {
+            throw new Error(
+              "Открой Mini App внутри Telegram (иначе сервер отклоняет запросы: initData пустой)."
+            );
+          }
           return [
             4 /*yield*/,
             fetch(API + path, {
@@ -311,17 +330,29 @@ function apiPost(path, data) {
                 "X-Tg-InitData": tgInitData(),
               },
               body: JSON.stringify(
-                __assign(__assign({}, data || {}), { device_hash: getDeviceHash() })
+                __assign(__assign({}, data || {}), {
+                  device_hash: getDeviceHash(),
+                })
               ),
             }),
           ];
         case 1:
           res = _a.sent();
-          return [4 /*yield*/, res.json().catch(function () { return ({}); })];
+          _a.label = 2;
         case 2:
+          _a.trys.push([2, 4, , 5]);
+          return [4 /*yield*/, res.json()];
+        case 3:
           j = _a.sent();
+          return [3 /*break*/, 5];
+        case 4:
+          _a.sent();
+          j = {};
+          return [3 /*break*/, 5];
+        case 5:
           if (!res.ok || j.ok === false) {
-            throw new Error(j.error || ("HTTP " + res.status));
+            txt = j.error || ("HTTP " + res.status);
+            throw new Error(txt);
           }
           return [2 /*return*/, j];
       }
@@ -329,7 +360,7 @@ function apiPost(path, data) {
   });
 }
 
-// Fallback storage (чтобы старые куски UI не падали в dev/браузере)
+// fallback miniappsAI storage
 var miniappsAI = window.miniappsAI || {
   storage: {
     getItem: function (k) {
@@ -349,7 +380,9 @@ var miniappsAI = window.miniappsAI || {
   },
 };
 
-// --- CONFIGURATION ---
+/* -------------------------------------------------------
+   Config
+-------------------------------------------------------- */
 var ADMIN_IDS = [6482440657, 123456];
 
 var ASSETS = {
@@ -359,24 +392,80 @@ var ASSETS = {
 };
 
 var TG_TASK_TYPES = {
-  tg_sub: { label: "Подписка на канал", cost: 30, reward: 15, icon: "📢", action: "Подписаться" },
-  tg_group: { label: "Вступление в группу", cost: 25, reward: 12, icon: "👥", action: "Вступить" },
-  tg_react: { label: "Просмотр + Реакция", cost: 10, reward: 5, icon: "❤️", action: "Смотреть пост" },
-  tg_poll: { label: "Участие в опросе", cost: 15, reward: 7, icon: "📊", action: "Голосовать" },
-  tg_start: { label: "Запуск бота /start", cost: 25, reward: 12, icon: "🤖", action: "Запустить" },
-  tg_msg: { label: "Сообщение боту", cost: 15, reward: 7, icon: "✉️", action: "Написать" },
-  tg_mapp: { label: "Открыть Mini App", cost: 40, reward: 20, icon: "📱", action: "Открыть App" },
-  tg_hold: { label: "Подписка + 24ч", cost: 60, reward: 30, icon: "⏳", action: "Подписаться" },
-  tg_invite: { label: "Инвайт друзей", cost: 100, reward: 50, icon: "🤝", action: "Пригласить" },
+  tg_sub: {
+    label: "Подписка на канал",
+    cost: 30,
+    reward: 15,
+    icon: "📢",
+    action: "Подписаться",
+  },
+  tg_group: {
+    label: "Вступление в группу",
+    cost: 25,
+    reward: 12,
+    icon: "👥",
+    action: "Вступить",
+  },
+  tg_react: {
+    label: "Просмотр + Реакция",
+    cost: 10,
+    reward: 5,
+    icon: "❤️",
+    action: "Смотреть пост",
+  },
+  tg_poll: {
+    label: "Участие в опросе",
+    cost: 15,
+    reward: 7,
+    icon: "📊",
+    action: "Голосовать",
+  },
+  tg_start: {
+    label: "Запуск бота /start",
+    cost: 25,
+    reward: 12,
+    icon: "🤖",
+    action: "Запустить",
+  },
+  tg_msg: {
+    label: "Сообщение боту",
+    cost: 15,
+    reward: 7,
+    icon: "✉️",
+    action: "Написать",
+  },
+  tg_mapp: {
+    label: "Открыть Mini App",
+    cost: 40,
+    reward: 20,
+    icon: "📱",
+    action: "Открыть App",
+  },
+  tg_hold: {
+    label: "Подписка + 24ч",
+    cost: 60,
+    reward: 30,
+    icon: "⏳",
+    action: "Подписаться",
+  },
+  tg_invite: {
+    label: "Инвайт друзей",
+    cost: 100,
+    reward: 50,
+    icon: "🤝",
+    action: "Пригласить",
+  },
 };
 
-// --- TASK LIMITS ---
+// Limits client-side (UX only; server still enforces)
 var TASK_LIMITS = {
-  ya: 3 * 24 * 60 * 60 * 1000, // 3 days
-  gm: 1 * 24 * 60 * 60 * 1000, // 1 day
+  ya: 3 * 24 * 60 * 60 * 1000,
+  gm: 1 * 24 * 60 * 60 * 1000,
 };
 
-// INITIAL STATE
+/* -------------------------------------------------------
+   State
+-------------------------------------------------------- */
 var state = {
   filter: "all",
   user: { rub: 0, stars: 0, xp: 0, level: 1 },
@@ -387,7 +476,7 @@ var state = {
   withdrawals: [],
   adminWithdrawals: [],
   referrals: { count: 0, earned: 0 },
-  limits: {}, // Local cache of limits
+  limits: {},
 };
 
 var isLinkValid = false;
@@ -395,21 +484,38 @@ var linkCheckTimer = null;
 var selectedProofFile = null;
 var activeAdminTab = "proofs";
 
-// Initialization
+var __warnedNoTG = false;
+function warnNoTelegramOnce(errMsg) {
+  if (__warnedNoTG) return;
+  __warnedNoTG = true;
+  try {
+    tg.showAlert(errMsg);
+  } catch (e) {
+    alert(errMsg);
+  }
+}
+
+/* -------------------------------------------------------
+   Init
+-------------------------------------------------------- */
 function initApp() {
   return __awaiter(this, void 0, void 0, function () {
     var e_1, e_2, loader, targetInput;
     return __generator(this, function (_a) {
       switch (_a.label) {
         case 0:
-          if (window.Telegram && window.Telegram.WebApp) {
-            if (window.Telegram.WebApp.ready) window.Telegram.WebApp.ready();
-            if (window.Telegram.WebApp.expand) window.Telegram.WebApp.expand();
-          } else {
-            MockTelegram.WebApp.expand();
-          }
+          try {
+            if (window.Telegram && window.Telegram.WebApp) {
+              if (window.Telegram.WebApp.ready) window.Telegram.WebApp.ready();
+              if (window.Telegram.WebApp.expand) window.Telegram.WebApp.expand();
+            } else {
+              MockTelegram.WebApp.expand();
+            }
+          } catch (e) {}
+
           populateTgTypes();
           setupProfileUI();
+
           _a.label = 1;
         case 1:
           _a.trys.push([1, 3, , 4]);
@@ -420,9 +526,20 @@ function initApp() {
         case 3:
           e_1 = _a.sent();
           console.error("Data load error", e_1);
+          // если не в Telegram — UI может жить, но функции не будут работать
+          if (!isInTelegram()) {
+            warnNoTelegramOnce(
+              "⚠️ Это демо-страница. Открой Mini App кнопкой в Telegram-боте — тогда будут работать задания/пополнения."
+            );
+          } else {
+            try {
+              tg.showAlert("Ошибка синхронизации: " + (e_1.message || e_1));
+            } catch (e) {}
+          }
           return [3 /*break*/, 4];
         case 4:
           checkAdmin();
+
           _a.label = 5;
         case 5:
           _a.trys.push([5, 7, , 8]);
@@ -432,7 +549,7 @@ function initApp() {
           return [3 /*break*/, 8];
         case 7:
           e_2 = _a.sent();
-          console.error("Admin load error", e_2);
+          console.warn("Admin load skipped/error", e_2);
           return [3 /*break*/, 8];
         case 8:
           checkLevelUp();
@@ -443,7 +560,9 @@ function initApp() {
           if (loader) {
             loader.classList.add("fade-out");
             setTimeout(function () {
-              loader.remove();
+              try {
+                loader.remove();
+              } catch (e) {}
               var cont = document.querySelector(".app-container");
               if (cont) cont.classList.add("anim-active");
             }, 300);
@@ -473,21 +592,25 @@ function initApp() {
 
               if (statusEl) {
                 statusEl.className = "input-status visible checking";
-                statusEl.innerHTML = '<span class="spin-icon">⏳</span> Проверка ссылки...';
+                statusEl.innerHTML =
+                  '<span class="spin-icon">⏳</span> Проверка ссылки...';
               }
 
               linkCheckTimer = setTimeout(function () {
                 var isValid =
                   /^https?:\/\/.+\..+/.test(val) ||
                   /^t\.me\/.+/.test(val) ||
-                  /^[\w-]+\.+[\w-]+/.test(val);
+                  /^@[\w_]+/.test(val);
 
                 if (statusEl) {
-                  statusEl.className = "input-status visible " + (isValid ? "valid" : "invalid");
-                  statusEl.innerHTML = isValid ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
+                  statusEl.className =
+                    "input-status visible " + (isValid ? "valid" : "invalid");
+                  statusEl.innerHTML = isValid
+                    ? "✅ Ссылка корректна"
+                    : "❌ Некорректная ссылка";
                 }
                 isLinkValid = !!isValid;
-              }, 800);
+              }, 700);
             });
           }
 
@@ -502,6 +625,9 @@ document.addEventListener("DOMContentLoaded", function () {
   initApp().catch(console.error);
 });
 
+/* -------------------------------------------------------
+   UI helpers
+-------------------------------------------------------- */
 function populateTgTypes() {
   var sel = document.getElementById("t-tg-subtype");
   if (!sel) return;
@@ -536,7 +662,11 @@ function setupProfileUI() {
     }
 
     var photoSrc;
-    if (user && typeof user.photo_url === "string" && user.photo_url.startsWith("http")) {
+    if (
+      user &&
+      typeof user.photo_url === "string" &&
+      user.photo_url.startsWith("http")
+    ) {
       photoSrc = user.photo_url;
     } else {
       photoSrc =
@@ -582,9 +712,12 @@ function checkAdmin() {
   }
 }
 
+/* -------------------------------------------------------
+   Data load (server)
+-------------------------------------------------------- */
 function loadData() {
   return __awaiter(this, void 0, void 0, function () {
-    var r, myId, w, e_3;
+    var r, myId, w, e_3, ops, e_33;
     var _a;
     return __generator(this, function (_b) {
       switch (_b.label) {
@@ -592,6 +725,7 @@ function loadData() {
           return [4 /*yield*/, apiPost("/api/sync", {})];
         case 1:
           r = _b.sent();
+
           state.user.rub = Number((r.balance && r.balance.rub_balance) || 0);
           state.user.stars = Number((r.balance && r.balance.stars_balance) || 0);
           if (r.balance && typeof r.balance.xp !== "undefined")
@@ -603,7 +737,9 @@ function loadData() {
 
           state.tasks = (r.tasks || []).map(function (t) {
             var ownerId = Number(t.owner_id || t.user_id || 0);
-            var owner = t.owner || (ownerId && myId && ownerId === myId ? "me" : "other");
+            var owner =
+              t.owner ||
+              (ownerId && myId && ownerId === myId ? "me" : "other");
             return {
               id: t.id,
               type: t.type,
@@ -611,10 +747,13 @@ function loadData() {
               name: t.title || t.name || "Задание",
               price: Number(t.reward_rub || t.reward || t.price || 0),
               owner: owner,
-              checkType: t.check_type || t.checkType || (t.type === "tg" ? "auto" : "manual"),
+              checkType:
+                t.check_type ||
+                t.checkType ||
+                (t.type === "tg" ? "auto" : "manual"),
               target: t.target_url || t.target || "",
               text: t.instructions || t.text || "",
-              qty: t.qty_total || t.qty || 1,
+              qty: t.qty_left != null ? t.qty_left : (t.qty_total || t.qty || 1),
             };
           });
 
@@ -632,24 +771,36 @@ function loadData() {
           state.withdrawals = state.withdrawals || [];
           return [3 /*break*/, 5];
         case 5:
+          _b.trys.push([5, 7, , 8]);
+          return [4 /*yield*/, apiPost("/api/ops/list", {})];
+        case 6:
+          ops = _b.sent();
+          state.ops = ops.operations || [];
+          return [3 /*break*/, 8];
+        case 7:
+          e_33 = _b.sent();
+          console.warn("ops list error", e_33);
+          state.ops = state.ops || [];
+          return [3 /*break*/, 8];
+        case 8:
           return [2 /*return*/];
       }
     });
   });
 }
 
-// --- ADMIN DATA (очередь модерации/выводов) ---
+// ADMIN DATA
 function loadAdminData() {
   return __awaiter(this, void 0, void 0, function () {
-    var u, p, proofs, e_4, w, withdrawals, e_5;
+    var u, p, proofs, w, withdrawals;
     return __generator(this, function (_a) {
       switch (_a.label) {
         case 0:
           u = getTgUser();
           if (!u || !u.id || !ADMIN_IDS.includes(Number(u.id))) return [2 /*return*/];
+
           _a.label = 1;
         case 1:
-          _a.trys.push([1, 3, , 4]);
           return [4 /*yield*/, apiPost("/api/admin/proof/list", {})];
         case 2:
           p = _a.sent();
@@ -657,7 +808,12 @@ function loadAdminData() {
           state.moderation = proofs
             .map(function (x) {
               return {
-                id: x.id != null ? x.id : x.proof_id != null ? x.proof_id : x.task_submit_id,
+                id:
+                  x.id != null
+                    ? x.id
+                    : x.proof_id != null
+                    ? x.proof_id
+                    : x.task_submit_id,
                 taskName:
                   x.task_title != null
                     ? x.task_title
@@ -676,7 +832,8 @@ function loadAdminData() {
                     ? x.user.username || x.user.name
                     : x.tg_username || "—",
                 targetUrl: x.target_url || x.targetUrl || x.proof_url || "",
-                screenshotUrl: x.screenshot_url || x.screenshotUrl || x.proof_url || "",
+                screenshotUrl:
+                  x.screenshot_url || x.screenshotUrl || x.proof_url || "",
                 price: Number(x.reward_rub || x.price || x.amount_rub || 0),
                 raw: x,
               };
@@ -684,22 +841,24 @@ function loadAdminData() {
             .filter(function (x) {
               return x.id != null;
             });
-          return [3 /*break*/, 4];
+
+          _a.label = 3;
         case 3:
-          e_4 = _a.sent();
-          console.error("admin proofs load error", e_4);
-          return [3 /*break*/, 4];
-        case 4:
-          _a.trys.push([4, 6, , 7]);
           return [4 /*yield*/, apiPost("/api/admin/withdraw/list", {})];
-        case 5:
+        case 4:
           w = _a.sent();
           withdrawals = (w && (w.withdrawals || w.items || w.list)) || [];
           state.adminWithdrawals = withdrawals
             .map(function (x) {
               return {
                 id: x.id != null ? x.id : x.withdraw_id,
-                amount: Number(x.amount_rub != null ? x.amount_rub : x.amount != null ? x.amount : 0),
+                amount: Number(
+                  x.amount_rub != null
+                    ? x.amount_rub
+                    : x.amount != null
+                    ? x.amount
+                    : 0
+                ),
                 details: x.details || x.requisites || x.wallet || "",
                 date: x.created_at || x.date || "",
                 status: x.status || "pending",
@@ -709,45 +868,16 @@ function loadAdminData() {
             .filter(function (x) {
               return x.id != null;
             });
-          return [3 /*break*/, 7];
-        case 6:
-          e_5 = _a.sent();
-          console.error("admin withdrawals load error", e_5);
-          return [3 /*break*/, 7];
-        case 7:
+
           return [2 /*return*/];
       }
     });
   });
 }
 
-function saveData() {
-  return __awaiter(this, void 0, void 0, function () {
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          return [4 /*yield*/, miniappsAI.storage.setItem("userBalance", JSON.stringify(state.user))];
-        case 1:
-          _a.sent();
-          return [4 /*yield*/, miniappsAI.storage.setItem("tasksList", JSON.stringify(state.tasks))];
-        case 2:
-          _a.sent();
-          return [4 /*yield*/, miniappsAI.storage.setItem("adminQueue", JSON.stringify(state.moderation))];
-        case 3:
-          _a.sent();
-          return [4 /*yield*/, miniappsAI.storage.setItem("userHistory", JSON.stringify(state.history))];
-        case 4:
-          _a.sent();
-          return [4 /*yield*/, miniappsAI.storage.setItem("withdrawals", JSON.stringify(state.withdrawals))];
-        case 5:
-          _a.sent();
-          return [2 /*return*/];
-      }
-    });
-  });
-}
-
-// --- TASK LIMIT LOGIC ---
+/* -------------------------------------------------------
+   Local UX Limits
+-------------------------------------------------------- */
 function checkTaskAvailability(type) {
   return __awaiter(this, void 0, void 0, function () {
     var raw, data, last, diff, remaining;
@@ -793,18 +923,52 @@ function recordTaskAction(type) {
   });
 }
 
-// --- HISTORY SYSTEM ---
+/* -------------------------------------------------------
+   History + leveling
+-------------------------------------------------------- */
 function addHistory(type, amount, desc) {
   state.history.unshift({
     id: Date.now(),
     type: type,
     amount: amount,
     desc: desc,
-    date: new Date().toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+    date: new Date().toLocaleString("ru-RU", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
   });
   if (state.history.length > 50) state.history.pop();
 }
 
+function addXP(amount) {
+  state.user.xp += amount;
+  checkLevelUp();
+}
+
+function checkLevelUp() {
+  var newLevel = 1 + Math.floor(state.user.xp / 100);
+  if (newLevel > state.user.level) {
+    state.user.level = newLevel;
+    var bonus = 50;
+    state.user.rub += bonus;
+    addHistory("earn", bonus, "Бонус за " + newLevel + " уровень!");
+    try {
+      tg.showAlert(
+        "🎉 Поздравляем!\nВы достигли " +
+          newLevel +
+          " уровня!\nНаграда: +" +
+          bonus +
+          " ₽"
+      );
+    } catch (e) {}
+  }
+}
+
+/* -------------------------------------------------------
+   Render history (ops from server preferred)
+-------------------------------------------------------- */
 function renderHistory() {
   var list = document.getElementById("history-list");
   if (!list) return;
@@ -813,7 +977,8 @@ function renderHistory() {
   var items = Array.isArray(state.ops) && state.ops.length ? state.ops : state.history || [];
 
   if (items.length === 0) {
-    list.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">История пуста</div>';
+    list.innerHTML =
+      '<div style="text-align:center; padding:20px; color:var(--text-dim);">История пуста</div>';
     return;
   }
 
@@ -843,6 +1008,7 @@ function renderHistory() {
   };
 
   items.forEach(function (item) {
+    // local history item
     if (item.type) {
       var icon_1 = "📝";
       var colorClass_1 = "";
@@ -880,6 +1046,7 @@ function renderHistory() {
       return;
     }
 
+    // server ops item
     var kind = item.kind;
     var status = String(item.status || "pending");
     var amount = Number(item.amount_rub || 0);
@@ -902,7 +1069,8 @@ function renderHistory() {
       icon = status === "paid" ? "✅" : status === "rejected" ? "❌" : "⏳";
     }
 
-    var statusText = status === "paid" ? "Выполнено" : status === "rejected" ? "Отклонено" : "Ожидает";
+    var statusText =
+      status === "paid" ? "Выполнено" : status === "rejected" ? "Отклонено" : "Ожидает";
 
     list.insertAdjacentHTML(
       "beforeend",
@@ -924,35 +1092,14 @@ function renderHistory() {
   });
 }
 
-// --- LEVELING SYSTEM ---
-function addXP(amount) {
-  state.user.xp += amount;
-  checkLevelUp();
-}
-
-function checkLevelUp() {
-  var newLevel = 1 + Math.floor(state.user.xp / 100);
-  if (newLevel > state.user.level) {
-    state.user.level = newLevel;
-    var bonus = 50;
-    state.user.rub += bonus;
-    addHistory("earn", bonus, "Бонус за " + newLevel + " уровень!");
-    tg.showAlert(
-      "🎉 Поздравляем!\nВы достигли " +
-        newLevel +
-        " уровня!\nНаграда: +" +
-        bonus +
-        " ₽"
-    );
-  }
-}
-
-// --- CORE LOGIC: CREATE TASK ---
+/* -------------------------------------------------------
+   Core: Create Task
+-------------------------------------------------------- */
 window.createTask = function () {
   return __awaiter(this, void 0, void 0, function () {
     var typeEl, subtypeEl, qtyEl, curEl, targetEl, textEl;
     var type, qty, currency, target, instructions;
-    var pricePerItem, workerReward, taskName, subType, checkType;
+    var pricePerItem, workerReward, taskName, subType;
     var stKey, conf, costRub, finalCost;
     var tgChat, tgKind, btn, e_6;
 
@@ -974,13 +1121,12 @@ window.createTask = function () {
 
           if (!qty || qty < 1) return [2 /*return*/, tg.showAlert("Минимальное количество: 1")];
           if (!target) return [2 /*return*/, tg.showAlert("Укажите ссылку на объект")];
-          if (!isLinkValid) return [2 /*return*/, tg.showAlert("Пожалуйста, укажите корректную ссылку и дождитесь проверки.")];
+          if (!isLinkValid) return [2 /*return*/, tg.showAlert("Укажите корректную ссылку и дождитесь проверки.")];
 
           pricePerItem = 0;
           workerReward = 0;
           taskName = "";
           subType = null;
-          checkType = "manual";
 
           if (type === "tg") {
             stKey = subtypeEl.value;
@@ -990,11 +1136,9 @@ window.createTask = function () {
             workerReward = Number(conf.reward || 0);
             taskName = conf.label || "TG задание";
             subType = stKey;
-            checkType = "auto";
           } else {
             pricePerItem = Number(typeEl.selectedOptions[0].dataset.p || 0);
             taskName = type === "ya" ? "Отзыв Яндекс" : "Отзыв Google";
-            checkType = "manual";
             workerReward = Math.floor(pricePerItem * 0.5);
           }
 
@@ -1008,6 +1152,7 @@ window.createTask = function () {
             tgChat = target
               .replace(/^https?:\/\/t\.me\//i, "@")
               .replace(/^t\.me\//i, "@")
+              .replace(/^@/, "@")
               .split("/")[0];
             if (subType === "tg_group") tgKind = "group";
           }
@@ -1034,6 +1179,7 @@ window.createTask = function () {
               check_type: type === "tg" ? "auto" : "manual",
               tg_chat: type === "tg" ? tgChat : null,
               tg_kind: type === "tg" ? tgKind : null,
+              sub_type: subType,
             }),
           ];
         case 2:
@@ -1042,7 +1188,7 @@ window.createTask = function () {
         case 3:
           _a.sent();
           render();
-          if (typeof renderWithdrawals === "function") renderWithdrawals();
+          renderWithdrawals();
           closeModal();
           setFilter("my");
           tg.showAlert(
@@ -1055,7 +1201,10 @@ window.createTask = function () {
         case 4:
           e_6 = _a.sent();
           console.error(e_6);
-          tg.showAlert("Ошибка создания задания: " + (e_6 && e_6.message ? e_6.message : "unknown"));
+          tg.showAlert(
+            "Ошибка создания задания: " +
+              (e_6 && e_6.message ? e_6.message : "unknown")
+          );
           return [3 /*break*/, 6];
         case 5:
           if (btn) {
@@ -1070,25 +1219,29 @@ window.createTask = function () {
   });
 };
 
-// --- TASK DETAILS / CHECK / SUBMIT ---
+/* -------------------------------------------------------
+   Task details / submit
+-------------------------------------------------------- */
 window.handleTask = function (btn, owner, id) {
   return __awaiter(this, void 0, void 0, function () {
-    var task_1, availability, hrs, limitText, iconBox, iconChar, linkEl, linkBtn, textEl, isTgAuto, actBtn, actionText;
+    var task_1, availability, hrs, limitText;
+    var iconBox, iconChar, linkEl, linkBtn, textEl;
+    var isTgAuto, actBtn, actionText;
     var _this = this;
     return __generator(this, function (_a) {
       switch (_a.label) {
         case 0:
           if (!(owner === "me")) return [3 /*break*/, 1];
-          tg.showConfirm("Удалить это задание? Средства не вернутся (демо).", function (confirmed) {
+          tg.showConfirm("Удалить это задание? Средства не вернутся.", function (confirmed) {
             return __awaiter(_this, void 0, void 0, function () {
               return __generator(this, function (_a) {
                 switch (_a.label) {
                   case 0:
                     if (!confirmed) return [3 /*break*/, 2];
-                    state.tasks = state.tasks.filter(function (t) { return t.id !== id; });
-                    return [4 /*yield*/, saveData()];
-                  case 1:
-                    _a.sent();
+                    // серверно удаление тут не делаем (можно добавить endpoint)
+                    state.tasks = state.tasks.filter(function (t) {
+                      return t.id !== id;
+                    });
                     render();
                     _a.label = 2;
                   case 2:
@@ -1097,9 +1250,12 @@ window.handleTask = function (btn, owner, id) {
               });
             });
           });
-          return [3 /*break*/, 4];
+          return [3 /*break*/, 5];
+
         case 1:
-          task_1 = state.tasks.find(function (t) { return t.id === id; });
+          task_1 = state.tasks.find(function (t) {
+            return t.id === id;
+          });
           if (!task_1) return [2 /*return*/];
 
           if (!TASK_LIMITS[task_1.type]) return [3 /*break*/, 3];
@@ -1112,7 +1268,16 @@ window.handleTask = function (btn, owner, id) {
           if (!availability.ok) {
             hrs = Math.ceil(availability.remainingMs / (1000 * 60 * 60));
             limitText = task_1.type === "ya" ? "раз в 3 дня" : "раз в день";
-            return [2 /*return*/, tg.showAlert("⏳ Это задание можно выполнять " + limitText + ".\n\nДоступно через: ~" + hrs + " ч.")];
+            return [
+              2 /*return*/,
+              tg.showAlert(
+                "⏳ Это задание можно выполнять " +
+                  limitText +
+                  ".\n\nДоступно через: ~" +
+                  hrs +
+                  " ч."
+              ),
+            ];
           }
           _a.label = 3;
         case 3:
@@ -1120,13 +1285,17 @@ window.handleTask = function (btn, owner, id) {
           document.getElementById("td-reward").innerText = "+" + task_1.price + " ₽";
 
           iconBox = document.getElementById("td-icon");
-          iconChar = ASSETS[task_1.type] ? '<img src="' + ASSETS[task_1.type] + '" style="width:100%">' : "📄";
+          iconChar = ASSETS[task_1.type]
+            ? '<img src="' + ASSETS[task_1.type] + '" style="width:100%">'
+            : "📄";
 
           if (task_1.type === "tg" && task_1.subType && TG_TASK_TYPES[task_1.subType]) {
             iconChar = TG_TASK_TYPES[task_1.subType].icon;
-            document.getElementById("td-type-badge").innerText = TG_TASK_TYPES[task_1.subType].label.toUpperCase();
+            document.getElementById("td-type-badge").innerText =
+              TG_TASK_TYPES[task_1.subType].label.toUpperCase();
           } else {
-            document.getElementById("td-type-badge").innerText = task_1.type.toUpperCase();
+            document.getElementById("td-type-badge").innerText =
+              String(task_1.type || "").toUpperCase();
           }
 
           if (iconBox) {
@@ -1174,18 +1343,24 @@ window.handleTask = function (btn, owner, id) {
             }
             if (actBtn) {
               actBtn.innerHTML = actionText;
-              actBtn.onclick = function () { return checkTgTask(id, task_1.subType); };
+              actBtn.onclick = function () {
+                return checkTgTask(id, task_1.subType);
+              };
             }
           } else {
             if (actBtn) {
               actBtn.innerHTML = "📤 Отправить отчет";
-              actBtn.onclick = function () { return submitReviewProof(id); };
+              actBtn.onclick = function () {
+                return submitReviewProof(id);
+              };
             }
           }
 
           openModal("m-task-details");
           _a.label = 4;
         case 4:
+          return [4 /*yield*/, recordTaskAction(task_1.type)];
+        case 5:
           return [2 /*return*/];
       }
     });
@@ -1219,7 +1394,7 @@ window.checkTgTask = function (id, subType) {
           _a.sent();
           render();
           closeModal();
-          tg.showAlert("✅ Задание принято! Если проверка авто — начисление произойдёт сразу/после подтверждения сервером.");
+          tg.showAlert("✅ Готово! Если авто-проверка — начисление произойдёт сразу/после подтверждения сервером.");
           return [3 /*break*/, 5];
         case 4:
           e_7 = _a.sent();
@@ -1244,15 +1419,22 @@ window.submitReviewProof = function (id) {
     return __generator(this, function (_b) {
       switch (_b.label) {
         case 0:
-          user = (((_a = document.getElementById("p-username")) === null || _a === void 0 ? void 0 : _a.value) || "").trim();
+          user =
+            (((_a = document.getElementById("p-username")) === null || _a === void 0
+              ? void 0
+              : _a.value) ||
+              "").trim();
           if (!user) return [2 /*return*/, tg.showAlert("Укажите ваше имя/никнейм.")];
+
           proofUrlEl = document.getElementById("p-proof-url") || document.getElementById("p-link") || null;
           proofUrl = proofUrlEl ? (proofUrlEl.value || "").trim() : "";
+
           btn = document.getElementById("td-action-btn");
           if (btn) {
             btn.disabled = true;
             btn.innerHTML = '<span class="spin-icon">⏳</span> Отправка...';
           }
+
           _b.label = 1;
         case 1:
           _b.trys.push([1, 4, , 5]);
@@ -1282,20 +1464,6 @@ window.submitReviewProof = function (id) {
   });
 };
 
-function completeTaskLogic(id, msg, isAuto) {
-  var task = state.tasks.find(function (t) { return t.id === id; });
-  if (task) {
-    var reward = parseInt(task.price, 10);
-    state.user.rub += reward;
-    addHistory("earn", reward, "Выполнено: " + task.name);
-    addXP(reward);
-    saveData();
-    render();
-    closeModal();
-    tg.showAlert("✅ " + msg + "\n+" + reward + " ₽ начислено.");
-  }
-}
-
 window.updateFileName = function (input) {
   if (input.files && input.files[0]) {
     selectedProofFile = input.files[0];
@@ -1308,7 +1476,9 @@ window.updateFileName = function (input) {
   }
 };
 
-// --- ADMIN / MODERATION SYSTEM ---
+/* -------------------------------------------------------
+   Admin
+-------------------------------------------------------- */
 window.openAdminPanel = function () {
   switchAdminTab("proofs");
   openModal("m-admin");
@@ -1316,10 +1486,15 @@ window.openAdminPanel = function () {
 
 window.switchAdminTab = function (tab) {
   activeAdminTab = tab;
-  document.getElementById("at-proofs").classList.toggle("active", tab === "proofs");
-  document.getElementById("at-withdrawals").classList.toggle("active", tab === "withdrawals");
-  document.getElementById("admin-view-proofs").classList.toggle("hidden", tab !== "proofs");
-  document.getElementById("admin-view-withdrawals").classList.toggle("hidden", tab !== "withdrawals");
+  var a = document.getElementById("at-proofs");
+  var b = document.getElementById("at-withdrawals");
+  var vp = document.getElementById("admin-view-proofs");
+  var vw = document.getElementById("admin-view-withdrawals");
+
+  if (a) a.classList.toggle("active", tab === "proofs");
+  if (b) b.classList.toggle("active", tab === "withdrawals");
+  if (vp) vp.classList.toggle("hidden", tab !== "proofs");
+  if (vw) vw.classList.toggle("hidden", tab !== "withdrawals");
   renderAdmin();
 };
 
@@ -1334,7 +1509,8 @@ function renderAdminProofs() {
 
   list.innerHTML = "";
   if (state.moderation.length === 0) {
-    list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">Нет отчетов на проверку</div>';
+    list.innerHTML =
+      '<div style="text-align:center; padding:20px; opacity:0.5;">Нет отчетов на проверку</div>';
     return;
   }
 
@@ -1351,9 +1527,9 @@ function renderAdminProofs() {
       "<br>\n👤 Ник: <span style=\"color:var(--text-main); font-weight:700;\">" +
       item.workerName +
       "</span>\n</div>\n\n<div style=\"display:flex; gap:10px; margin-top:10px;\">\n  <button class=\"btn btn-secondary btn-sm\" onclick=\"window.open('" +
-      item.targetUrl +
+      (item.targetUrl || "#") +
       "', '_blank')\">🔗 Ссылка</button>\n  <button class=\"btn btn-secondary btn-sm\" onclick=\"window.open('" +
-      item.screenshotUrl +
+      (item.screenshotUrl || "#") +
       "', '_blank')\">📷 Скриншот</button>\n</div>\n\n<div style=\"display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px;\">\n  <button class=\"btn\" style=\"background:rgba(255,75,75,0.1); color:#ff4b4b; padding:10px;\" onclick=\"adminDecision(" +
       item.id +
       ', false)\">❌ Отказ</button>\n  <button class=\"btn\" style=\"background:rgba(0,255,136,0.1); color:var(--accent-green); padding:10px;\" onclick=\"adminDecision(' +
@@ -1370,14 +1546,15 @@ function renderAdminWithdrawals() {
 
   list.innerHTML = "";
 
-  var items = __spreadArray([], __read(state.adminWithdrawals), false).sort(function (a, b) {
+  var items = __spreadArray([], __read(state.adminWithdrawals || []), false).sort(function (a, b) {
     if (a.status === "pending" && b.status !== "pending") return -1;
     if (a.status !== "pending" && b.status === "pending") return 1;
-    return b.id - a.id;
+    return (b.id || 0) - (a.id || 0);
   });
 
   if (items.length === 0) {
-    list.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">Нет заявок</div>';
+    list.innerHTML =
+      '<div style="text-align:center; padding:20px; opacity:0.5;">Нет заявок</div>';
     return;
   }
 
@@ -1404,11 +1581,11 @@ function renderAdminWithdrawals() {
 
     div.innerHTML =
       '\n<div style="display:flex; justify-content:space-between; align-items:flex-start;">\n  <div>\n    <div style="font-weight:800; font-size:16px; margin-bottom:5px;">' +
-      w.amount +
+      (Number(w.amount || 0).toFixed(0)) +
       ' ₽</div>\n    <div style="font-size:12px; color:var(--text-dim);">' +
-      w.details +
+      (w.details || "") +
       '</div>\n    <div style="font-size:10px; color:var(--text-dim); margin-top:4px;">' +
-      w.date +
+      (w.date || "") +
       "</div>\n  </div>\n  " +
       badge +
       "\n</div>\n" +
@@ -1501,6 +1678,9 @@ function updateAdminBadge() {
   badge.style.opacity = total > 0 ? "1" : "0";
 }
 
+/* -------------------------------------------------------
+   Recalc create modal total
+-------------------------------------------------------- */
 window.recalc = function () {
   var typeSelect = document.getElementById("t-type");
   var subtypeSelect = document.getElementById("t-tg-subtype");
@@ -1519,10 +1699,10 @@ window.recalc = function () {
   } else {
     if (subtypeWrapper) subtypeWrapper.classList.add("hidden");
     if (tgOptions) tgOptions.classList.add("hidden");
-    pricePerItem = parseInt(typeSelect.selectedOptions[0].dataset.p, 10);
+    pricePerItem = parseInt(typeSelect.selectedOptions[0].dataset.p, 10) || 0;
   }
 
-  var q = parseInt(document.getElementById("t-qty").value || 0, 10);
+  var q = parseInt((document.getElementById("t-qty").value || "0"), 10);
   var cur = document.getElementById("t-cur").value;
   var totalRub = pricePerItem * q;
   var el = document.getElementById("t-total");
@@ -1539,27 +1719,40 @@ window.recalc = function () {
   }
 };
 
+/* -------------------------------------------------------
+   Copy helpers
+-------------------------------------------------------- */
 window.copyLink = function () {
   var el = document.getElementById("td-link");
   var url = el ? el.innerText : "";
-  navigator.clipboard.writeText(url).then(function () { return tg.showAlert("Ссылка скопирована"); });
+  navigator.clipboard.writeText(url).then(function () {
+    return tg.showAlert("Ссылка скопирована");
+  });
 };
 
 window.copyText = function () {
   var el = document.getElementById("td-text");
   var txt = el ? el.innerText : "";
-  navigator.clipboard.writeText(txt).then(function () { return tg.showAlert("Текст скопирован"); });
+  navigator.clipboard.writeText(txt).then(function () {
+    return tg.showAlert("Текст скопирован");
+  });
 };
 
 window.toggleTheme = function () {
   document.body.classList.toggle("light-mode");
   var isLight = document.body.classList.contains("light-mode");
-  if (tg.setHeaderColor) tg.setHeaderColor(isLight ? "#f2f4f7" : "#05070a");
+  try {
+    if (tg.setHeaderColor) tg.setHeaderColor(isLight ? "#f2f4f7" : "#05070a");
+  } catch (e) {}
 };
 
-// NAVIGATION & VIEW LOGIC
+/* -------------------------------------------------------
+   Navigation
+-------------------------------------------------------- */
 window.showTab = function (t) {
-  document.querySelectorAll(".nav-item").forEach(function (i) { return i.classList.remove("active"); });
+  document.querySelectorAll(".nav-item").forEach(function (i) {
+    return i.classList.remove("active");
+  });
   var navBtn = document.getElementById("tab-" + t);
   if (navBtn) navBtn.classList.add("active");
 
@@ -1583,6 +1776,9 @@ window.closeHistory = function () {
   document.getElementById("tab-profile").classList.add("active");
 };
 
+/* -------------------------------------------------------
+   Render main
+-------------------------------------------------------- */
 function render() {
   var br = document.getElementById("u-bal-rub");
   var bs = document.getElementById("u-bal-star");
@@ -1610,7 +1806,9 @@ function render() {
   var box = document.getElementById("tasks-list");
   if (box) {
     box.innerHTML = "";
-    var list = state.tasks.filter(function (t) { return state.filter === "all" ? t.owner === "other" : t.owner === "me"; });
+    var list = state.tasks.filter(function (t) {
+      return state.filter === "all" ? t.owner === "other" : t.owner === "me";
+    });
 
     if (list.length === 0) {
       box.innerHTML =
@@ -1622,7 +1820,8 @@ function render() {
         else if (ASSETS[t.type]) icon = '<img src="' + ASSETS[t.type] + '" style="width:100%; height:100%; object-fit:contain;">';
         else icon = "📄";
 
-        if (!icon.includes("<img")) icon = '<div style="font-size:24px;">' + icon + "</div>";
+        if (!icon.includes("<img"))
+          icon = '<div style="font-size:24px;">' + icon + "</div>";
 
         box.insertAdjacentHTML(
           "beforeend",
@@ -1640,7 +1839,7 @@ function render() {
             t.id +
             ')">\n    ' +
             (t.owner === "me" ? "Удалить" : "Выполнить") +
-            "\n  </button>\n</div>\n"
+            "\n  </button>\n</div>\n'
         );
       });
     }
@@ -1648,7 +1847,6 @@ function render() {
 
   renderReferrals();
 }
-
 window.render = render;
 
 function renderReferrals() {
@@ -1668,7 +1866,9 @@ window.copyInviteLink = function () {
   var u = getTgUser();
   var uid = (u && u.id) || "12345";
   var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
-  navigator.clipboard.writeText(inviteLink).then(function () { return tg.showAlert("🔗 Ссылка скопирована!"); });
+  navigator.clipboard.writeText(inviteLink).then(function () {
+    return tg.showAlert("🔗 Ссылка скопирована!");
+  });
 };
 
 window.shareInvite = function () {
@@ -1685,12 +1885,19 @@ window.shareInvite = function () {
 
 window.setFilter = function (f) {
   state.filter = f;
-  document.getElementById("f-all").classList.toggle("active", f === "all");
-  document.getElementById("f-my").classList.toggle("active", f === "my");
+  var fa = document.getElementById("f-all");
+  var fm = document.getElementById("f-my");
+  if (fa) fa.classList.toggle("active", f === "all");
+  if (fm) fm.classList.toggle("active", f === "my");
   render();
 };
 
-// -------- PAY / TBANK / WITHDRAW --------
+/* -------------------------------------------------------
+   PAY: Crypto / Stars / TBank
+   IMPORTANT:
+   - Crypto uses API (needs initData inside Telegram)
+   - Stars uses sendData (bot sends invoice)
+-------------------------------------------------------- */
 window.processPay = function (method) {
   return __awaiter(this, void 0, void 0, function () {
     var val, r, url, e_11, payload;
@@ -1699,6 +1906,8 @@ window.processPay = function (method) {
         case 0:
           val = Number(document.getElementById("sum-input").value || 0);
           if (val < 300) return [2 /*return*/, tg.showAlert("Минимальная сумма пополнения — 300 ₽")];
+
+          // CryptoBot -> server invoice
           if (!(method === "pay_crypto")) return [3 /*break*/, 4];
           _a.label = 1;
         case 1:
@@ -1711,8 +1920,14 @@ window.processPay = function (method) {
           return [2 /*return*/, tg.showAlert("✅ Счёт CryptoBot создан. Оплати по ссылке — баланс обновится автоматически.")];
         case 3:
           e_11 = _a.sent();
+          console.error(e_11);
           return [2 /*return*/, tg.showAlert("❌ Ошибка CryptoBot: " + (e_11.message || e_11))];
+
         case 4:
+          // Stars / TBank -> sendData
+          if (!isInTelegram()) {
+            return [2 /*return*/, alert("Открой Mini App внутри Telegram (иначе пополнение не работает).")];
+          }
           payload = { action: method, amount: String(val) };
           tg.sendData(JSON.stringify(payload));
           return [2 /*return*/];
@@ -1724,7 +1939,7 @@ window.processPay = function (method) {
 var tbankAmount = 0;
 
 window.openTBankPay = function () {
-  var val = document.getElementById("sum-input").value;
+  var val = Number(document.getElementById("sum-input").value || 0);
   if (val < 300) return tg.showAlert("Минимальная сумма пополнения — 300 ₽");
   tbankAmount = val;
 
@@ -1741,10 +1956,13 @@ window.openTBankPay = function () {
 
 window.copyCode = function () {
   var code = document.getElementById("tb-code").innerText;
-  navigator.clipboard.writeText(code).then(function () { tg.showAlert("Код скопирован!"); });
+  navigator.clipboard.writeText(code).then(function () {
+    tg.showAlert("Код скопирован!");
+  });
 };
 
 window.confirmTBank = function () {
+  if (!isInTelegram()) return alert("Открой Mini App внутри Telegram.");
   var sender = document.getElementById("tb-sender").value;
   var code = document.getElementById("tb-code").innerText;
   if (!sender) return tg.showAlert("Укажите ваше имя отправителя");
@@ -1752,7 +1970,9 @@ window.confirmTBank = function () {
   tg.sendData(JSON.stringify(payload));
 };
 
-// WITHDRAWAL LOGIC
+/* -------------------------------------------------------
+   Withdrawal
+-------------------------------------------------------- */
 window.requestWithdraw = function () {
   return __awaiter(this, void 0, void 0, function () {
     var amount, details, amt, r, e_12;
@@ -1760,8 +1980,16 @@ window.requestWithdraw = function () {
     return __generator(this, function (_c) {
       switch (_c.label) {
         case 0:
-          amount = (((_a = document.getElementById("w-amount")) === null || _a === void 0 ? void 0 : _a.value) || "").trim();
-          details = (((_b = document.getElementById("w-details")) === null || _b === void 0 ? void 0 : _b.value) || "").trim();
+          amount =
+            (((_a = document.getElementById("w-amount")) === null || _a === void 0
+              ? void 0
+              : _a.value) ||
+              "").trim();
+          details =
+            (((_b = document.getElementById("w-details")) === null || _b === void 0
+              ? void 0
+              : _b.value) ||
+              "").trim();
           if (!amount || !details) return [2 /*return*/, tg.showAlert("Заполните все поля")];
           amt = Number(amount);
           if (!Number.isFinite(amt) || amt <= 0) return [2 /*return*/, tg.showAlert("Некорректная сумма")];
@@ -1804,7 +2032,8 @@ function renderWithdrawals() {
   var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
 
   if (items.length === 0) {
-    list.innerHTML = '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
+    list.innerHTML =
+      '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
     return;
   }
 
@@ -1813,21 +2042,41 @@ function renderWithdrawals() {
     try {
       var d = new Date(v);
       if (isNaN(d.getTime())) return String(v);
-      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      return d.toLocaleString("ru-RU", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     } catch (_) {
       return String(v);
     }
   };
 
   items.forEach(function (w) {
-    var amount = Number(w.amount_rub != null ? w.amount_rub : w.amount != null ? w.amount : w.sum != null ? w.sum : 0);
+    var amount = Number(
+      w.amount_rub != null
+        ? w.amount_rub
+        : w.amount != null
+        ? w.amount
+        : w.sum != null
+        ? w.sum
+        : 0
+    );
     var created = w.created_at || w.date || w.created || "";
     var status = String(w.status || "pending");
 
     var stClass = "st-pending";
     var stText = "Ожидание";
-    if (status === "paid") { stClass = "st-paid"; stText = "Выплачено"; }
-    if (status === "rejected") { stClass = "st-rejected"; stText = "Отклонено"; }
+    if (status === "paid") {
+      stClass = "st-paid";
+      stText = "Выплачено";
+    }
+    if (status === "rejected") {
+      stClass = "st-rejected";
+      stText = "Отклонено";
+    }
 
     list.insertAdjacentHTML(
       "beforeend",
@@ -1844,9 +2093,9 @@ function renderWithdrawals() {
   });
 }
 
-// =========================
-// ✅ FIXED MODALS (единственный корректный блок)
-// =========================
+/* -------------------------------------------------------
+   Modals
+-------------------------------------------------------- */
 window.openModal = function (id) {
   var el = document.getElementById(id);
   if (el) el.classList.add("active");
@@ -1863,14 +2112,29 @@ window.openModal = function (id) {
       tStatus.innerHTML = "";
     }
     isLinkValid = false;
-    if (typeof recalc === "function") recalc();
+    recalc();
   }
 
   if (id === "m-withdraw") {
-    if (typeof renderWithdrawals === "function") renderWithdrawals();
+    renderWithdrawals();
   }
 };
 
 window.closeModal = function () {
-  document.querySelectorAll(".overlay").forEach(function (o) { return o.classList.remove("active"); });
+  document.querySelectorAll(".overlay").forEach(function (o) {
+    return o.classList.remove("active");
+  });
 };
+
+/* -------------------------------------------------------
+   Small helpers
+-------------------------------------------------------- */
+window.copyInviteLink = window.copyInviteLink;
+window.shareInvite = window.shareInvite;
+
+/* -------------------------------------------------------
+   Boot default view
+-------------------------------------------------------- */
+try {
+  window.showTab("tasks");
+} catch (e) {}
