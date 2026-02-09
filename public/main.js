@@ -1,7 +1,12 @@
-/* ReviewCash MiniApp — stable main.js (Stars + T-Bank only)
-   - No CryptoBot calls (shows "temporarily disabled")
-   - Safe rendering (no multiline string literals that break parsing)
-   - Works with UUID task ids
+/* ReviewCash MiniApp — STABLE (Stars + T-Bank)
+   Endpoints used:
+   - POST /api/sync
+   - POST /api/task/create
+   - POST /api/task/submit
+   - POST /api/withdraw/create
+   - POST /api/withdraw/list
+   - POST /api/ops/list
+   - POST /api/tbank/claim   (NEW, implemented in main.py below)
 */
 
 (function () {
@@ -17,9 +22,7 @@
       showAlert: function (msg) { alert(msg); },
       showConfirm: function (msg, cb) { var r = confirm(msg); if (cb) cb(r); },
       openTelegramLink: function (url) { window.open(url, "_blank"); },
-      sendData: function (data) {
-        alert("DEV MODE: sendData -> bot\n\n" + data + "\n\n(В Telegram окно обычно закрывается)");
-      },
+      sendData: function (data) { alert("DEV MODE sendData:\n\n" + data); },
       ready: function () {},
       initData: "",
       initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode" } }
@@ -28,28 +31,47 @@
 
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : MockTelegram.WebApp;
 
+  function showErr(msg, err) {
+    try { if (window.__showError) return window.__showError(String(msg), err); } catch (e) {}
+    try { console.error(msg, err); } catch (e2) {}
+  }
+
   function tgAlert(msg) {
     try { tg.showAlert(String(msg)); } catch (e) { alert(String(msg)); }
   }
-  function tgConfirm(msg, cb) {
-    try { tg.showConfirm(String(msg), cb); } catch (e) { cb(confirm(String(msg))); }
+
+  function normalizeTelegramUrl(s) {
+    var v = (s || "").trim();
+    if (!v) return "";
+    if (/^@[\w\d_]+$/i.test(v)) return "https://t.me/" + v.slice(1);
+    if (/^t\.me\/.+/i.test(v)) return "https://" + v;
+    v = v.replace(/^https?:\/\/telegram\.me\//i, "https://t.me/");
+    return v;
   }
-  function tgOpen(url) {
-    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+
+  function tgOpenTelegramLink(url) {
+    try {
+      var u = normalizeTelegramUrl(url);
+      if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openTelegramLink === "function") {
+        return window.Telegram.WebApp.openTelegramLink(u);
+      }
+      window.open(u, "_blank");
+    } catch (e) {
+      window.open(String(url), "_blank");
+    }
   }
+  window.tgOpenTelegramLink = tgOpenTelegramLink;
 
   function isTelegramWebApp() {
     try {
-      return !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string" && window.Telegram.WebApp.initData.length > 0);
-    } catch (e) {
-      return false;
-    }
+      return !!(window.Telegram && window.Telegram.WebApp &&
+        typeof window.Telegram.WebApp.initData === "string" &&
+        window.Telegram.WebApp.initData.length > 0);
+    } catch (e) { return false; }
   }
 
   function getTgUser() {
-    try {
-      if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) return tg.initDataUnsafe.user;
-    } catch (e) {}
+    try { if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) return tg.initDataUnsafe.user; } catch (e) {}
     return MockTelegram.WebApp.initDataUnsafe.user;
   }
 
@@ -58,9 +80,17 @@
       return (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string")
         ? window.Telegram.WebApp.initData
         : "";
-    } catch (e) {
-      return "";
+    } catch (e) { return ""; }
+  }
+
+  var warnedOnce = false;
+  function ensureTelegramOrExplain() {
+    if (isTelegramWebApp()) return true;
+    if (!warnedOnce) {
+      warnedOnce = true;
+      tgAlert("Открой Mini App через кнопку в Telegram (WebApp).\nЕсли открыть сайт напрямую — сервер вернёт 401.");
     }
+    return false;
   }
 
   // -----------------------------
@@ -78,11 +108,6 @@
     var meta = document.querySelector('meta[name="api-base"]');
     var v = meta ? meta.getAttribute("content") : "";
     if (v) return String(v).replace(/\/+$/, "");
-
-    var qs = window.location && window.location.search ? window.location.search : "";
-    var m = qs.match(/[?&]api=([^&]+)/);
-    if (m && m[1]) return decodeURIComponent(m[1]).replace(/\/+$/, "");
-
     return window.location.origin;
   }
   var API = getApiBase();
@@ -92,41 +117,44 @@
     try { v = localStorage.getItem("device_hash"); } catch (e) {}
     if (!v) {
       v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-      try { localStorage.setItem("device_hash", v); } catch (e) {}
+      try { localStorage.setItem("device_hash", v); } catch (e2) {}
     }
     return v;
   }
 
-  async function apiPost(path, data) {
-    var res = await fetch(API + path, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Tg-InitData": tgInitData()
-      },
-      body: JSON.stringify(Object.assign({}, data || {}, { device_hash: getDeviceHash() }))
-    });
-
-    var j = {};
-    try { j = await res.json(); } catch (e) { j = {}; }
-
-    if (!res.ok || j.ok === false) {
-      var msg = j && j.error ? j.error : ("HTTP " + res.status);
-      throw new Error(msg);
-    }
-    return j;
+  function withTimeout(ms) {
+    var c = new AbortController();
+    var t = setTimeout(function () { try { c.abort(); } catch (e) {} }, ms);
+    return { signal: c.signal, cancel: function () { clearTimeout(t); } };
   }
 
-  function ensureTelegramOrExplain() {
-    if (isTelegramWebApp()) return true;
-    tgAlert("Открой Mini App через кнопку в Telegram (WebApp).\n\nЕсли открыть сайт напрямую — initData пустой и сервер вернёт 401.");
-    return false;
+  async function apiPost(path, data) {
+    var tt = withTimeout(15000);
+    try {
+      var res = await fetch(API + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Tg-InitData": tgInitData() },
+        body: JSON.stringify(Object.assign({}, data || {}, { device_hash: getDeviceHash() })),
+        signal: tt.signal
+      });
+      var j = {};
+      try { j = await res.json(); } catch (e) { j = {}; }
+      if (!res.ok || j.ok === false) {
+        throw new Error((j && j.error) ? j.error : ("HTTP " + res.status));
+      }
+      return j;
+    } catch (e2) {
+      var m = (e2 && e2.name === "AbortError") ? "Timeout (15s)" : (e2?.message || "Failed to fetch");
+      throw new Error(m);
+    } finally {
+      tt.cancel();
+    }
   }
 
   // -----------------------------
   // Config
   // -----------------------------
-  var ADMIN_IDS = [6482440657, 123456]; // оставил как было
+  var ADMIN_IDS = [6482440657, 123456];
 
   var ASSETS = {
     ya: "https://www.google.com/s2/favicons?sz=64&domain=yandex.ru",
@@ -149,25 +177,17 @@
   // -----------------------------
   // State
   // -----------------------------
-  var state = {
-    filter: "all",
-    user: { rub: 0, stars: 0, xp: 0, level: 1 },
-    tasks: [],
-    withdrawals: [],
-    ops: []
-  };
-
+  var state = { filter: "all", user: { rub: 0, stars: 0, xp: 0, level: 1 }, tasks: [], withdrawals: [], ops: [] };
   var isLinkValid = false;
   var linkCheckTimer = null;
-  var selectedProofFile = null;
   var activeTaskId = null;
+  var tbankAmount = 0;
 
   // -----------------------------
   // UI: profile header
   // -----------------------------
   function setupProfileUI() {
     var user = getTgUser();
-
     var headerAvatar = el("header-avatar");
     var profileAvatar = el("u-pic");
     var headerName = el("header-name");
@@ -175,21 +195,16 @@
 
     var displayName = "Гость";
     var seed = "G";
-
     if (user) {
       if (user.username) displayName = "@" + user.username;
       else if (user.first_name || user.last_name) displayName = (user.first_name || "") + " " + (user.last_name || "");
       else displayName = "Пользователь";
-
       seed = user.first_name || user.username || "U";
     }
 
     var photoSrc = "";
-    if (user && typeof user.photo_url === "string" && user.photo_url.indexOf("http") === 0) {
-      photoSrc = user.photo_url;
-    } else {
-      photoSrc = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
-    }
+    if (user && typeof user.photo_url === "string" && user.photo_url.indexOf("http") === 0) photoSrc = user.photo_url;
+    else photoSrc = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
 
     if (headerName) headerName.innerText = displayName;
     if (profileName) profileName.innerText = displayName;
@@ -209,8 +224,7 @@
     var u = getTgUser();
     var adminPanel = el("admin-panel-card");
     if (!adminPanel) return;
-    if (u && u.id && ADMIN_IDS.indexOf(Number(u.id)) >= 0) adminPanel.style.display = "block";
-    else adminPanel.style.display = "none";
+    adminPanel.style.display = (u && u.id && ADMIN_IDS.indexOf(Number(u.id)) >= 0) ? "block" : "none";
   }
 
   // -----------------------------
@@ -231,9 +245,7 @@
       window.recalc();
     }
 
-    if (id === "m-withdraw") {
-      renderWithdrawals();
-    }
+    if (id === "m-withdraw") renderWithdrawals();
   };
 
   window.closeModal = function () {
@@ -241,7 +253,6 @@
     for (var i = 0; i < overlays.length; i++) rmClass(overlays[i], "active");
   };
 
-  // close by clicking outside modal
   function bindOverlayClose() {
     var overlays = document.querySelectorAll(".overlay");
     for (var i = 0; i < overlays.length; i++) {
@@ -252,7 +263,7 @@
   }
 
   // -----------------------------
-  // Link validation in create form
+  // Link validation
   // -----------------------------
   function isValidLink(s) {
     s = (s || "").trim();
@@ -291,19 +302,21 @@
           statusEl.className = "input-status visible " + (ok ? "valid" : "invalid");
           statusEl.innerHTML = ok ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
         }
-      }, 500);
+      }, 450);
     });
   }
 
   // -----------------------------
-  // Data loading
+  // Data
   // -----------------------------
   function normalizeTask(t) {
     var myId = 0;
-    try { myId = Number(getTgUser().id || 0); } catch (e) { myId = 0; }
-
+    try { myId = Number((getTgUser() && getTgUser().id) || 0); } catch (e) { myId = 0; }
     var ownerId = Number(t.owner_id || t.user_id || 0);
     var owner = (ownerId && myId && ownerId === myId) ? "me" : "other";
+
+    var target = t.target_url || t.target || "";
+    if ((t.type === "tg") && target) target = normalizeTelegramUrl(target);
 
     return {
       id: String(t.id),
@@ -313,7 +326,7 @@
       price: Number(t.reward_rub || t.reward || t.price || 0),
       owner: owner,
       checkType: t.check_type || t.checkType || ((t.type === "tg") ? "auto" : "manual"),
-      target: t.target_url || t.target || "",
+      target: target,
       text: t.instructions || t.text || "",
       qty: Number(t.qty_total || t.qty || 1),
       raw: t
@@ -327,7 +340,6 @@
       state.ops = [];
       state.user.rub = 0;
       state.user.stars = 0;
-      render();
       return;
     }
 
@@ -336,70 +348,43 @@
 
     state.user.rub = Number(bal.rub_balance || 0);
     state.user.stars = Number(bal.stars_balance || 0);
-    if (typeof bal.xp !== "undefined") state.user.xp = Number(bal.xp || 0);
-    if (typeof bal.level !== "undefined") state.user.level = Number(bal.level || 1);
+    state.user.xp = Number(bal.xp || 0);
+    state.user.level = Number(bal.level || 1);
 
-    var tasks = r.tasks || [];
-    state.tasks = tasks.map(normalizeTask);
+    state.tasks = (r.tasks || []).map(normalizeTask);
 
-    // withdrawals list (optional)
-    try {
-      var w = await apiPost("/api/withdraw/list", {});
-      state.withdrawals = w.withdrawals || [];
-    } catch (e) {
-      state.withdrawals = state.withdrawals || [];
-    }
-
-    // ops/history (optional)
-    try {
-      var ops = await apiPost("/api/ops/list", {});
-      state.ops = ops.operations || [];
-    } catch (e2) {
-      state.ops = state.ops || [];
-    }
+    try { state.withdrawals = (await apiPost("/api/withdraw/list", {})).withdrawals || []; } catch (e) {}
+    try { state.ops = (await apiPost("/api/ops/list", {})).operations || []; } catch (e2) {}
   }
 
   // -----------------------------
   // Render
   // -----------------------------
   function renderBalance() {
-    var br = el("u-bal-rub");
-    var bs = el("u-bal-star");
-    if (br) br.innerText = Math.floor(state.user.rub).toLocaleString("ru-RU") + " ₽";
-    if (bs) bs.innerText = Math.floor(state.user.stars).toLocaleString("ru-RU") + " ⭐";
+    if (el("u-bal-rub")) el("u-bal-rub").innerText = Math.floor(state.user.rub).toLocaleString("ru-RU") + " ₽";
+    if (el("u-bal-star")) el("u-bal-star").innerText = Math.floor(state.user.stars).toLocaleString("ru-RU") + " ⭐";
 
-    // XP bar (optional)
     var xpPerLevel = 100;
-    var currentLevel = Number(state.user.level || 1);
-    var nextLevelXP = currentLevel * xpPerLevel;
-    var prevLevelXP = (currentLevel - 1) * xpPerLevel;
-    var xpInCurrentLevel = Number(state.user.xp || 0) - prevLevelXP;
-    var xpNeeded = nextLevelXP - prevLevelXP;
-    var pct = xpNeeded > 0 ? Math.max(0, Math.min(100, (xpInCurrentLevel / xpNeeded) * 100)) : 0;
+    var lvl = Math.max(1, Number(state.user.level || 1));
+    var next = lvl * xpPerLevel;
+    var prev = (lvl - 1) * xpPerLevel;
+    var curXP = Number(state.user.xp || 0);
+    var inLvl = curXP - prev;
+    var need = next - prev;
+    var pct = need > 0 ? Math.max(0, Math.min(100, (inLvl / need) * 100)) : 0;
 
-    var lvlBadge = el("u-lvl-badge");
-    var xpCur = el("u-xp-cur");
-    var xpNext = el("u-xp-next");
-    var xpFill = el("u-xp-fill");
-
-    if (lvlBadge) lvlBadge.innerText = "LVL " + currentLevel;
-    if (xpCur) xpCur.innerText = String(state.user.xp || 0) + " XP";
-    if (xpNext) xpNext.innerText = String(nextLevelXP) + " XP";
-    if (xpFill) xpFill.style.width = pct + "%";
+    if (el("u-lvl-badge")) el("u-lvl-badge").innerText = "LVL " + lvl;
+    if (el("u-xp-cur")) el("u-xp-cur").innerText = curXP + " XP";
+    if (el("u-xp-next")) el("u-xp-next").innerText = next + " XP";
+    if (el("u-xp-fill")) el("u-xp-fill").style.width = pct + "%";
   }
 
   function renderTasks() {
     var box = el("tasks-list");
     if (!box) return;
-
     box.innerHTML = "";
 
-    var list = state.tasks.filter(function (t) {
-      if (state.filter === "all") return t.owner === "other";
-      return t.owner === "me";
-    });
-
-    if (!ensureTelegramOrExplain()) {
+    if (!isTelegramWebApp()) {
       var warn = document.createElement("div");
       warn.style.textAlign = "center";
       warn.style.padding = "60px 20px";
@@ -410,15 +395,20 @@
       return;
     }
 
+    var list = state.tasks.filter(function (t) {
+      return (state.filter === "all") ? (t.owner === "other") : (t.owner === "me");
+    });
+
     if (!list.length) {
       var empty = document.createElement("div");
       empty.style.textAlign = "center";
       empty.style.padding = "60px 20px";
       empty.style.color = "var(--text-dim)";
       empty.style.opacity = "0.6";
-      empty.innerHTML = '<div style="font-size:48px;margin-bottom:15px;filter:grayscale(1);">📭</div>'
-        + '<div style="font-weight:600;">Задач пока нет</div>'
-        + '<div style="font-size:12px;margin-top:5px;">Заходите позже или создайте свою</div>';
+      empty.innerHTML =
+        '<div style="font-size:48px;margin-bottom:15px;filter:grayscale(1);">📭</div>' +
+        '<div style="font-weight:800;">Задач пока нет</div>' +
+        '<div style="font-size:12px;margin-top:5px;">Создай свою через “+”</div>';
       box.appendChild(empty);
       return;
     }
@@ -435,7 +425,6 @@
       var brand = document.createElement("div");
       brand.className = "brand-box";
 
-      // icon
       if (t.type === "tg" && t.subType && TG_TASK_TYPES[t.subType]) {
         brand.innerHTML = '<div style="font-size:24px;">' + TG_TASK_TYPES[t.subType].icon + "</div>";
       } else if (ASSETS[t.type]) {
@@ -448,12 +437,12 @@
       meta.style.marginLeft = "15px";
 
       var title = document.createElement("div");
-      title.style.fontWeight = "700";
+      title.style.fontWeight = "800";
       title.innerText = t.name;
 
       var price = document.createElement("div");
       price.style.color = "var(--accent-cyan)";
-      price.style.fontWeight = "800";
+      price.style.fontWeight = "900";
       price.style.fontSize = "14px";
       price.innerText = "+" + t.price + " ₽";
 
@@ -466,9 +455,7 @@
       var btn = document.createElement("button");
       btn.className = "btn btn-action";
       btn.innerText = (t.owner === "me") ? "Удалить" : "Выполнить";
-      btn.onclick = function () {
-        window.handleTask(btn, t.owner, t.id);
-      };
+      btn.onclick = function () { window.handleTask(btn, t.owner, t.id); };
 
       item.appendChild(left);
       item.appendChild(btn);
@@ -482,22 +469,18 @@
       var d = new Date(v);
       if (isNaN(d.getTime())) return String(v);
       return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    } catch (e) {
-      return String(v);
-    }
+    } catch (e) { return String(v); }
   }
 
   function providerTitle(p) {
-    if (!p) return "Пополнение";
-    if (p === "tbank") return "Пополнение (T-Bank)";
+    if (p === "tbank") return "Пополнение (Т-Банк)";
     if (p === "stars") return "Пополнение (Stars)";
-    return "Пополнение";
+    return "Операция";
   }
 
   function renderHistory() {
     var list = el("history-list");
     if (!list) return;
-
     list.innerHTML = "";
 
     var items = Array.isArray(state.ops) ? state.ops : [];
@@ -548,10 +531,9 @@
   function renderWithdrawals() {
     var list = el("withdrawals-list");
     if (!list) return;
-
     list.innerHTML = "";
-    var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
 
+    var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
     if (!items.length) {
       list.innerHTML = '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
       return;
@@ -577,7 +559,7 @@
 
       div.innerHTML =
         '<div>' +
-          '<div style="font-weight:700; font-size:13px;">' + amount.toFixed(0) + " ₽</div>" +
+          '<div style="font-weight:800; font-size:13px;">' + amount.toFixed(0) + " ₽</div>" +
           '<div style="font-size:10px; color:var(--text-dim);">' + fmtDate(created) + "</div>" +
         "</div>" +
         '<div class="status-badge ' + stClass + '">' + stText + "</div>";
@@ -589,9 +571,8 @@
   function render() {
     renderBalance();
     renderTasks();
-    window.renderReferrals && window.renderReferrals(); // если оставишь старую функцию — ок
+    window.renderReferrals && window.renderReferrals();
   }
-
   window.render = render;
 
   // -----------------------------
@@ -606,7 +587,7 @@
     setHidden(el("view-tasks"), t !== "tasks");
     setHidden(el("view-friends"), t !== "friends");
     setHidden(el("view-profile"), t !== "profile");
-    addClass(el("view-history"), "hidden"); // hide history when switching tabs
+    addClass(el("view-history"), "hidden");
   };
 
   window.showHistory = async function () {
@@ -615,12 +596,8 @@
     addClass(el("view-profile"), "hidden");
     rmClass(el("view-history"), "hidden");
 
-    // refresh ops if possible
     if (ensureTelegramOrExplain()) {
-      try {
-        var ops = await apiPost("/api/ops/list", {});
-        state.ops = ops.operations || [];
-      } catch (e) {}
+      try { state.ops = (await apiPost("/api/ops/list", {})).operations || []; } catch (e) {}
     }
     renderHistory();
   };
@@ -643,10 +620,8 @@
   // -----------------------------
   window.setFilter = function (f) {
     state.filter = f;
-    var a = el("f-all");
-    var m = el("f-my");
-    if (a) a.classList.toggle("active", f === "all");
-    if (m) m.classList.toggle("active", f === "my");
+    if (el("f-all")) el("f-all").classList.toggle("active", f === "all");
+    if (el("f-my")) el("f-my").classList.toggle("active", f === "my");
     renderTasks();
   };
 
@@ -678,11 +653,11 @@
     var q = Number(el("t-qty") ? (el("t-qty").value || 0) : 0);
     var cur = el("t-cur") ? el("t-cur").value : "rub";
     var totalRub = pricePerItem * q;
+
     var out = el("t-total");
     if (!out) return;
 
     if (cur === "star") {
-      // создание заданий за Stars пока не включаем (только визуально)
       var stars = Math.ceil(totalRub / 1.5);
       out.innerText = stars + " ⭐";
       out.style.color = "var(--accent-gold)";
@@ -708,36 +683,24 @@
   window.createTask = async function () {
     if (!ensureTelegramOrExplain()) return;
 
-    var typeEl = el("t-type");
-    var subtypeEl = el("t-tg-subtype");
-    var qtyEl = el("t-qty");
-    var curEl = el("t-cur");
-    var targetEl = el("t-target");
-    var textEl = el("t-text");
-
-    var type = typeEl ? typeEl.value : "tg";
-    var qty = parseInt(qtyEl ? qtyEl.value : "1", 10);
-    var currency = curEl ? curEl.value : "rub";
-    var target = (targetEl ? targetEl.value : "").trim();
-    var instructions = (textEl ? textEl.value : "").trim();
+    var type = el("t-type") ? el("t-type").value : "tg";
+    var qty = parseInt(el("t-qty") ? el("t-qty").value : "1", 10);
+    var currency = el("t-cur") ? el("t-cur").value : "rub";
+    var targetRaw = (el("t-target") ? el("t-target").value : "").trim();
+    var instructions = (el("t-text") ? el("t-text").value : "").trim();
 
     if (!qty || qty < 1) return tgAlert("Минимальное количество: 1");
-    if (!target) return tgAlert("Укажите ссылку на объект");
+    if (!targetRaw) return tgAlert("Укажите ссылку на объект");
     if (!isLinkValid) return tgAlert("Укажите корректную ссылку и дождитесь проверки.");
+    if (currency === "star") return tgAlert("Создание заданий за Stars пока отключено. Stars только для пополнения.");
 
-    if (currency === "star") {
-      return tgAlert("Создание заданий за Stars пока не включено.\n\nСделаем позже — сейчас Stars только для пополнения баланса.");
-    }
+    var target = (type === "tg") ? normalizeTelegramUrl(targetRaw) : targetRaw;
 
-    var pricePerItem = 0;
-    var workerReward = 0;
-    var taskName = "";
-    var checkType = "manual";
-    var tgChat = null;
-    var tgKind = null;
+    var pricePerItem = 0, workerReward = 0, taskName = "", checkType = "manual";
+    var tgChat = null, tgKind = null;
 
     if (type === "tg") {
-      var stKey = subtypeEl ? subtypeEl.value : "tg_sub";
+      var stKey = el("t-tg-subtype") ? el("t-tg-subtype").value : "tg_sub";
       var conf = TG_TASK_TYPES[stKey];
       if (!conf) return tgAlert("Выберите тип TG-задания");
       pricePerItem = Number(conf.cost || 0);
@@ -745,12 +708,11 @@
       taskName = conf.label || "TG задание";
       checkType = "auto";
 
-      // try derive chat username from target
       tgChat = target.replace(/^https?:\/\/t\.me\//i, "@").replace(/^t\.me\//i, "@");
       tgChat = tgChat.split("/")[0];
       tgKind = (stKey === "tg_group") ? "group" : "channel";
     } else {
-      var opt = typeEl && typeEl.selectedOptions ? typeEl.selectedOptions[0] : null;
+      var opt = el("t-type")?.selectedOptions?.[0] || null;
       pricePerItem = opt ? Number(opt.dataset.p || 0) : 0;
       taskName = (type === "ya") ? "Отзыв Яндекс" : "Отзыв Google";
       checkType = "manual";
@@ -761,16 +723,9 @@
 
     try {
       await apiPost("/api/task/create", {
-        type: type,
-        title: taskName,
-        target_url: target,
-        instructions: instructions,
-        reward_rub: workerReward,
-        cost_rub: costRub,
-        qty_total: qty,
-        check_type: checkType,
-        tg_chat: tgChat,
-        tg_kind: tgKind
+        type: type, title: taskName, target_url: target, instructions: instructions,
+        reward_rub: workerReward, cost_rub: costRub, qty_total: qty, check_type: checkType,
+        tg_chat: tgChat, tg_kind: tgKind
       });
 
       await loadData();
@@ -779,7 +734,8 @@
       window.setFilter("my");
       tgAlert("✅ Задание создано!\nСписано: " + costRub + " ₽");
     } catch (e) {
-      tgAlert("Ошибка создания задания: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка создания: " + (e?.message || "unknown"));
+      showErr("createTask error", e);
     }
   };
 
@@ -790,14 +746,9 @@
     if (!ensureTelegramOrExplain()) return;
 
     id = String(id || "");
-    if (owner === "me") {
-      return tgAlert("Удаление заданий пока не реализовано на сервере.\n(Чтобы сделать — нужен endpoint delete/cancel.)");
-    }
+    if (owner === "me") return tgAlert("Удаление заданий отключено (нужен endpoint cancel).");
 
-    var task = null;
-    for (var i = 0; i < state.tasks.length; i++) {
-      if (String(state.tasks[i].id) === id) { task = state.tasks[i]; break; }
-    }
+    var task = state.tasks.find(function (x) { return String(x.id) === id; });
     if (!task) return;
 
     activeTaskId = id;
@@ -806,39 +757,36 @@
     if (el("td-reward")) el("td-reward").innerText = "+" + task.price + " ₽";
 
     var iconBox = el("td-icon");
-    var iconHtml = "";
-    if (task.type === "tg" && task.subType && TG_TASK_TYPES[task.subType]) {
-      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">' + TG_TASK_TYPES[task.subType].icon + "</div>";
-      if (el("td-type-badge")) el("td-type-badge").innerText = TG_TASK_TYPES[task.subType].label.toUpperCase();
-    } else if (ASSETS[task.type]) {
-      iconHtml = '<img src="' + ASSETS[task.type] + '" style="width:100%;height:100%;object-fit:contain;">';
-      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
-    } else {
-      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">📄</div>';
-      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+    if (iconBox) {
+      if (task.type === "tg" && task.subType && TG_TASK_TYPES[task.subType]) {
+        iconBox.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">' + TG_TASK_TYPES[task.subType].icon + "</div>";
+        if (el("td-type-badge")) el("td-type-badge").innerText = TG_TASK_TYPES[task.subType].label.toUpperCase();
+      } else if (ASSETS[task.type]) {
+        iconBox.innerHTML = '<img src="' + ASSETS[task.type] + '" style="width:100%;height:100%;object-fit:contain;">';
+        if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+      } else {
+        iconBox.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">📄</div>';
+        if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+      }
     }
-    if (iconBox) iconBox.innerHTML = iconHtml;
 
-    if (el("td-link")) el("td-link").innerText = task.target;
-    if (el("td-link-btn")) el("td-link-btn").href = task.target;
+    if (el("td-link")) el("td-link").innerText = task.target || "";
+    var linkBtn = el("td-link-btn");
+    if (linkBtn) {
+      linkBtn.href = task.target || "#";
+      linkBtn.onclick = function (e) { try { e.preventDefault(); } catch (e2) {} tgOpenTelegramLink(task.target); };
+    }
     if (el("td-text")) el("td-text").innerText = task.text || "Нет дополнительных инструкций";
 
-    // proof blocks
     var isAuto = (task.checkType === "auto");
     setHidden(el("proof-manual"), isAuto);
     setHidden(el("proof-auto"), !isAuto);
 
-    // reset proof inputs
     if (el("p-username")) el("p-username").value = "";
-    if (el("p-file")) el("p-file").value = "";
-    if (el("p-filename")) { el("p-filename").innerText = "📷 Прикрепить скриншот"; el("p-filename").style.color = "var(--accent-cyan)"; }
-    selectedProofFile = null;
 
     var actionBtn = el("td-action-btn");
     if (actionBtn) {
       actionBtn.disabled = false;
-      rmClass(actionBtn, "working");
-
       if (isAuto) {
         var txt = "⚡ Проверить выполнение";
         if (task.subType && TG_TASK_TYPES[task.subType]) txt = "⚡ Проверить: " + TG_TASK_TYPES[task.subType].action;
@@ -855,7 +803,6 @@
 
   window.checkTgTask = async function (taskId) {
     if (!ensureTelegramOrExplain()) return;
-
     var btn = el("td-action-btn");
     if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Проверка..."; }
 
@@ -864,75 +811,42 @@
       await loadData();
       render();
       window.closeModal();
-      tgAlert("✅ Отправлено!\nЕсли это авто-TG — начисление произойдёт сразу, если бот видит подписку.");
+      tgAlert("✅ Отправлено! Если бот видит выполнение — начисление сразу.");
     } catch (e) {
       if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Проверить выполнение"; }
-      tgAlert("Ошибка проверки: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка: " + (e?.message || "unknown"));
+      showErr("checkTgTask error", e);
     }
   };
 
   window.submitReviewProof = async function (taskId) {
     if (!ensureTelegramOrExplain()) return;
-
     var uname = (el("p-username") ? el("p-username").value : "").trim();
     if (!uname) return tgAlert("Укажите ваше имя/никнейм.");
 
     var btn = el("td-action-btn");
     if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Отправка..."; }
 
-    // Скриншот сейчас не грузим (нет upload endpoint), отправим только текст.
     try {
-      await apiPost("/api/task/submit", {
-        task_id: String(taskId),
-        proof_text: uname,
-        proof_url: ""
-      });
-
+      await apiPost("/api/task/submit", { task_id: String(taskId), proof_text: uname, proof_url: "" });
       await loadData();
       render();
       window.closeModal();
-      tgAlert("✅ Отчет отправлен!\nДальше — модерация.");
+      tgAlert("✅ Отчет отправлен! Дальше — модерация.");
     } catch (e) {
       if (btn) { btn.disabled = false; btn.innerHTML = "📤 Отправить отчет"; }
-      tgAlert("Ошибка отправки: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка: " + (e?.message || "unknown"));
+      showErr("submitReviewProof error", e);
     }
   };
 
-  window.updateFileName = function (input) {
-    try {
-      if (input && input.files && input.files[0]) {
-        selectedProofFile = input.files[0];
-        var name = input.files[0].name || "file";
-        var pfn = el("p-filename");
-        if (pfn) {
-          pfn.innerText = "📄 " + (name.length > 20 ? name.substr(0, 18) + "..." : name);
-          pfn.style.color = "var(--text-main)";
-        }
-      }
-    } catch (e) {}
-  };
+  window.updateFileName = function () { tgAlert("Загрузка скриншота пока отключена (нет upload endpoint)."); };
 
-  // -----------------------------
-  // Copy helpers
-  // -----------------------------
   window.copyLink = function () {
     var url = el("td-link") ? el("td-link").innerText : "";
     if (!url) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(function () { tgAlert("Ссылка скопирована"); });
-    } else {
-      tgAlert("Не удалось скопировать (нет clipboard API).");
-    }
-  };
-
-  window.copyText = function () {
-    var txt = el("td-text") ? el("td-text").innerText : "";
-    if (!txt) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(txt).then(function () { tgAlert("Текст скопирован"); });
-    } else {
-      tgAlert("Не удалось скопировать (нет clipboard API).");
-    }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(function () { tgAlert("Ссылка скопирована"); });
+    else tgAlert(url);
   };
 
   // -----------------------------
@@ -942,11 +856,7 @@
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "12345";
     var invite = "t.me/ReviewCashBot?start=" + uid;
-
-    var linkEl = el("invite-link");
-    if (linkEl) linkEl.innerText = invite;
-
-    // optional counters
+    if (el("invite-link")) el("invite-link").innerText = invite;
     if (el("ref-count")) el("ref-count").innerText = "0";
     if (el("ref-earn")) el("ref-earn").innerText = "0 ₽";
   };
@@ -954,62 +864,50 @@
   window.copyInviteLink = function () {
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "12345";
-    var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(inviteLink).then(function () { tgAlert("🔗 Ссылка скопирована!"); });
-    } else {
-      tgAlert(inviteLink);
-    }
+    var link = "https://t.me/ReviewCashBot?start=" + uid;
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(function () { tgAlert("🔗 Ссылка скопирована!"); });
+    else tgAlert(link);
   };
 
   window.shareInvite = function () {
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "12345";
     var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
-    tgOpen("https://t.me/share/url?url=" + encodeURIComponent(inviteLink) + "&text=" + encodeURIComponent("Зарабатывай на заданиях вместе со мной!"));
+    tgOpenTelegramLink("https://t.me/share/url?url=" + encodeURIComponent(inviteLink) + "&text=" + encodeURIComponent("Зарабатывай на заданиях вместе со мной!"));
   };
 
   // -----------------------------
-  // Payments: Stars + TBank (no Crypto)
+  // Payments
   // -----------------------------
   window.processPay = function (method) {
     var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
 
-    if (method === "pay_crypto") {
-      return tgAlert("CryptoBot временно выключен.\nИспользуй Stars или Т-Банк.");
-    }
-
     if (method === "pay_stars") {
       if (!ensureTelegramOrExplain()) return;
-      // sendData => бот пришлёт invoice Stars
       try {
         tg.sendData(JSON.stringify({ action: "pay_stars", amount: String(val) }));
       } catch (e) {
         tgAlert("Не удалось отправить данные в Telegram. Открой Mini App из бота.");
+        showErr("sendData error", e);
       }
       return;
     }
 
-    // unknown
-    tgAlert("Неизвестный метод оплаты: " + method);
+    tgAlert("Неизвестный метод: " + method);
   };
-
-  var tbankAmount = 0;
 
   window.openTBankPay = function () {
     var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
 
     tbankAmount = val;
-
     if (el("tb-amount-display")) el("tb-amount-display").innerText = String(val) + " ₽";
 
     var u = getTgUser();
     var uId = (u && u.id) ? u.id : "TEST";
     var rand = Math.floor(1000 + Math.random() * 9000);
     var code = "PAY-" + uId + "-" + rand;
-
     if (el("tb-code")) el("tb-code").innerText = code;
 
     window.closeModal();
@@ -1019,11 +917,8 @@
   window.copyCode = function () {
     var code = el("tb-code") ? el("tb-code").innerText : "";
     if (!code) return;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code).then(function () { tgAlert("Код скопирован!"); });
-    } else {
-      tgAlert(code);
-    }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(code).then(function () { tgAlert("Код скопирован!"); });
+    else tgAlert(code);
   };
 
   window.confirmTBank = async function () {
@@ -1031,15 +926,17 @@
 
     var sender = (el("tb-sender") ? el("tb-sender").value : "").trim();
     var code = (el("tb-code") ? el("tb-code").innerText : "").trim();
-    if (!sender) return tgAlert("Укажите ваше имя отправителя");
+    if (!sender) return tgAlert("Укажите имя отправителя");
     if (!code) return tgAlert("Нет кода платежа");
 
     try {
       await apiPost("/api/tbank/claim", { amount_rub: Number(tbankAmount), sender: sender, code: code });
-      tgAlert("✅ Заявка на пополнение отправлена.\nАдминистратор подтвердит вручную.");
+      tgAlert("✅ Заявка на пополнение отправлена.\nАдмин подтвердит вручную.");
       window.closeModal();
+      await loadData(); render();
     } catch (e) {
-      tgAlert("Ошибка T-Bank: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка Т-Банк: " + (e?.message || "unknown"));
+      showErr("tbank claim error", e);
     }
   };
 
@@ -1050,33 +947,27 @@
     if (!ensureTelegramOrExplain()) return;
 
     var details = (el("w-details") ? el("w-details").value : "").trim();
-    var amountStr = (el("w-amount") ? el("w-amount").value : "").trim();
+    var amt = Number((el("w-amount") ? el("w-amount").value : "").trim());
 
-    var amt = Number(amountStr);
     if (!details) return tgAlert("Укажи реквизиты");
-    if (!isFinite(amt) || amt <= 0) return tgAlert("Некорректная сумма");
-    if (amt < 300) return tgAlert("Минимальная сумма: 300 ₽");
+    if (!isFinite(amt) || amt < 300) return tgAlert("Минимальная сумма: 300 ₽");
 
     try {
       await apiPost("/api/withdraw/create", { amount_rub: amt, details: details });
-      try {
-        var w = await apiPost("/api/withdraw/list", {});
-        state.withdrawals = w.withdrawals || [];
-      } catch (e2) {}
-      await loadData();
-      render();
-      renderWithdrawals();
+      try { state.withdrawals = (await apiPost("/api/withdraw/list", {})).withdrawals || []; } catch (e2) {}
+      await loadData(); render(); renderWithdrawals();
       tgAlert("✅ Заявка создана! Ожидайте обработки.");
     } catch (e) {
-      tgAlert("Ошибка вывода: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка вывода: " + (e?.message || "unknown"));
+      showErr("withdraw error", e);
     }
   };
 
   // -----------------------------
-  // Admin panel stubs (backend endpoints не подключены)
+  // Admin (просто инфо)
   // -----------------------------
   window.openAdminPanel = function () {
-    tgAlert("Админ-панель пока не подключена на сервере.\n(Endpoints /api/admin/* сейчас отсутствуют.)");
+    tgAlert("Админка сделана на стороне бота:\n\n✅ /tbank_ok CODE\n✅ /tbank_no CODE\n✅ /wd_ok ID\n✅ /wd_no ID");
   };
   window.switchAdminTab = function () {};
 
@@ -1084,10 +975,7 @@
   // Boot
   // -----------------------------
   async function initApp() {
-    try {
-      if (tg && tg.ready) tg.ready();
-      if (tg && tg.expand) tg.expand();
-    } catch (e) {}
+    try { tg.ready?.(); tg.expand?.(); } catch (e) {}
 
     populateTgTypes();
     setupProfileUI();
@@ -1096,33 +984,22 @@
     installLinkWatcher();
     window.recalc();
 
-    try {
-      await loadData();
-    } catch (e) {
-      // если тут ошибка — чаще всего 401 (не из Telegram / другой бот токен)
-      tgAlert("Ошибка загрузки: " + (e && e.message ? e.message : "unknown") +
-        "\n\nЕсли видишь 401/Bad initData — открой Mini App из Telegram-кнопки этого же бота.");
-    }
-
+    try { await loadData(); } catch (e) { tgAlert("Ошибка загрузки: " + (e?.message || "unknown")); }
     render();
 
-    // preloader hide
     var loader = el("loader");
     if (loader) {
       addClass(loader, "fade-out");
       setTimeout(function () {
         try { loader.remove(); } catch (e) { loader.style.display = "none"; }
-        var cont = document.querySelector(".app-container");
-        if (cont) addClass(cont, "anim-active");
       }, 250);
     }
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     initApp().catch(function (e) {
-      // fallback
-      console.error(e);
-      tgAlert("Fatal init error: " + (e && e.message ? e.message : e));
+      tgAlert("Fatal init error: " + (e?.message || e));
+      showErr("fatal init", e);
     });
   });
 
