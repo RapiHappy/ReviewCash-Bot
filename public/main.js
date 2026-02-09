@@ -1,1399 +1,1129 @@
-// =========================
-// ReviewCash MiniApp — SIMPLE (Stars + T-Bank only)
-// ✅ Fix: guard when opened outside Telegram (initData empty -> 401)
-// ✅ Removed CryptoBot UI logic
-// ✅ Removed Admin API calls (to avoid 404 spam)
-// =========================
+/* ReviewCash MiniApp — stable main.js (Stars + T-Bank only)
+   - No CryptoBot calls (shows "temporarily disabled")
+   - Safe rendering (no multiline string literals that break parsing)
+   - Works with UUID task ids
+*/
 
-// --- TS helpers (from your bundle style) ---
-var __assign =
-  (this && this.__assign) ||
-  function () {
-    __assign =
-      Object.assign ||
-      function (t) {
-        for (var s, i = 1, n = arguments.length; i < n; i++) {
-          s = arguments[i];
-          for (var p in s)
-            if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
-        }
-        return t;
-      };
-    return __assign.apply(this, arguments);
-  };
+(function () {
+  "use strict";
 
-var __awaiter =
-  (this && this.__awaiter) ||
-  function (thisArg, _arguments, P, generator) {
-    function adopt(value) {
-      return value instanceof P
-        ? value
-        : new P(function (resolve) {
-            resolve(value);
-          });
-    }
-    return new (P || (P = Promise))(function (resolve, reject) {
-      function fulfilled(value) {
-        try {
-          step(generator.next(value));
-        } catch (e) {
-          reject(e);
-        }
-      }
-      function rejected(value) {
-        try {
-          step(generator["throw"](value));
-        } catch (e) {
-          reject(e);
-        }
-      }
-      function step(result) {
-        result.done
-          ? resolve(result.value)
-          : adopt(result.value).then(fulfilled, rejected);
-      }
-      step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-  };
-
-var __generator =
-  (this && this.__generator) ||
-  function (thisArg, body) {
-    var _ = {
-        label: 0,
-        sent: function () {
-          if (t[0] & 1) throw t[1];
-          return t[1];
-        },
-        trys: [],
-        ops: [],
+  // -----------------------------
+  // Telegram / Mock
+  // -----------------------------
+  var MockTelegram = {
+    WebApp: {
+      expand: function () {},
+      setHeaderColor: function () {},
+      showAlert: function (msg) { alert(msg); },
+      showConfirm: function (msg, cb) { var r = confirm(msg); if (cb) cb(r); },
+      openTelegramLink: function (url) { window.open(url, "_blank"); },
+      sendData: function (data) {
+        alert("DEV MODE: sendData -> bot\n\n" + data + "\n\n(В Telegram окно обычно закрывается)");
       },
-      f,
-      y,
-      t,
-      g = Object.create(
-        (typeof Iterator === "function" ? Iterator : Object).prototype
-      );
-    return (
-      (g.next = verb(0)),
-      (g["throw"] = verb(1)),
-      (g["return"] = verb(2)),
-      typeof Symbol === "function" &&
-        (g[Symbol.iterator] = function () {
-          return this;
-        }),
-      g
-    );
-    function verb(n) {
-      return function (v) {
-        return step([n, v]);
-      };
-    }
-    function step(op) {
-      if (f) throw new TypeError("Generator is already executing.");
-      while (g && ((g = 0), op[0] && (_ = 0)), _)
-        try {
-          if (
-            ((f = 1),
-            y &&
-              (t =
-                op[0] & 2
-                  ? y["return"]
-                  : op[0]
-                  ? y["throw"] || ((t = y["return"]) && t.call(y), 0)
-                  : y.next) &&
-              !(t = t.call(y, op[1])).done)
-          )
-            return t;
-          if (((y = 0), t)) op = [op[0] & 2, t.value];
-          switch (op[0]) {
-            case 0:
-            case 1:
-              t = op;
-              break;
-            case 4:
-              _.label++;
-              return { value: op[1], done: false };
-            case 5:
-              _.label++;
-              y = op[1];
-              op = [0];
-              continue;
-            case 7:
-              op = _.ops.pop();
-              _.trys.pop();
-              continue;
-            default:
-              if (
-                !((t = _.trys),
-                (t = t.length > 0 && t[t.length - 1])) &&
-                (op[0] === 6 || op[0] === 2)
-              ) {
-                _ = 0;
-                continue;
-              }
-              if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) {
-                _.label = op[1];
-                break;
-              }
-              if (op[0] === 6 && _.label < t[1]) {
-                _.label = t[1];
-                t = op;
-                break;
-              }
-              if (t && _.label < t[2]) {
-                _.label = t[2];
-                _.ops.push(op);
-                break;
-              }
-              if (t[2]) _.ops.pop();
-              _.trys.pop();
-              continue;
-          }
-          op = body.call(thisArg, _);
-        } catch (e) {
-          op = [6, e];
-          y = 0;
-        } finally {
-          f = t = 0;
-        }
-      if (op[0] & 5) throw op[1];
-      return { value: op[0] ? op[1] : void 0, done: true };
+      ready: function () {},
+      initData: "",
+      initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode" } }
     }
   };
 
-// --- Mock Telegram (for dev browser) ---
-var MockTelegram = {
-  WebApp: {
-    expand: function () {
-      return console.log("TG: Expanded");
-    },
-    setHeaderColor: function (color) {
-      return console.log("TG: Header Color", color);
-    },
-    showAlert: function (msg) {
-      return alert(msg);
-    },
-    showConfirm: function (msg, cb) {
-      var r = confirm(msg);
-      if (cb) cb(r);
-    },
-    openTelegramLink: function (url) {
-      return window.open(url, "_blank");
-    },
-    sendData: function (data) {
-      console.log("TG: sendData called with", data);
-      alert(
-        "DEV MODE (browser): sendData вызван.\n\n" +
-          "В реальном Mini App (внутри Telegram) окно закроется и данные уйдут боту.\n\n" +
-          data
-      );
-    },
-    ready: function () {
-      return console.log("TG: Ready");
-    },
-    initData: "",
-    initDataUnsafe: {
-      user: { id: 123456, username: "miniapp_user", first_name: "Alex" },
-    },
-  },
-};
+  var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : MockTelegram.WebApp;
 
-function getTgUser() {
-  if (
-    window.Telegram &&
-    window.Telegram.WebApp &&
-    window.Telegram.WebApp.initDataUnsafe &&
-    window.Telegram.WebApp.initDataUnsafe.user
-  ) {
-    return window.Telegram.WebApp.initDataUnsafe.user;
+  function tgAlert(msg) {
+    try { tg.showAlert(String(msg)); } catch (e) { alert(String(msg)); }
   }
-  return MockTelegram.WebApp.initDataUnsafe.user;
-}
+  function tgConfirm(msg, cb) {
+    try { tg.showConfirm(String(msg), cb); } catch (e) { cb(confirm(String(msg))); }
+  }
+  function tgOpen(url) {
+    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  }
 
-var tg =
-  window.Telegram && window.Telegram.WebApp
-    ? window.Telegram.WebApp
-    : MockTelegram.WebApp;
+  function isTelegramWebApp() {
+    try {
+      return !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string" && window.Telegram.WebApp.initData.length > 0);
+    } catch (e) {
+      return false;
+    }
+  }
 
-// --- API BASE ---
-function getApiBase() {
-  var meta = document.querySelector('meta[name="api-base"]');
-  var v = meta ? meta.getAttribute("content") : "";
-  if (v) return String(v).replace(/\/+$/, "");
+  function getTgUser() {
+    try {
+      if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) return tg.initDataUnsafe.user;
+    } catch (e) {}
+    return MockTelegram.WebApp.initDataUnsafe.user;
+  }
 
-  var qs = window.location && window.location.search ? window.location.search : "";
-  var m = qs.match(/[?&]api=([^&]+)/);
-  if (m && m[1]) return decodeURIComponent(m[1]).replace(/\/+$/, "");
+  function tgInitData() {
+    try {
+      return (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string")
+        ? window.Telegram.WebApp.initData
+        : "";
+    } catch (e) {
+      return "";
+    }
+  }
 
-  return window.location.origin;
-}
-var API = getApiBase();
+  // -----------------------------
+  // DOM helpers
+  // -----------------------------
+  function el(id) { return document.getElementById(id); }
+  function addClass(node, c) { if (node && node.classList) node.classList.add(c); }
+  function rmClass(node, c) { if (node && node.classList) node.classList.remove(c); }
+  function setHidden(node, hidden) { if (node) node.classList.toggle("hidden", !!hidden); }
 
-function tgInitData() {
-  return window.Telegram &&
-    window.Telegram.WebApp &&
-    typeof window.Telegram.WebApp.initData === "string"
-    ? window.Telegram.WebApp.initData
-    : "";
-}
+  // -----------------------------
+  // API base
+  // -----------------------------
+  function getApiBase() {
+    var meta = document.querySelector('meta[name="api-base"]');
+    var v = meta ? meta.getAttribute("content") : "";
+    if (v) return String(v).replace(/\/+$/, "");
 
-// ✅ IMPORTANT: if opened not inside Telegram -> initData is empty -> backend returns 401
-function ensureInsideTelegramOrExplain() {
-  var init = tgInitData();
-  if (!init) {
-    tg.showAlert(
-      "❌ Mini App открыт не внутри Telegram.\n\n" +
-        "Из-за этого сервер отклоняет запросы (401: Bad initData).\n\n" +
-        "✅ Открой приложение через бота кнопкой «Открыть приложение» (web_app), " +
-        "а не прямой ссылкой в браузере."
-    );
+    var qs = window.location && window.location.search ? window.location.search : "";
+    var m = qs.match(/[?&]api=([^&]+)/);
+    if (m && m[1]) return decodeURIComponent(m[1]).replace(/\/+$/, "");
+
+    return window.location.origin;
+  }
+  var API = getApiBase();
+
+  function getDeviceHash() {
+    var v = "";
+    try { v = localStorage.getItem("device_hash"); } catch (e) {}
+    if (!v) {
+      v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+      try { localStorage.setItem("device_hash", v); } catch (e) {}
+    }
+    return v;
+  }
+
+  async function apiPost(path, data) {
+    var res = await fetch(API + path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tg-InitData": tgInitData()
+      },
+      body: JSON.stringify(Object.assign({}, data || {}, { device_hash: getDeviceHash() }))
+    });
+
+    var j = {};
+    try { j = await res.json(); } catch (e) { j = {}; }
+
+    if (!res.ok || j.ok === false) {
+      var msg = j && j.error ? j.error : ("HTTP " + res.status);
+      throw new Error(msg);
+    }
+    return j;
+  }
+
+  function ensureTelegramOrExplain() {
+    if (isTelegramWebApp()) return true;
+    tgAlert("Открой Mini App через кнопку в Telegram (WebApp).\n\nЕсли открыть сайт напрямую — initData пустой и сервер вернёт 401.");
     return false;
   }
-  return true;
-}
 
-function getDeviceHash() {
-  var v = localStorage.getItem("device_hash");
-  if (!v) {
-    v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-    localStorage.setItem("device_hash", v);
-  }
-  return v;
-}
+  // -----------------------------
+  // Config
+  // -----------------------------
+  var ADMIN_IDS = [6482440657, 123456]; // оставил как было
 
-function apiPost(path, data) {
-  return __awaiter(this, void 0, void 0, function () {
-    var init, res, j;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          init = tgInitData();
-          if (!init) {
-            // make it a clean error for UI
-            throw new Error("OPEN_IN_TELEGRAM");
-          }
-          return [
-            4 /*yield*/,
-            fetch(API + path, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Tg-InitData": init,
-              },
-              body: JSON.stringify(
-                __assign(__assign({}, data || {}), { device_hash: getDeviceHash() })
-              ),
-            }),
-          ];
-        case 1:
-          res = _a.sent();
-          return [4 /*yield*/, res.json().catch(function () { return ({}); })];
-        case 2:
-          j = _a.sent();
-          if (!res.ok || j.ok === false) {
-            throw new Error(j.error || ("HTTP " + res.status));
-          }
-          return [2 /*return*/, j];
-      }
-    });
-  });
-}
+  var ASSETS = {
+    ya: "https://www.google.com/s2/favicons?sz=64&domain=yandex.ru",
+    gm: "https://www.google.com/s2/favicons?sz=64&domain=google.com",
+    tg: "https://cdn-icons-png.flaticon.com/512/2111/2111646.png"
+  };
 
-// --- Storage fallback ---
-var miniappsAI = window.miniappsAI || {
-  storage: {
-    getItem: function (k) {
-      return __awaiter(void 0, void 0, void 0, function () {
-        return __generator(this, function (_a) {
-          return [2 /*return*/, localStorage.getItem(k)];
-        });
-      });
-    },
-    setItem: function (k, v) {
-      return __awaiter(void 0, void 0, void 0, function () {
-        return __generator(this, function (_a) {
-          return [2 /*return*/, localStorage.setItem(k, v)];
-        });
-      });
-    },
-  },
-};
+  var TG_TASK_TYPES = {
+    tg_sub:   { label: "Подписка на канал",   cost: 30,  reward: 15, icon: "📢", action: "Подписаться" },
+    tg_group: { label: "Вступление в группу", cost: 25,  reward: 12, icon: "👥", action: "Вступить" },
+    tg_react: { label: "Просмотр + Реакция",  cost: 10,  reward: 5,  icon: "❤️", action: "Смотреть пост" },
+    tg_poll:  { label: "Участие в опросе",    cost: 15,  reward: 7,  icon: "📊", action: "Голосовать" },
+    tg_start: { label: "Запуск бота /start",  cost: 25,  reward: 12, icon: "🤖", action: "Запустить" },
+    tg_msg:   { label: "Сообщение боту",      cost: 15,  reward: 7,  icon: "✉️", action: "Написать" },
+    tg_mapp:  { label: "Открыть Mini App",    cost: 40,  reward: 20, icon: "📱", action: "Открыть App" },
+    tg_hold:  { label: "Подписка + 24ч",      cost: 60,  reward: 30, icon: "⏳", action: "Подписаться" },
+    tg_invite:{ label: "Инвайт друзей",       cost: 100, reward: 50, icon: "🤝", action: "Пригласить" }
+  };
 
-// --- CONFIG ---
-var ASSETS = {
-  ya: "https://www.google.com/s2/favicons?sz=64&domain=yandex.ru",
-  gm: "https://www.google.com/s2/favicons?sz=64&domain=google.com",
-  tg: "https://cdn-icons-png.flaticon.com/512/2111/2111646.png",
-};
+  // -----------------------------
+  // State
+  // -----------------------------
+  var state = {
+    filter: "all",
+    user: { rub: 0, stars: 0, xp: 0, level: 1 },
+    tasks: [],
+    withdrawals: [],
+    ops: []
+  };
 
-var TG_TASK_TYPES = {
-  tg_sub: { label: "Подписка на канал", cost: 30, reward: 15, icon: "📢", action: "Подписаться" },
-  tg_group: { label: "Вступление в группу", cost: 25, reward: 12, icon: "👥", action: "Вступить" },
-  tg_react: { label: "Просмотр + Реакция", cost: 10, reward: 5, icon: "❤️", action: "Смотреть пост" },
-  tg_poll: { label: "Участие в опросе", cost: 15, reward: 7, icon: "📊", action: "Голосовать" },
-  tg_start: { label: "Запуск бота /start", cost: 25, reward: 12, icon: "🤖", action: "Запустить" },
-  tg_msg: { label: "Сообщение боту", cost: 15, reward: 7, icon: "✉️", action: "Написать" },
-  tg_mapp: { label: "Открыть Mini App", cost: 40, reward: 20, icon: "📱", action: "Открыть App" },
-  tg_hold: { label: "Подписка + 24ч", cost: 60, reward: 30, icon: "⏳", action: "Подписаться" },
-  tg_invite: { label: "Инвайт друзей", cost: 100, reward: 50, icon: "🤝", action: "Пригласить" },
-};
+  var isLinkValid = false;
+  var linkCheckTimer = null;
+  var selectedProofFile = null;
+  var activeTaskId = null;
 
-var TASK_LIMITS = {
-  ya: 3 * 24 * 60 * 60 * 1000,
-  gm: 1 * 24 * 60 * 60 * 1000,
-};
-
-var state = {
-  filter: "all",
-  user: { rub: 0, stars: 0, xp: 0, level: 1 },
-  tasks: [],
-  history: [],
-  ops: [],
-  withdrawals: [],
-  referrals: { count: 0, earned: 0 },
-  limits: {},
-};
-
-var isLinkValid = false;
-var linkCheckTimer = null;
-var selectedProofFile = null;
-
-// --- init ---
-function initApp() {
-  return __awaiter(this, void 0, void 0, function () {
-    var loader, targetInput;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (tg.ready) tg.ready();
-          if (tg.expand) tg.expand();
-
-          populateTgTypes();
-          setupProfileUI();
-
-          // If not in Telegram — allow UI to show, but explain that API won't work
-          if (!tgInitData()) {
-            // Show once, but do not block interface
-            console.warn("initData is empty -> opened outside Telegram");
-          }
-
-          _a.label = 1;
-        case 1:
-          _a.trys.push([1, 3, , 4]);
-          return [4 /*yield*/, loadData()];
-        case 2:
-          _a.sent();
-          return [3 /*break*/, 4];
-        case 3:
-          console.warn("loadData failed (likely outside Telegram):", _a.sent());
-          return [3 /*break*/, 4];
-        case 4:
-          checkLevelUp();
-          render();
-
-          loader = document.getElementById("loader");
-          if (loader) {
-            loader.classList.add("fade-out");
-            setTimeout(function () {
-              loader.remove();
-              var cont = document.querySelector(".app-container");
-              if (cont) cont.classList.add("anim-active");
-            }, 300);
-          }
-
-          document.querySelectorAll(".overlay").forEach(function (overlay) {
-            overlay.addEventListener("click", function (e) {
-              if (e.target === overlay) closeModal();
-            });
-          });
-
-          targetInput = document.getElementById("t-target");
-          if (targetInput) {
-            targetInput.addEventListener("input", function (e) {
-              var val = (e.target.value || "").trim();
-              var statusEl = document.getElementById("t-target-status");
-              clearTimeout(linkCheckTimer);
-              isLinkValid = false;
-
-              if (!val) {
-                if (statusEl) {
-                  statusEl.className = "input-status";
-                  statusEl.innerHTML = "";
-                }
-                return;
-              }
-
-              if (statusEl) {
-                statusEl.className = "input-status visible checking";
-                statusEl.innerHTML = '<span class="spin-icon">⏳</span> Проверка ссылки...';
-              }
-
-              linkCheckTimer = setTimeout(function () {
-                var isValid =
-                  /^https?:\/\/.+\..+/.test(val) ||
-                  /^t\.me\/.+/.test(val) ||
-                  /^https?:\/\/t\.me\/.+/.test(val);
-
-                if (statusEl) {
-                  statusEl.className = "input-status visible " + (isValid ? "valid" : "invalid");
-                  statusEl.innerHTML = isValid ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
-                }
-                isLinkValid = !!isValid;
-              }, 600);
-            });
-          }
-
-          recalc();
-          return [2 /*return*/];
-      }
-    });
-  });
-}
-
-document.addEventListener("DOMContentLoaded", function () {
-  initApp().catch(console.error);
-});
-
-// --- UI setup ---
-function populateTgTypes() {
-  var sel = document.getElementById("t-tg-subtype");
-  if (!sel) return;
-  sel.innerHTML = "";
-  Object.keys(TG_TASK_TYPES).forEach(function (k) {
-    var t = TG_TASK_TYPES[k];
-    var opt = document.createElement("option");
-    opt.value = k;
-    opt.textContent = t.icon + " " + t.label + " (" + t.cost + "₽)";
-    sel.appendChild(opt);
-  });
-}
-
-function setupProfileUI() {
-  try {
+  // -----------------------------
+  // UI: profile header
+  // -----------------------------
+  function setupProfileUI() {
     var user = getTgUser();
-    var headerAvatar = document.getElementById("header-avatar");
-    var profileAvatar = document.getElementById("u-pic");
-    var headerName = document.getElementById("header-name");
-    var profileName = document.getElementById("u-name");
+
+    var headerAvatar = el("header-avatar");
+    var profileAvatar = el("u-pic");
+    var headerName = el("header-name");
+    var profileName = el("u-name");
 
     var displayName = "Гость";
     var seed = "G";
 
     if (user) {
       if (user.username) displayName = "@" + user.username;
-      else if (user.first_name || user.last_name)
-        displayName = (user.first_name || "") + " " + (user.last_name || "");
+      else if (user.first_name || user.last_name) displayName = (user.first_name || "") + " " + (user.last_name || "");
       else displayName = "Пользователь";
 
       seed = user.first_name || user.username || "U";
     }
 
-    var photoSrc;
-    if (user && typeof user.photo_url === "string" && user.photo_url.startsWith("http")) {
+    var photoSrc = "";
+    if (user && typeof user.photo_url === "string" && user.photo_url.indexOf("http") === 0) {
       photoSrc = user.photo_url;
     } else {
-      photoSrc =
-        "https://ui-avatars.com/api/?name=" +
-        encodeURIComponent(seed) +
-        "&background=random&color=fff&size=128&bold=true";
+      photoSrc = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
     }
 
     if (headerName) headerName.innerText = displayName;
     if (profileName) profileName.innerText = displayName;
 
-    if (headerAvatar) headerAvatar.src = photoSrc;
-    if (profileAvatar) profileAvatar.src = photoSrc;
-  } catch (e) {
-    console.error("Profile Setup Error:", e);
-  }
-}
-
-// --- Data ---
-function loadData() {
-  return __awaiter(this, void 0, void 0, function () {
-    var r, w;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          return [4 /*yield*/, apiPost("/api/sync", {})];
-        case 1:
-          r = _a.sent();
-          state.user.rub = Number((r.balance && r.balance.rub_balance) || 0);
-          state.user.stars = Number((r.balance && r.balance.stars_balance) || 0);
-          if (r.balance && typeof r.balance.xp !== "undefined") state.user.xp = Number(r.balance.xp || 0);
-          if (r.balance && typeof r.balance.level !== "undefined") state.user.level = Number(r.balance.level || 1);
-
-          state.tasks = (r.tasks || []).map(function (t) {
-            var myId = Number((getTgUser() && getTgUser().id) || 0);
-            var ownerId = Number(t.owner_id || t.user_id || 0);
-            var owner = ownerId && myId && ownerId === myId ? "me" : "other";
-            return {
-              id: t.id,
-              type: t.type,
-              subType: t.sub_type || t.subType || null,
-              name: t.title || t.name || "Задание",
-              price: Number(t.reward_rub || t.reward || t.price || 0),
-              owner: owner,
-              checkType: t.check_type || t.checkType || (t.type === "tg" ? "auto" : "manual"),
-              target: t.target_url || t.target || "",
-              text: t.instructions || t.text || "",
-              qty: t.qty_total || t.qty || 1,
-            };
-          });
-
-          _a.label = 2;
-        case 2:
-          _a.trys.push([2, 4, , 5]);
-          return [4 /*yield*/, apiPost("/api/withdraw/list", {})];
-        case 3:
-          w = _a.sent();
-          state.withdrawals = w.withdrawals || [];
-          return [3 /*break*/, 5];
-        case 4:
-          console.warn("withdraw list error", _a.sent());
-          state.withdrawals = state.withdrawals || [];
-          return [3 /*break*/, 5];
-        case 5:
-          // ops history
-          _a.trys.push([5, 7, , 8]);
-          return [4 /*yield*/, apiPost("/api/ops/list", {})];
-        case 6:
-          state.ops = (_a.sent()).operations || [];
-          return [3 /*break*/, 8];
-        case 7:
-          console.warn("ops list error", _a.sent());
-          return [3 /*break*/, 8];
-        case 8:
-          return [2 /*return*/];
-      }
-    });
-  });
-}
-
-// --- Limits ---
-function checkTaskAvailability(type) {
-  return __awaiter(this, void 0, void 0, function () {
-    var raw, data, last, diff, remaining;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!TASK_LIMITS[type]) return [2 /*return*/, { ok: true }];
-          return [4 /*yield*/, miniappsAI.storage.getItem("taskLimitData")];
-        case 1:
-          raw = _a.sent();
-          data = raw ? JSON.parse(raw) : {};
-          last = data[type] || 0;
-          diff = Date.now() - last;
-          if (diff < TASK_LIMITS[type]) {
-            remaining = TASK_LIMITS[type] - diff;
-            return [2 /*return*/, { ok: false, remainingMs: remaining }];
-          }
-          return [2 /*return*/, { ok: true }];
-      }
-    });
-  });
-}
-
-function recordTaskAction(type) {
-  return __awaiter(this, void 0, void 0, function () {
-    var raw, data;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!TASK_LIMITS[type]) return [2 /*return*/];
-          return [4 /*yield*/, miniappsAI.storage.getItem("taskLimitData")];
-        case 1:
-          raw = _a.sent();
-          data = raw ? JSON.parse(raw) : {};
-          data[type] = Date.now();
-          return [4 /*yield*/, miniappsAI.storage.setItem("taskLimitData", JSON.stringify(data))];
-        case 2:
-          _a.sent();
-          state.limits = data;
-          return [2 /*return*/];
-      }
-    });
-  });
-}
-
-// --- History render ---
-function renderHistory() {
-  var list = document.getElementById("history-list");
-  if (!list) return;
-
-  list.innerHTML = "";
-  var items = Array.isArray(state.ops) && state.ops.length ? state.ops : state.history || [];
-
-  if (items.length === 0) {
-    list.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">История пуста</div>';
-    return;
+    function setAvatar(img) {
+      if (!img) return;
+      img.src = photoSrc;
+      img.onerror = function () {
+        img.src = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
+      };
+    }
+    setAvatar(headerAvatar);
+    setAvatar(profileAvatar);
   }
 
-  var fmtDate = function (v) {
-    if (!v) return "";
-    try {
-      var d = new Date(v);
-      if (isNaN(d.getTime())) return String(v);
-      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    } catch (_) {
-      return String(v);
+  function checkAdmin() {
+    var u = getTgUser();
+    var adminPanel = el("admin-panel-card");
+    if (!adminPanel) return;
+    if (u && u.id && ADMIN_IDS.indexOf(Number(u.id)) >= 0) adminPanel.style.display = "block";
+    else adminPanel.style.display = "none";
+  }
+
+  // -----------------------------
+  // Modals
+  // -----------------------------
+  window.openModal = function (id) {
+    var box = el(id);
+    if (box) addClass(box, "active");
+
+    if (id === "m-create") {
+      var tTarget = el("t-target");
+      var tText = el("t-text");
+      var tStatus = el("t-target-status");
+      if (tTarget) tTarget.value = "";
+      if (tText) tText.value = "";
+      if (tStatus) { tStatus.className = "input-status"; tStatus.innerHTML = ""; }
+      isLinkValid = false;
+      window.recalc();
+    }
+
+    if (id === "m-withdraw") {
+      renderWithdrawals();
     }
   };
 
-  var providerTitle = function (p) {
-    if (p === "tbank") return "Пополнение (T-Bank)";
-    if (p === "stars") return "Пополнение (Stars)";
-    return "Операция";
+  window.closeModal = function () {
+    var overlays = document.querySelectorAll(".overlay");
+    for (var i = 0; i < overlays.length; i++) rmClass(overlays[i], "active");
   };
 
-  items.forEach(function (item) {
-    var kind = item.kind;
-    var status = String(item.status || "pending");
-    var amount = Number(item.amount_rub || 0);
-    var dateText = fmtDate(item.created_at);
-
-    var icon = "🧾";
-    var title = "Операция";
-    var sign = "";
-    var colorClass = "";
-
-    if (kind === "payment") {
-      title = providerTitle(item.provider);
-      sign = "+";
-      colorClass = status === "paid" ? "amt-green" : "";
-      icon = status === "paid" ? "✅" : "⏳";
-    } else if (kind === "withdrawal") {
-      title = "Вывод средств";
-      sign = "-";
-      colorClass = "amt-red";
-      icon = status === "paid" ? "✅" : status === "rejected" ? "❌" : "⏳";
-    }
-
-    var statusText = status === "paid" ? "Выполнено" : status === "rejected" ? "Отклонено" : "Ожидает";
-
-    list.insertAdjacentHTML(
-      "beforeend",
-      '\n<div class="list-item">\n  <div class="list-icon">' +
-        icon +
-        '</div>\n  <div class="list-meta">\n    <div class="list-title">' +
-        title +
-        ' <span style="font-size:11px; color:var(--text-dim);">• ' +
-        statusText +
-        '</span></div>\n    <div class="list-date">' +
-        dateText +
-        '</div>\n  </div>\n  <div class="list-amount ' +
-        colorClass +
-        '">' +
-        sign +
-        amount.toFixed(0) +
-        " ₽</div>\n</div>\n"
-    );
-  });
-}
-
-// --- Leveling (optional) ---
-function checkLevelUp() {
-  var newLevel = 1 + Math.floor((state.user.xp || 0) / 100);
-  if (newLevel > (state.user.level || 1)) {
-    state.user.level = newLevel;
-    var bonus = 50;
-    state.user.rub += bonus;
-    tg.showAlert("🎉 Новый уровень: " + newLevel + "\nБонус: +" + bonus + " ₽");
-  }
-}
-
-// --- Tasks ---
-window.createTask = function () {
-  return __awaiter(this, void 0, void 0, function () {
-    var typeEl, subtypeEl, qtyEl, curEl, targetEl, textEl;
-    var type, qty, currency, target, instructions;
-    var pricePerItem, workerReward, taskName, subType, checkType;
-    var costRub, tgChat, tgKind, e_1;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!ensureInsideTelegramOrExplain()) return [2 /*return*/];
-
-          typeEl = document.getElementById("t-type");
-          subtypeEl = document.getElementById("t-tg-subtype");
-          qtyEl = document.getElementById("t-qty");
-          curEl = document.getElementById("t-cur");
-          targetEl = document.getElementById("t-target");
-          textEl = document.getElementById("t-text");
-
-          type = typeEl.value;
-          qty = parseInt(qtyEl.value, 10);
-          currency = curEl.value;
-          target = (targetEl.value || "").trim();
-          instructions = (textEl.value || "").trim();
-
-          if (!qty || qty < 1) return [2 /*return*/, tg.showAlert("Минимальное количество: 1")];
-          if (!target) return [2 /*return*/, tg.showAlert("Укажите ссылку на объект")];
-          if (!isLinkValid) return [2 /*return*/, tg.showAlert("Укажите корректную ссылку и дождитесь проверки.")];
-
-          pricePerItem = 0;
-          workerReward = 0;
-          taskName = "";
-          subType = null;
-          checkType = "manual";
-
-          if (type === "tg") {
-            var stKey = subtypeEl.value;
-            var conf = TG_TASK_TYPES[stKey];
-            if (!conf) return [2 /*return*/, tg.showAlert("Выберите тип TG-задания")];
-            pricePerItem = Number(conf.cost || 0);
-            workerReward = Number(conf.reward || 0);
-            taskName = conf.label || "TG задание";
-            subType = stKey;
-            checkType = "auto";
-          } else {
-            pricePerItem = Number(typeEl.selectedOptions[0].dataset.p || 0);
-            taskName = type === "ya" ? "Отзыв Яндекс" : "Отзыв Google";
-            checkType = "manual";
-            workerReward = Math.floor(pricePerItem * 0.5);
-          }
-
-          // Stars payment for creating tasks is not implemented on backend in this flow
-          // we keep UI currency switch only visual for now:
-          if (currency === "star") {
-            return [2 /*return*/, tg.showAlert("Пока создание заданий за Stars не включено. Выберите RUB.")];
-          }
-
-          costRub = pricePerItem * qty;
-
-          tgChat = null;
-          tgKind = "channel";
-          if (type === "tg") {
-            tgChat = target
-              .replace(/^https?:\/\/t\.me\//i, "@")
-              .replace(/^t\.me\//i, "@")
-              .split("/")[0];
-            if (subType === "tg_group") tgKind = "group";
-          }
-
-          _a.label = 1;
-        case 1:
-          _a.trys.push([1, 5, , 6]);
-          return [
-            4 /*yield*/,
-            apiPost("/api/task/create", {
-              type: type,
-              title: taskName,
-              target_url: target,
-              instructions: instructions,
-              reward_rub: workerReward,
-              cost_rub: costRub,
-              qty_total: qty,
-              check_type: type === "tg" ? "auto" : "manual",
-              tg_chat: type === "tg" ? tgChat : null,
-              tg_kind: type === "tg" ? tgKind : null,
-            }),
-          ];
-        case 2:
-          _a.sent();
-          return [4 /*yield*/, loadData()];
-        case 3:
-          _a.sent();
-          render();
-          closeModal();
-          setFilter("my");
-          tg.showAlert("✅ Задание создано!\nСписано: " + costRub + " ₽");
-          return [3 /*break*/, 6];
-        case 5:
-          e_1 = _a.sent();
-          if (e_1 && e_1.message === "OPEN_IN_TELEGRAM") {
-            ensureInsideTelegramOrExplain();
-            return [2 /*return*/];
-          }
-          tg.showAlert("Ошибка создания задания: " + (e_1 && e_1.message ? e_1.message : "unknown"));
-          return [3 /*break*/, 6];
-        case 6:
-          return [2 /*return*/];
-      }
-    });
-  });
-};
-
-window.handleTask = function (btn, owner, id) {
-  return __awaiter(this, void 0, void 0, function () {
-    var task_1, availability, hrs, limitText, iconBox, iconChar, linkEl, linkBtn, textEl, isTgAuto, actBtn, actionText;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          task_1 = state.tasks.find(function (t) { return t.id === id; });
-          if (!task_1) return [2 /*return*/];
-
-          if (owner === "me") {
-            tg.showAlert("Удаление заданий из Mini App сейчас отключено (чтобы не ломать баланс).");
-            return [2 /*return*/];
-          }
-
-          if (!TASK_LIMITS[task_1.type]) return [3 /*break*/, 2];
-
-          btn.classList.add("working");
-          return [4 /*yield*/, checkTaskAvailability(task_1.type)];
-        case 1:
-          availability = _a.sent();
-          btn.classList.remove("working");
-          if (!availability.ok) {
-            hrs = Math.ceil(availability.remainingMs / (1000 * 60 * 60));
-            limitText = task_1.type === "ya" ? "раз в 3 дня" : "раз в день";
-            return [2 /*return*/, tg.showAlert("⏳ Это задание можно выполнять " + limitText + ".\n\nДоступно через: ~" + hrs + " ч.")];
-          }
-          _a.label = 2;
-        case 2:
-          document.getElementById("td-title").innerText = task_1.name;
-          document.getElementById("td-reward").innerText = "+" + task_1.price + " ₽";
-
-          iconBox = document.getElementById("td-icon");
-          iconChar = ASSETS[task_1.type] ? '<img src="' + ASSETS[task_1.type] + '" style="width:100%">' : "📄";
-
-          if (task_1.type === "tg" && task_1.subType && TG_TASK_TYPES[task_1.subType]) {
-            iconChar = TG_TASK_TYPES[task_1.subType].icon;
-            document.getElementById("td-type-badge").innerText = TG_TASK_TYPES[task_1.subType].label.toUpperCase();
-          } else {
-            document.getElementById("td-type-badge").innerText = task_1.type.toUpperCase();
-          }
-
-          if (iconBox) {
-            iconBox.innerHTML =
-              '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">' +
-              iconChar +
-              "</div>";
-          }
-
-          linkEl = document.getElementById("td-link");
-          linkBtn = document.getElementById("td-link-btn");
-          textEl = document.getElementById("td-text");
-
-          if (linkEl) linkEl.innerText = task_1.target;
-          if (linkBtn) linkBtn.href = task_1.target;
-          if (textEl) textEl.innerText = task_1.text || "Нет дополнительных инструкций";
-
-          isTgAuto = task_1.checkType === "auto";
-          var pm = document.getElementById("proof-manual");
-          var pa = document.getElementById("proof-auto");
-          if (pm) pm.classList.toggle("hidden", isTgAuto);
-          if (pa) pa.classList.toggle("hidden", !isTgAuto);
-
-          // reset proof form
-          var pu = document.getElementById("p-username");
-          var pf = document.getElementById("p-file");
-          var pfn = document.getElementById("p-filename");
-          if (pu) pu.value = "";
-          if (pf) pf.value = "";
-          if (pfn) {
-            pfn.innerText = "📷 Прикрепить скриншот";
-            pfn.style.color = "var(--accent-cyan)";
-          }
-          selectedProofFile = null;
-
-          actBtn = document.getElementById("td-action-btn");
-          if (actBtn) {
-            actBtn.disabled = false;
-            actBtn.classList.remove("working");
-          }
-
-          if (isTgAuto) {
-            actionText = "⚡ Проверить выполнение";
-            if (task_1.subType && TG_TASK_TYPES[task_1.subType]) {
-              actionText = "⚡ Проверить: " + TG_TASK_TYPES[task_1.subType].action;
-            }
-            if (actBtn) {
-              actBtn.innerHTML = actionText;
-              actBtn.onclick = function () { return checkTgTask(id); };
-            }
-          } else {
-            if (actBtn) {
-              actBtn.innerHTML = "📤 Отправить отчет";
-              actBtn.onclick = function () { return submitReviewProof(id); };
-            }
-          }
-
-          openModal("m-task-details");
-          return [2 /*return*/];
-      }
-    });
-  });
-};
-
-window.checkTgTask = function (id) {
-  return __awaiter(this, void 0, void 0, function () {
-    var btn, e_2;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!ensureInsideTelegramOrExplain()) return [2 /*return*/];
-          btn = document.getElementById("td-action-btn");
-          if (btn) {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spin-icon">⏳</span> Проверка...';
-          }
-          _a.label = 1;
-        case 1:
-          _a.trys.push([1, 4, , 5]);
-          return [4 /*yield*/, apiPost("/api/task/submit", { task_id: id })];
-        case 2:
-          _a.sent();
-          // record limit locally only (server also checks)
-          var task = state.tasks.find(function (t) { return t.id === id; });
-          if (task) return [4 /*yield*/, recordTaskAction(task.type)];
-          _a.label = 3;
-        case 3:
-          return [4 /*yield*/, loadData()];
-        case 4:
-          _a.sent();
-          render();
-          closeModal();
-          tg.showAlert("✅ Задание отправлено на проверку / автопроверку.");
-          return [3 /*break*/, 5];
-        case 4:
-          return [3 /*break*/, 5];
-        case 5:
-          return [2 /*return*/];
-      }
-    });
-  }).catch(function (e) {
-    console.error(e);
-    if (e && e.message === "OPEN_IN_TELEGRAM") return;
-    tg.showAlert("Ошибка проверки: " + (e && e.message ? e.message : "unknown"));
-    var btn = document.getElementById("td-action-btn");
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = "⚡ Проверить выполнение";
-    }
-  });
-};
-
-window.submitReviewProof = function (id) {
-  return __awaiter(this, void 0, void 0, function () {
-    var user, proofUrlEl, proofUrl, btn;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!ensureInsideTelegramOrExplain()) return [2 /*return*/];
-
-          user = ((document.getElementById("p-username") && document.getElementById("p-username").value) || "").trim();
-          if (!user) return [2 /*return*/, tg.showAlert("Укажите ваше имя/никнейм.")];
-
-          proofUrlEl = document.getElementById("p-proof-url") || document.getElementById("p-link") || null;
-          proofUrl = proofUrlEl ? (proofUrlEl.value || "").trim() : "";
-
-          btn = document.getElementById("td-action-btn");
-          if (btn) {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spin-icon">⏳</span> Отправка...';
-          }
-
-          _a.label = 1;
-        case 1:
-          _a.trys.push([1, 4, , 5]);
-          return [4 /*yield*/, apiPost("/api/task/submit", { task_id: id, proof_text: user, proof_url: proofUrl || "" })];
-        case 2:
-          _a.sent();
-          var task = state.tasks.find(function (t) { return t.id === id; });
-          if (task) return [4 /*yield*/, recordTaskAction(task.type)];
-          _a.label = 3;
-        case 3:
-          return [4 /*yield*/, loadData()];
-        case 4:
-          _a.sent();
-          render();
-          closeModal();
-          tg.showAlert("✅ Отчет отправлен! Дальше — модерация.");
-          return [3 /*break*/, 5];
-        case 4:
-          return [3 /*break*/, 5];
-        case 5:
-          return [2 /*return*/];
-      }
-    });
-  }).catch(function (e) {
-    console.error(e);
-    if (e && e.message === "OPEN_IN_TELEGRAM") return;
-    tg.showAlert("Ошибка отправки: " + (e && e.message ? e.message : "unknown"));
-    var btn = document.getElementById("td-action-btn");
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = "📤 Отправить отчет";
-    }
-  });
-};
-
-window.updateFileName = function (input) {
-  if (input.files && input.files[0]) {
-    selectedProofFile = input.files[0];
-    var name = input.files[0].name;
-    var pfn = document.getElementById("p-filename");
-    if (pfn) {
-      pfn.innerText = "📄 " + (name.length > 20 ? name.substr(0, 18) + "..." : name);
-      pfn.style.color = "var(--text-main)";
-    }
-  }
-};
-
-// --- Pay: only Stars + T-Bank ---
-// Stars and sendData require Telegram, so we guard and explain.
-window.processPay = function (method) {
-  return __awaiter(this, void 0, void 0, function () {
-    var val, payload;
-    return __generator(this, function (_a) {
-      val = Number(document.getElementById("sum-input").value || 0);
-      if (val < 300) return [2 /*return*/, tg.showAlert("Минимальная сумма пополнения — 300 ₽")];
-
-      if (!ensureInsideTelegramOrExplain()) return [2 /*return*/];
-
-      // We use sendData because your backend already handles it in on_webapp_data
-      payload = { action: method, amount: String(val) };
-      tg.sendData(JSON.stringify(payload));
-      // In Telegram this usually closes the WebApp
-      return [2 /*return*/];
-    });
-  });
-};
-
-var tbankAmount = 0;
-
-window.openTBankPay = function () {
-  var val = Number(document.getElementById("sum-input").value || 0);
-  if (val < 300) return tg.showAlert("Минимальная сумма пополнения — 300 ₽");
-  if (!ensureInsideTelegramOrExplain()) return;
-
-  tbankAmount = val;
-
-  document.getElementById("tb-amount-display").innerText = val + " ₽";
-  var u = getTgUser();
-  var uId = (u && u.id) || "TEST";
-  var rand = Math.floor(1000 + Math.random() * 9000);
-  var code = "PAY-" + uId + "-" + rand;
-
-  document.getElementById("tb-code").innerText = code;
-  closeModal();
-  openModal("m-pay-tbank");
-};
-
-window.copyCode = function () {
-  var code = document.getElementById("tb-code").innerText;
-  navigator.clipboard.writeText(code).then(function () { tg.showAlert("Код скопирован!"); });
-};
-
-window.confirmTBank = function () {
-  if (!ensureInsideTelegramOrExplain()) return;
-  var sender = (document.getElementById("tb-sender").value || "").trim();
-  var code = document.getElementById("tb-code").innerText;
-  if (!sender) return tg.showAlert("Укажите ваше имя отправителя");
-  var payload = { action: "pay_tbank", amount: tbankAmount, sender: sender, code: code };
-  tg.sendData(JSON.stringify(payload));
-};
-
-// --- Withdraw ---
-window.requestWithdraw = function () {
-  return __awaiter(this, void 0, void 0, function () {
-    var amount, details, amt, r;
-    return __generator(this, function (_a) {
-      switch (_a.label) {
-        case 0:
-          if (!ensureInsideTelegramOrExplain()) return [2 /*return*/];
-
-          amount = ((document.getElementById("w-amount") && document.getElementById("w-amount").value) || "").trim();
-          details = ((document.getElementById("w-details") && document.getElementById("w-details").value) || "").trim();
-
-          if (!amount || !details) return [2 /*return*/, tg.showAlert("Заполните все поля")];
-          amt = Number(amount);
-          if (!Number.isFinite(amt) || amt <= 0) return [2 /*return*/, tg.showAlert("Некорректная сумма")];
-          if (amt < 300) return [2 /*return*/, tg.showAlert("Минимальная сумма: 300 ₽")];
-
-          _a.label = 1;
-        case 1:
-          _a.trys.push([1, 6, , 7]);
-          return [4 /*yield*/, apiPost("/api/withdraw/create", { amount_rub: amt, details: details })];
-        case 2:
-          _a.sent();
-          return [4 /*yield*/, apiPost("/api/withdraw/list", {})];
-        case 3:
-          r = _a.sent();
-          state.withdrawals = r.withdrawals || [];
-          renderWithdrawals();
-          return [4 /*yield*/, loadData()];
-        case 4:
-          _a.sent();
-          render();
-          tg.showAlert("✅ Заявка создана! Ожидайте обработки.");
-          return [3 /*break*/, 7];
-        case 6:
-          var e = _a.sent();
-          console.error(e);
-          if (e && e.message === "OPEN_IN_TELEGRAM") return [2 /*return*/];
-          tg.showAlert("Ошибка вывода: " + (e && e.message ? e.message : "unknown"));
-          return [3 /*break*/, 7];
-        case 7:
-          return [2 /*return*/];
-      }
-    });
-  });
-};
-
-function renderWithdrawals() {
-  var list = document.getElementById("withdrawals-list");
-  if (!list) return;
-
-  list.innerHTML = "";
-  var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
-  if (items.length === 0) {
-    list.innerHTML = '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
-    return;
-  }
-
-  var fmtDate = function (v) {
-    if (!v) return "";
-    try {
-      var d = new Date(v);
-      if (isNaN(d.getTime())) return String(v);
-      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    } catch (_) {
-      return String(v);
-    }
-  };
-
-  items.forEach(function (w) {
-    var amount = Number(w.amount_rub != null ? w.amount_rub : w.amount != null ? w.amount : w.sum != null ? w.sum : 0);
-    var created = w.created_at || w.date || w.created || "";
-    var status = String(w.status || "pending");
-
-    var stClass = "st-pending";
-    var stText = "Ожидание";
-    if (status === "paid") { stClass = "st-paid"; stText = "Выплачено"; }
-    if (status === "rejected") { stClass = "st-rejected"; stText = "Отклонено"; }
-
-    list.insertAdjacentHTML(
-      "beforeend",
-      '\n<div style="background:var(--glass); padding:10px; border-radius:12px; display:flex; justify-content:space-between; align-items:center;">\n  <div>\n    <div style="font-weight:700; font-size:13px;">' +
-        amount.toFixed(0) +
-        ' ₽</div>\n    <div style="font-size:10px; color:var(--text-dim);">' +
-        fmtDate(created) +
-        '</div>\n  </div>\n  <div class="status-badge ' +
-        stClass +
-        '">' +
-        stText +
-        "</div>\n</div>\n"
-    );
-  });
-}
-
-// --- Modals ---
-window.openModal = function (id) {
-  var el = document.getElementById(id);
-  if (el) el.classList.add("active");
-
-  if (id === "m-create") {
-    var tTarget = document.getElementById("t-target");
-    var tText = document.getElementById("t-text");
-    var tStatus = document.getElementById("t-target-status");
-
-    if (tTarget) tTarget.value = "";
-    if (tText) tText.value = "";
-    if (tStatus) { tStatus.className = "input-status"; tStatus.innerHTML = ""; }
-    isLinkValid = false;
-    if (typeof recalc === "function") recalc();
-  }
-
-  if (id === "m-withdraw") {
-    renderWithdrawals();
-  }
-};
-
-window.closeModal = function () {
-  document.querySelectorAll(".overlay").forEach(function (o) { return o.classList.remove("active"); });
-};
-
-// --- Calc ---
-window.recalc = function () {
-  var typeSelect = document.getElementById("t-type");
-  var subtypeSelect = document.getElementById("t-tg-subtype");
-  var subtypeWrapper = document.getElementById("tg-subtype-wrapper");
-  var tgOptions = document.getElementById("tg-options");
-  if (!typeSelect) return;
-
-  var typeVal = typeSelect.value;
-  var pricePerItem = 0;
-
-  if (typeVal === "tg") {
-    if (subtypeWrapper) subtypeWrapper.classList.remove("hidden");
-    if (tgOptions) tgOptions.classList.remove("hidden");
-    var stKey = subtypeSelect.value;
-    if (TG_TASK_TYPES[stKey]) pricePerItem = TG_TASK_TYPES[stKey].cost;
-  } else {
-    if (subtypeWrapper) subtypeWrapper.classList.add("hidden");
-    if (tgOptions) tgOptions.classList.add("hidden");
-    pricePerItem = parseInt(typeSelect.selectedOptions[0].dataset.p, 10);
-  }
-
-  var q = parseInt((document.getElementById("t-qty").value || 0), 10);
-  var cur = document.getElementById("t-cur").value;
-  var totalRub = pricePerItem * q;
-  var el = document.getElementById("t-total");
-  if (!el) return;
-
-  if (cur === "star") {
-    el.innerText = "⭐ (пока недоступно для создания)";
-    el.style.color = "var(--accent-gold)";
-  } else {
-    el.innerText = totalRub + " ₽";
-    el.style.color = "var(--accent-cyan)";
-  }
-};
-
-window.copyLink = function () {
-  var el = document.getElementById("td-link");
-  var url = el ? el.innerText : "";
-  navigator.clipboard.writeText(url).then(function () { return tg.showAlert("Ссылка скопирована"); });
-};
-
-window.copyText = function () {
-  var el = document.getElementById("td-text");
-  var txt = el ? el.innerText : "";
-  navigator.clipboard.writeText(txt).then(function () { return tg.showAlert("Текст скопировано"); });
-};
-
-window.toggleTheme = function () {
-  document.body.classList.toggle("light-mode");
-  var isLight = document.body.classList.contains("light-mode");
-  if (tg.setHeaderColor) tg.setHeaderColor(isLight ? "#f2f4f7" : "#05070a");
-};
-
-// Navigation
-window.showTab = function (t) {
-  document.querySelectorAll(".nav-item").forEach(function (i) { return i.classList.remove("active"); });
-  var navBtn = document.getElementById("tab-" + t);
-  if (navBtn) navBtn.classList.add("active");
-
-  document.getElementById("view-tasks").classList.toggle("hidden", t !== "tasks");
-  document.getElementById("view-friends").classList.toggle("hidden", t !== "friends");
-  document.getElementById("view-profile").classList.toggle("hidden", t !== "profile");
-  document.getElementById("view-history").classList.add("hidden");
-};
-
-window.showHistory = function () {
-  document.getElementById("view-tasks").classList.add("hidden");
-  document.getElementById("view-friends").classList.add("hidden");
-  document.getElementById("view-profile").classList.add("hidden");
-  document.getElementById("view-history").classList.remove("hidden");
-  renderHistory();
-};
-
-window.closeHistory = function () {
-  document.getElementById("view-history").classList.add("hidden");
-  document.getElementById("view-profile").classList.remove("hidden");
-  document.getElementById("tab-profile").classList.add("active");
-};
-
-window.setFilter = function (f) {
-  state.filter = f;
-  document.getElementById("f-all").classList.toggle("active", f === "all");
-  document.getElementById("f-my").classList.toggle("active", f === "my");
-  render();
-};
-
-// Render main
-function render() {
-  var br = document.getElementById("u-bal-rub");
-  var bs = document.getElementById("u-bal-star");
-  if (br) br.innerText = Math.floor(state.user.rub).toLocaleString() + " ₽";
-  if (bs) bs.innerText = Math.floor(state.user.stars).toLocaleString() + " ⭐";
-
-  var xpPerLevel = 100;
-  var currentLevel = state.user.level || 1;
-  var nextLevelXP = currentLevel * xpPerLevel;
-  var prevLevelXP = (currentLevel - 1) * xpPerLevel;
-  var xpInCurrentLevel = (state.user.xp || 0) - prevLevelXP;
-  var xpNeededForNext = nextLevelXP - prevLevelXP;
-  var progressPct = Math.min(100, Math.max(0, (xpInCurrentLevel / xpNeededForNext) * 100));
-
-  var lvlBadge = document.getElementById("u-lvl-badge");
-  var xpCur = document.getElementById("u-xp-cur");
-  var xpNext = document.getElementById("u-xp-next");
-  var xpFill = document.getElementById("u-xp-fill");
-
-  if (lvlBadge) lvlBadge.innerText = "LVL " + currentLevel;
-  if (xpCur) xpCur.innerText = (state.user.xp || 0) + " XP";
-  if (xpNext) xpNext.innerText = nextLevelXP + " XP";
-  if (xpFill) xpFill.style.width = progressPct + "%";
-
-  var box = document.getElementById("tasks-list");
-  if (box) {
-    box.innerHTML = "";
-    var list = state.tasks.filter(function (t) {
-      return state.filter === "all" ? t.owner === "other" : t.owner === "me";
-    });
-
-    if (list.length === 0) {
-      box.innerHTML =
-        '\n<div style="text-align:center; padding: 60px 20px; color: var(--text-dim); opacity: 0.6;" class="anim-entry">\n  <div style="font-size: 48px; margin-bottom: 15px; filter: grayscale(1);">📭</div>\n  <div style="font-weight:600;">Задач пока нет</div>\n  <div style="font-size:12px; margin-top:5px;">Открой Mini App через Telegram для загрузки задач</div>\n</div>\n';
-    } else {
-      list.forEach(function (t, index) {
-        var icon = "";
-        if (t.type === "tg" && t.subType && TG_TASK_TYPES[t.subType]) icon = TG_TASK_TYPES[t.subType].icon;
-        else if (ASSETS[t.type]) icon = '<img src="' + ASSETS[t.type] + '" style="width:100%; height:100%; object-fit:contain;">';
-        else icon = "📄";
-
-        if (!icon.includes("<img")) icon = '<div style="font-size:24px;">' + icon + "</div>";
-
-        box.insertAdjacentHTML(
-          "beforeend",
-          '\n<div class="task-item anim-entry" style="animation-delay: ' +
-            0.05 * index +
-            's">\n  <div style="display:flex; align-items:center;">\n    <div class="brand-box">' +
-            icon +
-            '</div>\n    <div style="margin-left:15px;">\n      <div style="font-weight:700;">' +
-            t.name +
-            '</div>\n      <div style="color:var(--accent-cyan); font-weight:800; font-size:14px;">+' +
-            t.price +
-            ' ₽</div>\n    </div>\n  </div>\n  <button class="btn btn-action" onclick="handleTask(this, \'' +
-            t.owner +
-            "', " +
-            t.id +
-            ')">\n    ' +
-            (t.owner === "me" ? "Моё" : "Выполнить") +
-            "\n  </button>\n</div>\n'
-        );
+  // close by clicking outside modal
+  function bindOverlayClose() {
+    var overlays = document.querySelectorAll(".overlay");
+    for (var i = 0; i < overlays.length; i++) {
+      overlays[i].addEventListener("click", function (e) {
+        if (e.target === this) window.closeModal();
       });
     }
   }
 
-  renderReferrals();
-}
+  // -----------------------------
+  // Link validation in create form
+  // -----------------------------
+  function isValidLink(s) {
+    s = (s || "").trim();
+    if (!s) return false;
+    if (/^https?:\/\/.+\..+/i.test(s)) return true;
+    if (/^t\.me\/.+/i.test(s)) return true;
+    if (/^@[\w\d_]+$/i.test(s)) return true;
+    return false;
+  }
 
-window.render = render;
+  function installLinkWatcher() {
+    var targetInput = el("t-target");
+    if (!targetInput) return;
 
-function renderReferrals() {
-  var refCount = document.getElementById("ref-count");
-  var refEarn = document.getElementById("ref-earn");
-  if (refCount) refCount.innerText = state.referrals.count;
-  if (refEarn) refEarn.innerText = state.referrals.earned + " ₽";
+    targetInput.addEventListener("input", function () {
+      var val = (targetInput.value || "").trim();
+      var statusEl = el("t-target-status");
 
-  var u = getTgUser();
-  var uid = (u && u.id) || "12345";
-  var inviteLink = "t.me/ReviewCashBot?start=" + uid;
-  var linkEl = document.getElementById("invite-link");
-  if (linkEl) linkEl.innerText = inviteLink;
-}
+      if (linkCheckTimer) clearTimeout(linkCheckTimer);
+      isLinkValid = false;
 
-window.copyInviteLink = function () {
-  var u = getTgUser();
-  var uid = (u && u.id) || "12345";
-  var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
-  navigator.clipboard.writeText(inviteLink).then(function () { return tg.showAlert("🔗 Ссылка скопирована!"); });
-};
+      if (!val) {
+        if (statusEl) { statusEl.className = "input-status"; statusEl.innerHTML = ""; }
+        return;
+      }
 
-window.shareInvite = function () {
-  var u = getTgUser();
-  var uid = (u && u.id) || "12345";
-  var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
-  tg.openTelegramLink(
-    "https://t.me/share/url?url=" +
-      encodeURIComponent(inviteLink) +
-      "&text=" +
-      encodeURIComponent("Зарабатывай на заданиях вместе со мной!")
-  );
-};
+      if (statusEl) {
+        statusEl.className = "input-status visible checking";
+        statusEl.innerHTML = "⏳ Проверка ссылки...";
+      }
+
+      linkCheckTimer = setTimeout(function () {
+        var ok = isValidLink(val);
+        isLinkValid = ok;
+        if (statusEl) {
+          statusEl.className = "input-status visible " + (ok ? "valid" : "invalid");
+          statusEl.innerHTML = ok ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
+        }
+      }, 500);
+    });
+  }
+
+  // -----------------------------
+  // Data loading
+  // -----------------------------
+  function normalizeTask(t) {
+    var myId = 0;
+    try { myId = Number(getTgUser().id || 0); } catch (e) { myId = 0; }
+
+    var ownerId = Number(t.owner_id || t.user_id || 0);
+    var owner = (ownerId && myId && ownerId === myId) ? "me" : "other";
+
+    return {
+      id: String(t.id),
+      type: String(t.type || "tg"),
+      subType: t.sub_type || t.subType || null,
+      name: t.title || t.name || "Задание",
+      price: Number(t.reward_rub || t.reward || t.price || 0),
+      owner: owner,
+      checkType: t.check_type || t.checkType || ((t.type === "tg") ? "auto" : "manual"),
+      target: t.target_url || t.target || "",
+      text: t.instructions || t.text || "",
+      qty: Number(t.qty_total || t.qty || 1),
+      raw: t
+    };
+  }
+
+  async function loadData() {
+    if (!ensureTelegramOrExplain()) {
+      state.tasks = [];
+      state.withdrawals = [];
+      state.ops = [];
+      state.user.rub = 0;
+      state.user.stars = 0;
+      render();
+      return;
+    }
+
+    var r = await apiPost("/api/sync", {});
+    var bal = r.balance || {};
+
+    state.user.rub = Number(bal.rub_balance || 0);
+    state.user.stars = Number(bal.stars_balance || 0);
+    if (typeof bal.xp !== "undefined") state.user.xp = Number(bal.xp || 0);
+    if (typeof bal.level !== "undefined") state.user.level = Number(bal.level || 1);
+
+    var tasks = r.tasks || [];
+    state.tasks = tasks.map(normalizeTask);
+
+    // withdrawals list (optional)
+    try {
+      var w = await apiPost("/api/withdraw/list", {});
+      state.withdrawals = w.withdrawals || [];
+    } catch (e) {
+      state.withdrawals = state.withdrawals || [];
+    }
+
+    // ops/history (optional)
+    try {
+      var ops = await apiPost("/api/ops/list", {});
+      state.ops = ops.operations || [];
+    } catch (e2) {
+      state.ops = state.ops || [];
+    }
+  }
+
+  // -----------------------------
+  // Render
+  // -----------------------------
+  function renderBalance() {
+    var br = el("u-bal-rub");
+    var bs = el("u-bal-star");
+    if (br) br.innerText = Math.floor(state.user.rub).toLocaleString("ru-RU") + " ₽";
+    if (bs) bs.innerText = Math.floor(state.user.stars).toLocaleString("ru-RU") + " ⭐";
+
+    // XP bar (optional)
+    var xpPerLevel = 100;
+    var currentLevel = Number(state.user.level || 1);
+    var nextLevelXP = currentLevel * xpPerLevel;
+    var prevLevelXP = (currentLevel - 1) * xpPerLevel;
+    var xpInCurrentLevel = Number(state.user.xp || 0) - prevLevelXP;
+    var xpNeeded = nextLevelXP - prevLevelXP;
+    var pct = xpNeeded > 0 ? Math.max(0, Math.min(100, (xpInCurrentLevel / xpNeeded) * 100)) : 0;
+
+    var lvlBadge = el("u-lvl-badge");
+    var xpCur = el("u-xp-cur");
+    var xpNext = el("u-xp-next");
+    var xpFill = el("u-xp-fill");
+
+    if (lvlBadge) lvlBadge.innerText = "LVL " + currentLevel;
+    if (xpCur) xpCur.innerText = String(state.user.xp || 0) + " XP";
+    if (xpNext) xpNext.innerText = String(nextLevelXP) + " XP";
+    if (xpFill) xpFill.style.width = pct + "%";
+  }
+
+  function renderTasks() {
+    var box = el("tasks-list");
+    if (!box) return;
+
+    box.innerHTML = "";
+
+    var list = state.tasks.filter(function (t) {
+      if (state.filter === "all") return t.owner === "other";
+      return t.owner === "me";
+    });
+
+    if (!ensureTelegramOrExplain()) {
+      var warn = document.createElement("div");
+      warn.style.textAlign = "center";
+      warn.style.padding = "60px 20px";
+      warn.style.color = "var(--text-dim)";
+      warn.style.opacity = "0.75";
+      warn.innerText = "Открой Mini App через Telegram для загрузки задач.";
+      box.appendChild(warn);
+      return;
+    }
+
+    if (!list.length) {
+      var empty = document.createElement("div");
+      empty.style.textAlign = "center";
+      empty.style.padding = "60px 20px";
+      empty.style.color = "var(--text-dim)";
+      empty.style.opacity = "0.6";
+      empty.innerHTML = '<div style="font-size:48px;margin-bottom:15px;filter:grayscale(1);">📭</div>'
+        + '<div style="font-weight:600;">Задач пока нет</div>'
+        + '<div style="font-size:12px;margin-top:5px;">Заходите позже или создайте свою</div>';
+      box.appendChild(empty);
+      return;
+    }
+
+    list.forEach(function (t, index) {
+      var item = document.createElement("div");
+      item.className = "task-item anim-entry";
+      item.style.animationDelay = (0.05 * index) + "s";
+
+      var left = document.createElement("div");
+      left.style.display = "flex";
+      left.style.alignItems = "center";
+
+      var brand = document.createElement("div");
+      brand.className = "brand-box";
+
+      // icon
+      if (t.type === "tg" && t.subType && TG_TASK_TYPES[t.subType]) {
+        brand.innerHTML = '<div style="font-size:24px;">' + TG_TASK_TYPES[t.subType].icon + "</div>";
+      } else if (ASSETS[t.type]) {
+        brand.innerHTML = '<img src="' + ASSETS[t.type] + '" style="width:100%;height:100%;object-fit:contain;">';
+      } else {
+        brand.innerHTML = '<div style="font-size:24px;">📄</div>';
+      }
+
+      var meta = document.createElement("div");
+      meta.style.marginLeft = "15px";
+
+      var title = document.createElement("div");
+      title.style.fontWeight = "700";
+      title.innerText = t.name;
+
+      var price = document.createElement("div");
+      price.style.color = "var(--accent-cyan)";
+      price.style.fontWeight = "800";
+      price.style.fontSize = "14px";
+      price.innerText = "+" + t.price + " ₽";
+
+      meta.appendChild(title);
+      meta.appendChild(price);
+
+      left.appendChild(brand);
+      left.appendChild(meta);
+
+      var btn = document.createElement("button");
+      btn.className = "btn btn-action";
+      btn.innerText = (t.owner === "me") ? "Удалить" : "Выполнить";
+      btn.onclick = function () {
+        window.handleTask(btn, t.owner, t.id);
+      };
+
+      item.appendChild(left);
+      item.appendChild(btn);
+      box.appendChild(item);
+    });
+  }
+
+  function fmtDate(v) {
+    if (!v) return "";
+    try {
+      var d = new Date(v);
+      if (isNaN(d.getTime())) return String(v);
+      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+      return String(v);
+    }
+  }
+
+  function providerTitle(p) {
+    if (!p) return "Пополнение";
+    if (p === "tbank") return "Пополнение (T-Bank)";
+    if (p === "stars") return "Пополнение (Stars)";
+    return "Пополнение";
+  }
+
+  function renderHistory() {
+    var list = el("history-list");
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    var items = Array.isArray(state.ops) ? state.ops : [];
+    if (!items.length) {
+      list.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">История пуста</div>';
+      return;
+    }
+
+    items.forEach(function (item) {
+      var kind = item.kind;
+      var status = String(item.status || "pending");
+      var amount = Number(item.amount_rub || 0);
+      var dateText = fmtDate(item.created_at);
+
+      var icon = "🧾";
+      var title = "Операция";
+      var sign = "";
+      var colorClass = "";
+
+      if (kind === "payment") {
+        title = providerTitle(item.provider);
+        sign = "+";
+        colorClass = (status === "paid") ? "amt-green" : "";
+        icon = (status === "paid") ? "✅" : "⏳";
+      } else if (kind === "withdrawal") {
+        title = "Вывод средств";
+        sign = "-";
+        colorClass = "amt-red";
+        icon = (status === "paid") ? "✅" : (status === "rejected") ? "❌" : "⏳";
+      }
+
+      var statusText = (status === "paid") ? "Выполнено" : (status === "rejected") ? "Отклонено" : "Ожидает";
+
+      var row = document.createElement("div");
+      row.className = "list-item";
+      row.innerHTML =
+        '<div class="list-icon">' + icon + "</div>" +
+        '<div class="list-meta">' +
+          '<div class="list-title">' + title + ' <span style="font-size:11px; color:var(--text-dim);">• ' + statusText + "</span></div>" +
+          '<div class="list-date">' + dateText + "</div>" +
+        "</div>" +
+        '<div class="list-amount ' + colorClass + '">' + sign + amount.toFixed(0) + " ₽</div>";
+
+      list.appendChild(row);
+    });
+  }
+
+  function renderWithdrawals() {
+    var list = el("withdrawals-list");
+    if (!list) return;
+
+    list.innerHTML = "";
+    var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
+
+    if (!items.length) {
+      list.innerHTML = '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
+      return;
+    }
+
+    items.forEach(function (w) {
+      var amount = Number((w.amount_rub != null) ? w.amount_rub : (w.amount != null) ? w.amount : 0);
+      var created = w.created_at || w.date || "";
+      var status = String(w.status || "pending");
+
+      var stClass = "st-pending";
+      var stText = "Ожидание";
+      if (status === "paid") { stClass = "st-paid"; stText = "Выплачено"; }
+      if (status === "rejected") { stClass = "st-rejected"; stText = "Отклонено"; }
+
+      var div = document.createElement("div");
+      div.style.background = "var(--glass)";
+      div.style.padding = "10px";
+      div.style.borderRadius = "12px";
+      div.style.display = "flex";
+      div.style.justifyContent = "space-between";
+      div.style.alignItems = "center";
+
+      div.innerHTML =
+        '<div>' +
+          '<div style="font-weight:700; font-size:13px;">' + amount.toFixed(0) + " ₽</div>" +
+          '<div style="font-size:10px; color:var(--text-dim);">' + fmtDate(created) + "</div>" +
+        "</div>" +
+        '<div class="status-badge ' + stClass + '">' + stText + "</div>";
+
+      list.appendChild(div);
+    });
+  }
+
+  function render() {
+    renderBalance();
+    renderTasks();
+    window.renderReferrals && window.renderReferrals(); // если оставишь старую функцию — ок
+  }
+
+  window.render = render;
+
+  // -----------------------------
+  // Navigation
+  // -----------------------------
+  window.showTab = function (t) {
+    var navItems = document.querySelectorAll(".nav-item");
+    for (var i = 0; i < navItems.length; i++) rmClass(navItems[i], "active");
+    var navBtn = el("tab-" + t);
+    if (navBtn) addClass(navBtn, "active");
+
+    setHidden(el("view-tasks"), t !== "tasks");
+    setHidden(el("view-friends"), t !== "friends");
+    setHidden(el("view-profile"), t !== "profile");
+    addClass(el("view-history"), "hidden"); // hide history when switching tabs
+  };
+
+  window.showHistory = async function () {
+    addClass(el("view-tasks"), "hidden");
+    addClass(el("view-friends"), "hidden");
+    addClass(el("view-profile"), "hidden");
+    rmClass(el("view-history"), "hidden");
+
+    // refresh ops if possible
+    if (ensureTelegramOrExplain()) {
+      try {
+        var ops = await apiPost("/api/ops/list", {});
+        state.ops = ops.operations || [];
+      } catch (e) {}
+    }
+    renderHistory();
+  };
+
+  window.closeHistory = function () {
+    addClass(el("view-history"), "hidden");
+    rmClass(el("view-profile"), "hidden");
+    var tabProfile = el("tab-profile");
+    if (tabProfile) addClass(tabProfile, "active");
+  };
+
+  window.toggleTheme = function () {
+    document.body.classList.toggle("light-mode");
+    var isLight = document.body.classList.contains("light-mode");
+    try { if (tg.setHeaderColor) tg.setHeaderColor(isLight ? "#f2f4f7" : "#05070a"); } catch (e) {}
+  };
+
+  // -----------------------------
+  // Filters
+  // -----------------------------
+  window.setFilter = function (f) {
+    state.filter = f;
+    var a = el("f-all");
+    var m = el("f-my");
+    if (a) a.classList.toggle("active", f === "all");
+    if (m) m.classList.toggle("active", f === "my");
+    renderTasks();
+  };
+
+  // -----------------------------
+  // Create task
+  // -----------------------------
+  window.recalc = function () {
+    var typeSelect = el("t-type");
+    var subtypeSelect = el("t-tg-subtype");
+    var subtypeWrapper = el("tg-subtype-wrapper");
+    var tgOptions = el("tg-options");
+    if (!typeSelect) return;
+
+    var typeVal = typeSelect.value;
+    var pricePerItem = 0;
+
+    if (typeVal === "tg") {
+      if (subtypeWrapper) rmClass(subtypeWrapper, "hidden");
+      if (tgOptions) rmClass(tgOptions, "hidden");
+      var stKey = subtypeSelect ? subtypeSelect.value : "tg_sub";
+      if (TG_TASK_TYPES[stKey]) pricePerItem = Number(TG_TASK_TYPES[stKey].cost || 0);
+    } else {
+      if (subtypeWrapper) addClass(subtypeWrapper, "hidden");
+      if (tgOptions) addClass(tgOptions, "hidden");
+      var opt = typeSelect.selectedOptions && typeSelect.selectedOptions[0];
+      pricePerItem = opt ? Number(opt.dataset.p || 0) : 0;
+    }
+
+    var q = Number(el("t-qty") ? (el("t-qty").value || 0) : 0);
+    var cur = el("t-cur") ? el("t-cur").value : "rub";
+    var totalRub = pricePerItem * q;
+    var out = el("t-total");
+    if (!out) return;
+
+    if (cur === "star") {
+      // создание заданий за Stars пока не включаем (только визуально)
+      var stars = Math.ceil(totalRub / 1.5);
+      out.innerText = stars + " ⭐";
+      out.style.color = "var(--accent-gold)";
+    } else {
+      out.innerText = totalRub + " ₽";
+      out.style.color = "var(--accent-cyan)";
+    }
+  };
+
+  function populateTgTypes() {
+    var sel = el("t-tg-subtype");
+    if (!sel) return;
+    sel.innerHTML = "";
+    Object.keys(TG_TASK_TYPES).forEach(function (k) {
+      var t = TG_TASK_TYPES[k];
+      var opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = t.icon + " " + t.label + " (" + t.cost + "₽)";
+      sel.appendChild(opt);
+    });
+  }
+
+  window.createTask = async function () {
+    if (!ensureTelegramOrExplain()) return;
+
+    var typeEl = el("t-type");
+    var subtypeEl = el("t-tg-subtype");
+    var qtyEl = el("t-qty");
+    var curEl = el("t-cur");
+    var targetEl = el("t-target");
+    var textEl = el("t-text");
+
+    var type = typeEl ? typeEl.value : "tg";
+    var qty = parseInt(qtyEl ? qtyEl.value : "1", 10);
+    var currency = curEl ? curEl.value : "rub";
+    var target = (targetEl ? targetEl.value : "").trim();
+    var instructions = (textEl ? textEl.value : "").trim();
+
+    if (!qty || qty < 1) return tgAlert("Минимальное количество: 1");
+    if (!target) return tgAlert("Укажите ссылку на объект");
+    if (!isLinkValid) return tgAlert("Укажите корректную ссылку и дождитесь проверки.");
+
+    if (currency === "star") {
+      return tgAlert("Создание заданий за Stars пока не включено.\n\nСделаем позже — сейчас Stars только для пополнения баланса.");
+    }
+
+    var pricePerItem = 0;
+    var workerReward = 0;
+    var taskName = "";
+    var checkType = "manual";
+    var tgChat = null;
+    var tgKind = null;
+
+    if (type === "tg") {
+      var stKey = subtypeEl ? subtypeEl.value : "tg_sub";
+      var conf = TG_TASK_TYPES[stKey];
+      if (!conf) return tgAlert("Выберите тип TG-задания");
+      pricePerItem = Number(conf.cost || 0);
+      workerReward = Number(conf.reward || 0);
+      taskName = conf.label || "TG задание";
+      checkType = "auto";
+
+      // try derive chat username from target
+      tgChat = target.replace(/^https?:\/\/t\.me\//i, "@").replace(/^t\.me\//i, "@");
+      tgChat = tgChat.split("/")[0];
+      tgKind = (stKey === "tg_group") ? "group" : "channel";
+    } else {
+      var opt = typeEl && typeEl.selectedOptions ? typeEl.selectedOptions[0] : null;
+      pricePerItem = opt ? Number(opt.dataset.p || 0) : 0;
+      taskName = (type === "ya") ? "Отзыв Яндекс" : "Отзыв Google";
+      checkType = "manual";
+      workerReward = Math.floor(pricePerItem * 0.5);
+    }
+
+    var costRub = pricePerItem * qty;
+
+    try {
+      await apiPost("/api/task/create", {
+        type: type,
+        title: taskName,
+        target_url: target,
+        instructions: instructions,
+        reward_rub: workerReward,
+        cost_rub: costRub,
+        qty_total: qty,
+        check_type: checkType,
+        tg_chat: tgChat,
+        tg_kind: tgKind
+      });
+
+      await loadData();
+      render();
+      window.closeModal();
+      window.setFilter("my");
+      tgAlert("✅ Задание создано!\nСписано: " + costRub + " ₽");
+    } catch (e) {
+      tgAlert("Ошибка создания задания: " + (e && e.message ? e.message : "unknown"));
+    }
+  };
+
+  // -----------------------------
+  // Task details / submit
+  // -----------------------------
+  window.handleTask = async function (_btn, owner, id) {
+    if (!ensureTelegramOrExplain()) return;
+
+    id = String(id || "");
+    if (owner === "me") {
+      return tgAlert("Удаление заданий пока не реализовано на сервере.\n(Чтобы сделать — нужен endpoint delete/cancel.)");
+    }
+
+    var task = null;
+    for (var i = 0; i < state.tasks.length; i++) {
+      if (String(state.tasks[i].id) === id) { task = state.tasks[i]; break; }
+    }
+    if (!task) return;
+
+    activeTaskId = id;
+
+    if (el("td-title")) el("td-title").innerText = task.name;
+    if (el("td-reward")) el("td-reward").innerText = "+" + task.price + " ₽";
+
+    var iconBox = el("td-icon");
+    var iconHtml = "";
+    if (task.type === "tg" && task.subType && TG_TASK_TYPES[task.subType]) {
+      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">' + TG_TASK_TYPES[task.subType].icon + "</div>";
+      if (el("td-type-badge")) el("td-type-badge").innerText = TG_TASK_TYPES[task.subType].label.toUpperCase();
+    } else if (ASSETS[task.type]) {
+      iconHtml = '<img src="' + ASSETS[task.type] + '" style="width:100%;height:100%;object-fit:contain;">';
+      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+    } else {
+      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">📄</div>';
+      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+    }
+    if (iconBox) iconBox.innerHTML = iconHtml;
+
+    if (el("td-link")) el("td-link").innerText = task.target;
+    if (el("td-link-btn")) el("td-link-btn").href = task.target;
+    if (el("td-text")) el("td-text").innerText = task.text || "Нет дополнительных инструкций";
+
+    // proof blocks
+    var isAuto = (task.checkType === "auto");
+    setHidden(el("proof-manual"), isAuto);
+    setHidden(el("proof-auto"), !isAuto);
+
+    // reset proof inputs
+    if (el("p-username")) el("p-username").value = "";
+    if (el("p-file")) el("p-file").value = "";
+    if (el("p-filename")) { el("p-filename").innerText = "📷 Прикрепить скриншот"; el("p-filename").style.color = "var(--accent-cyan)"; }
+    selectedProofFile = null;
+
+    var actionBtn = el("td-action-btn");
+    if (actionBtn) {
+      actionBtn.disabled = false;
+      rmClass(actionBtn, "working");
+
+      if (isAuto) {
+        var txt = "⚡ Проверить выполнение";
+        if (task.subType && TG_TASK_TYPES[task.subType]) txt = "⚡ Проверить: " + TG_TASK_TYPES[task.subType].action;
+        actionBtn.innerText = txt;
+        actionBtn.onclick = function () { window.checkTgTask(activeTaskId); };
+      } else {
+        actionBtn.innerText = "📤 Отправить отчет";
+        actionBtn.onclick = function () { window.submitReviewProof(activeTaskId); };
+      }
+    }
+
+    window.openModal("m-task-details");
+  };
+
+  window.checkTgTask = async function (taskId) {
+    if (!ensureTelegramOrExplain()) return;
+
+    var btn = el("td-action-btn");
+    if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Проверка..."; }
+
+    try {
+      await apiPost("/api/task/submit", { task_id: String(taskId) });
+      await loadData();
+      render();
+      window.closeModal();
+      tgAlert("✅ Отправлено!\nЕсли это авто-TG — начисление произойдёт сразу, если бот видит подписку.");
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Проверить выполнение"; }
+      tgAlert("Ошибка проверки: " + (e && e.message ? e.message : "unknown"));
+    }
+  };
+
+  window.submitReviewProof = async function (taskId) {
+    if (!ensureTelegramOrExplain()) return;
+
+    var uname = (el("p-username") ? el("p-username").value : "").trim();
+    if (!uname) return tgAlert("Укажите ваше имя/никнейм.");
+
+    var btn = el("td-action-btn");
+    if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Отправка..."; }
+
+    // Скриншот сейчас не грузим (нет upload endpoint), отправим только текст.
+    try {
+      await apiPost("/api/task/submit", {
+        task_id: String(taskId),
+        proof_text: uname,
+        proof_url: ""
+      });
+
+      await loadData();
+      render();
+      window.closeModal();
+      tgAlert("✅ Отчет отправлен!\nДальше — модерация.");
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.innerHTML = "📤 Отправить отчет"; }
+      tgAlert("Ошибка отправки: " + (e && e.message ? e.message : "unknown"));
+    }
+  };
+
+  window.updateFileName = function (input) {
+    try {
+      if (input && input.files && input.files[0]) {
+        selectedProofFile = input.files[0];
+        var name = input.files[0].name || "file";
+        var pfn = el("p-filename");
+        if (pfn) {
+          pfn.innerText = "📄 " + (name.length > 20 ? name.substr(0, 18) + "..." : name);
+          pfn.style.color = "var(--text-main)";
+        }
+      }
+    } catch (e) {}
+  };
+
+  // -----------------------------
+  // Copy helpers
+  // -----------------------------
+  window.copyLink = function () {
+    var url = el("td-link") ? el("td-link").innerText : "";
+    if (!url) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { tgAlert("Ссылка скопирована"); });
+    } else {
+      tgAlert("Не удалось скопировать (нет clipboard API).");
+    }
+  };
+
+  window.copyText = function () {
+    var txt = el("td-text") ? el("td-text").innerText : "";
+    if (!txt) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(function () { tgAlert("Текст скопирован"); });
+    } else {
+      tgAlert("Не удалось скопировать (нет clipboard API).");
+    }
+  };
+
+  // -----------------------------
+  // Referrals
+  // -----------------------------
+  window.renderReferrals = function () {
+    var u = getTgUser();
+    var uid = (u && u.id) ? u.id : "12345";
+    var invite = "t.me/ReviewCashBot?start=" + uid;
+
+    var linkEl = el("invite-link");
+    if (linkEl) linkEl.innerText = invite;
+
+    // optional counters
+    if (el("ref-count")) el("ref-count").innerText = "0";
+    if (el("ref-earn")) el("ref-earn").innerText = "0 ₽";
+  };
+
+  window.copyInviteLink = function () {
+    var u = getTgUser();
+    var uid = (u && u.id) ? u.id : "12345";
+    var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(inviteLink).then(function () { tgAlert("🔗 Ссылка скопирована!"); });
+    } else {
+      tgAlert(inviteLink);
+    }
+  };
+
+  window.shareInvite = function () {
+    var u = getTgUser();
+    var uid = (u && u.id) ? u.id : "12345";
+    var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
+    tgOpen("https://t.me/share/url?url=" + encodeURIComponent(inviteLink) + "&text=" + encodeURIComponent("Зарабатывай на заданиях вместе со мной!"));
+  };
+
+  // -----------------------------
+  // Payments: Stars + TBank (no Crypto)
+  // -----------------------------
+  window.processPay = function (method) {
+    var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
+    if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
+
+    if (method === "pay_crypto") {
+      return tgAlert("CryptoBot временно выключен.\nИспользуй Stars или Т-Банк.");
+    }
+
+    if (method === "pay_stars") {
+      if (!ensureTelegramOrExplain()) return;
+      // sendData => бот пришлёт invoice Stars
+      try {
+        tg.sendData(JSON.stringify({ action: "pay_stars", amount: String(val) }));
+      } catch (e) {
+        tgAlert("Не удалось отправить данные в Telegram. Открой Mini App из бота.");
+      }
+      return;
+    }
+
+    // unknown
+    tgAlert("Неизвестный метод оплаты: " + method);
+  };
+
+  var tbankAmount = 0;
+
+  window.openTBankPay = function () {
+    var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
+    if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
+
+    tbankAmount = val;
+
+    if (el("tb-amount-display")) el("tb-amount-display").innerText = String(val) + " ₽";
+
+    var u = getTgUser();
+    var uId = (u && u.id) ? u.id : "TEST";
+    var rand = Math.floor(1000 + Math.random() * 9000);
+    var code = "PAY-" + uId + "-" + rand;
+
+    if (el("tb-code")) el("tb-code").innerText = code;
+
+    window.closeModal();
+    window.openModal("m-pay-tbank");
+  };
+
+  window.copyCode = function () {
+    var code = el("tb-code") ? el("tb-code").innerText : "";
+    if (!code) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(function () { tgAlert("Код скопирован!"); });
+    } else {
+      tgAlert(code);
+    }
+  };
+
+  window.confirmTBank = async function () {
+    if (!ensureTelegramOrExplain()) return;
+
+    var sender = (el("tb-sender") ? el("tb-sender").value : "").trim();
+    var code = (el("tb-code") ? el("tb-code").innerText : "").trim();
+    if (!sender) return tgAlert("Укажите ваше имя отправителя");
+    if (!code) return tgAlert("Нет кода платежа");
+
+    try {
+      await apiPost("/api/tbank/claim", { amount_rub: Number(tbankAmount), sender: sender, code: code });
+      tgAlert("✅ Заявка на пополнение отправлена.\nАдминистратор подтвердит вручную.");
+      window.closeModal();
+    } catch (e) {
+      tgAlert("Ошибка T-Bank: " + (e && e.message ? e.message : "unknown"));
+    }
+  };
+
+  // -----------------------------
+  // Withdrawals
+  // -----------------------------
+  window.requestWithdraw = async function () {
+    if (!ensureTelegramOrExplain()) return;
+
+    var details = (el("w-details") ? el("w-details").value : "").trim();
+    var amountStr = (el("w-amount") ? el("w-amount").value : "").trim();
+
+    var amt = Number(amountStr);
+    if (!details) return tgAlert("Укажи реквизиты");
+    if (!isFinite(amt) || amt <= 0) return tgAlert("Некорректная сумма");
+    if (amt < 300) return tgAlert("Минимальная сумма: 300 ₽");
+
+    try {
+      await apiPost("/api/withdraw/create", { amount_rub: amt, details: details });
+      try {
+        var w = await apiPost("/api/withdraw/list", {});
+        state.withdrawals = w.withdrawals || [];
+      } catch (e2) {}
+      await loadData();
+      render();
+      renderWithdrawals();
+      tgAlert("✅ Заявка создана! Ожидайте обработки.");
+    } catch (e) {
+      tgAlert("Ошибка вывода: " + (e && e.message ? e.message : "unknown"));
+    }
+  };
+
+  // -----------------------------
+  // Admin panel stubs (backend endpoints не подключены)
+  // -----------------------------
+  window.openAdminPanel = function () {
+    tgAlert("Админ-панель пока не подключена на сервере.\n(Endpoints /api/admin/* сейчас отсутствуют.)");
+  };
+  window.switchAdminTab = function () {};
+
+  // -----------------------------
+  // Boot
+  // -----------------------------
+  async function initApp() {
+    try {
+      if (tg && tg.ready) tg.ready();
+      if (tg && tg.expand) tg.expand();
+    } catch (e) {}
+
+    populateTgTypes();
+    setupProfileUI();
+    checkAdmin();
+    bindOverlayClose();
+    installLinkWatcher();
+    window.recalc();
+
+    try {
+      await loadData();
+    } catch (e) {
+      // если тут ошибка — чаще всего 401 (не из Telegram / другой бот токен)
+      tgAlert("Ошибка загрузки: " + (e && e.message ? e.message : "unknown") +
+        "\n\nЕсли видишь 401/Bad initData — открой Mini App из Telegram-кнопки этого же бота.");
+    }
+
+    render();
+
+    // preloader hide
+    var loader = el("loader");
+    if (loader) {
+      addClass(loader, "fade-out");
+      setTimeout(function () {
+        try { loader.remove(); } catch (e) { loader.style.display = "none"; }
+        var cont = document.querySelector(".app-container");
+        if (cont) addClass(cont, "anim-active");
+      }, 250);
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    initApp().catch(function (e) {
+      // fallback
+      console.error(e);
+      tgAlert("Fatal init error: " + (e && e.message ? e.message : e));
+    });
+  });
+
+})();
