@@ -110,7 +110,7 @@
     if (v) return String(v).replace(/\/+$/, "");
     return window.location.origin;
   }
-  var API = getApiBase();
+  var API = "https://reviewcash-bot.onrender.com";
 
   function getDeviceHash() {
     var v = "";
