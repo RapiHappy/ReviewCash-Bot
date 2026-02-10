@@ -2,77 +2,39 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="api-base" content="https://reviewcash-bot.onrender.com" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>ReviewCash Ultimate Pro</title>
 
-  <script>
-    window.addEventListener('error', function(event) {
-      var errBox = document.getElementById('global-error-box');
-      if(errBox) {
-        errBox.style.display = 'block';
-        errBox.textContent = 'Err: ' + event.message;
-      }
-      var loader = document.getElementById('loader');
-      if(loader) loader.style.display = 'none';
-    });
-  </script>
-
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://miniapps.ai/sdk/miniapps-ai-v1.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-
-  <div id="global-error-box" style="display:none; position:fixed; top:0; left:0; right:0; background:rgba(255,0,0,0.9); color:white; padding:15px; font-size:12px; z-index:10000; word-break:break-all;"></div>
-
-  <div id="loader" class="loader-overlay">
-    <div class="spinner"></div>
-    <div style="margin-top: 20px; font-weight: 700; color: var(--accent-cyan);">Загрузка...</div>
-  </div>
-
-  <!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <!-- Оставь пустым, чтобы API = текущий домен. Или впиши https://reviewcash-bot.onrender.com -->
+  <!-- Рекомендую оставить пустым: тогда API = текущий домен (тот же, где /app/) -->
   <meta name="api-base" content="" />
+
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
   <title>ReviewCash</title>
 
   <script>
     (function () {
-      function errBox() {
-        var box = document.getElementById('global-error-box');
-        if (!box) return null;
-        return box;
-      }
-      function hideLoader() {
-        var loader = document.getElementById('loader');
-        if (loader) loader.style.display = 'none';
-      }
+      function box() { return document.getElementById("global-error-box"); }
+      function hideLoader() { var l = document.getElementById("loader"); if (l) l.style.display = "none"; }
+
       window.__showError = function (msg, err) {
         try {
-          var box = errBox();
-          if (box) {
-            box.style.display = 'block';
-            box.textContent = String(msg) + (err ? ("\n\n" + (err.stack || err.message || String(err))) : "");
+          var b = box();
+          if (b) {
+            b.style.display = "block";
+            b.textContent = String(msg) + (err ? ("\n\n" + (err.stack || err.message || String(err))) : "");
           }
         } catch (e) {}
         hideLoader();
         try { console.error(msg, err); } catch (e2) {}
       };
 
-      window.addEventListener('error', function (event) {
+      window.addEventListener("error", function (event) {
         var t = event && event.target;
         var url = t && (t.src || t.href);
-        if (url) return window.__showError('Не удалось загрузить ресурс: ' + url);
-        window.__showError('Ошибка: ' + (event.message || 'Unknown error'), event.error);
+        if (url) return window.__showError("Не удалось загрузить ресурс: " + url);
+        window.__showError("Ошибка: " + (event.message || "Unknown error"), event.error);
       }, true);
 
-      window.addEventListener('unhandledrejection', function (event) {
-        window.__showError('Unhandled Promise rejection: ' + (event.reason?.message || String(event.reason)), event.reason);
+      window.addEventListener("unhandledrejection", function (event) {
+        window.__showError("Unhandled Promise rejection: " + (event.reason?.message || String(event.reason)), event.reason);
       });
     })();
   </script>
@@ -91,37 +53,42 @@
   </div>
 
   <div class="app-container">
-    <!-- TASKS -->
+
+    <!-- TASKS VIEW -->
     <section id="view-tasks" class="anim-entry">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 25px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
             <img id="header-avatar" src="" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
-          <h2 style="font-size: 28px; font-weight: 900; margin: 0;">Задания</h2>
+          <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
         </div>
-        <div style="display:flex; background: var(--glass); padding: 4px; border-radius: 16px; border: 1px solid var(--glass-border); align-self:flex-end;">
+        <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
           <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
         </div>
       </div>
+
       <div id="tasks-list"></div>
     </section>
 
     <!-- FRIENDS -->
     <section id="view-friends" class="hidden anim-entry">
-      <h2 style="font-size: 28px; font-weight: 900; margin-bottom: 25px;">Друзья</h2>
+      <h2 style="font-size:28px; font-weight:900; margin-bottom:25px;">Друзья</h2>
+
       <div class="card" style="text-align:center;">
         <div style="font-size:48px; margin-bottom:10px;">🎁</div>
         <h3 style="margin:0 0 10px;">Приглашай и зарабатывай</h3>
         <p style="color:var(--text-dim); font-size:14px; margin-bottom:20px;">Ссылка ниже:</p>
-        <div class="copy-box" onclick="copyInviteLink()" style="margin-bottom: 15px;">
+
+        <div class="copy-box" onclick="copyInviteLink()" style="margin-bottom:15px;">
           <span id="invite-link" style="font-size:13px; color:var(--accent-cyan); overflow:hidden; text-overflow:ellipsis;">t.me/ReviewCashBot?start=...</span>
           <span>🔗</span>
         </div>
         <button class="btn btn-main" style="width:100%;" onclick="shareInvite()">Пригласить друга</button>
       </div>
+
       <div style="display:flex; gap:15px; margin-bottom:25px;">
         <div class="card" style="flex:1; margin:0; padding:15px; text-align:center;">
           <div style="font-size:24px; font-weight:900; color:var(--accent-green);" id="ref-count">0</div>
@@ -175,7 +142,9 @@
         </div>
       </div>
 
-      <div class="menu-item" onclick="tgOpenTelegramLink('https://t.me/LolikMoney')" style="justify-content:center; opacity:0.7; font-size:12px;">
+      <div class="menu-item"
+           onclick="(window.Telegram && Telegram.WebApp ? Telegram.WebApp.openTelegramLink('https://t.me/LolikMoney') : window.open('https://t.me/LolikMoney','_blank'))"
+           style="justify-content:center; opacity:0.7; font-size:12px;">
         💬 Поддержка
       </div>
     </section>
@@ -188,6 +157,7 @@
       </div>
       <div id="history-list" class="card" style="padding:0; overflow:hidden;"></div>
     </section>
+
   </div>
 
   <!-- NAV -->
@@ -208,7 +178,7 @@
 
       <label class="input-label">Платформа</label>
       <select id="t-type" onchange="recalc()">
-        <option value="tg" data-p="0">✈️ Telegram (Активность)</option>
+        <option value="tg">✈️ Telegram (Активность)</option>
         <option value="ya" data-p="120">📍 Яндекс Карты (120₽)</option>
         <option value="gm" data-p="75">🌍 Google Maps (75₽)</option>
       </select>
@@ -312,6 +282,34 @@
     </div>
   </div>
 
+  <!-- ADMIN -->
+  <div id="m-admin" class="overlay">
+    <div class="modal">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2 style="margin:0;">🛡️ Модерация</h2>
+        <div style="opacity:0.5; font-size:20px; cursor:pointer;" onclick="closeModal()">✕</div>
+      </div>
+
+      <div class="admin-tabs">
+        <div class="admin-tab active" onclick="switchAdminTab('proofs')" id="at-proofs">Отчёты</div>
+        <div class="admin-tab" onclick="switchAdminTab('withdrawals')" id="at-withdrawals">Выводы</div>
+        <div class="admin-tab" onclick="switchAdminTab('tbank')" id="at-tbank">T-Bank</div>
+      </div>
+
+      <div id="admin-view-proofs">
+        <div id="admin-list" style="display:flex; flex-direction:column; gap:15px;"></div>
+      </div>
+
+      <div id="admin-view-withdrawals" class="hidden">
+        <div id="admin-withdraw-list" style="display:flex; flex-direction:column; gap:15px;"></div>
+      </div>
+
+      <div id="admin-view-tbank" class="hidden">
+        <div id="admin-tbank-list" style="display:flex; flex-direction:column; gap:15px;"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- TOPUP -->
   <div id="m-topup" class="overlay">
     <div class="modal">
@@ -375,10 +373,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=stable_20260209" defer></script>
-</body>
-</html>
-
-  <script src="main.js?v=20260210_2"></script>
+  <script src="main.js?v=full_20260210" defer></script>
 </body>
 </html>
