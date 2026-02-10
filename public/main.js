@@ -1,16 +1,19 @@
-/* ReviewCash MiniApp — full stable main.js
-   - Works with backend on Render (/api/*)
-   - Telegram initData header (X-Tg-InitData)
-   - Stars topup via tg.sendData -> bot invoice
-   - T-Bank claim via /api/tbank/claim (admin подтверждает)
-   - Admin panel: approve/reject proofs, withdrawals, payments
+/* ReviewCash MiniApp — FULL stable main.js
+   Works with:
+   - /api/sync
+   - /api/task/create
+   - /api/task/submit
+   - /api/tbank/claim
+   - /api/withdraw/create, /api/withdraw/list
+   - /api/ops/list
+   - /api/admin/summary, /api/admin/proof/*, /api/admin/withdraw/*, /api/admin/tbank/*
 */
 
 (function () {
   "use strict";
 
   // -----------------------------
-  // Telegram / Mock
+  // Telegram / fallback
   // -----------------------------
   var MockTelegram = {
     WebApp: {
@@ -19,7 +22,7 @@
       showAlert: function (msg) { alert(msg); },
       showConfirm: function (msg, cb) { var r = confirm(msg); if (cb) cb(r); },
       openTelegramLink: function (url) { window.open(url, "_blank"); },
-      sendData: function (data) { alert("DEV MODE sendData:\n\n" + data); },
+      sendData: function (data) { alert("DEV MODE: sendData\n\n" + data); },
       ready: function () {},
       initData: "",
       initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode" } }
@@ -28,18 +31,28 @@
 
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : MockTelegram.WebApp;
 
-  function tgAlert(msg) { try { tg.showAlert(String(msg)); } catch (e) { alert(String(msg)); } }
-  function tgConfirm(msg, cb) { try { tg.showConfirm(String(msg), cb); } catch (e) { cb(confirm(String(msg))); } }
-  function tgOpen(url) { try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); } }
+  function tgAlert(msg) {
+    try { tg.showAlert(String(msg)); } catch (e) { alert(String(msg)); }
+  }
+  function tgConfirm(msg, cb) {
+    try { tg.showConfirm(String(msg), cb); } catch (e) { cb(confirm(String(msg))); }
+  }
+  function tgOpen(url) {
+    try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  }
 
   function isTelegramWebApp() {
     try {
       return !!(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string" && window.Telegram.WebApp.initData.length > 0);
-    } catch (e) { return false; }
+    } catch (e) {
+      return false;
+    }
   }
 
   function getTgUser() {
-    try { if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) return tg.initDataUnsafe.user; } catch (e) {}
+    try {
+      if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) return tg.initDataUnsafe.user;
+    } catch (e) {}
     return MockTelegram.WebApp.initDataUnsafe.user;
   }
 
@@ -48,7 +61,9 @@
       return (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.initData === "string")
         ? window.Telegram.WebApp.initData
         : "";
-    } catch (e) { return ""; }
+    } catch (e) {
+      return "";
+    }
   }
 
   // -----------------------------
@@ -65,8 +80,11 @@
   function getApiBase() {
     var meta = document.querySelector('meta[name="api-base"]');
     var v = meta ? meta.getAttribute("content") : "";
-    if (v) return String(v).replace(/\/+$/, "");
-    return window.location.origin;
+    v = (v || "").trim().replace(/\/+$/, "");
+    if (v) return v;
+
+    // если пусто — считаем что API на том же домене
+    return window.location.origin.replace(/\/+$/, "");
   }
   var API = getApiBase();
 
@@ -75,7 +93,7 @@
     try { v = localStorage.getItem("device_hash"); } catch (e) {}
     if (!v) {
       v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-      try { localStorage.setItem("device_hash", v); } catch (e) {}
+      try { localStorage.setItem("device_hash", v); } catch (e2) {}
     }
     return v;
   }
@@ -90,27 +108,32 @@
       body: JSON.stringify(Object.assign({}, data || {}, { device_hash: getDeviceHash() }))
     });
 
+    var text = "";
+    try { text = await res.text(); } catch (e) { text = ""; }
+
     var j = {};
-    try { j = await res.json(); } catch (e) { j = {}; }
+    try { j = text ? JSON.parse(text) : {}; } catch (e2) { j = {}; }
 
     if (!res.ok || j.ok === false) {
-      var msg = (j && j.error) ? j.error : ("HTTP " + res.status);
-      throw new Error(msg);
+      // Если сервер ответил plain-text (например Unauthorized)
+      var msg = (j && j.error) ? j.error : (text && text.length < 200 ? text : ("HTTP " + res.status));
+      var err = new Error(msg || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
     }
     return j;
   }
 
   function ensureTelegramOrExplain() {
     if (isTelegramWebApp()) return true;
-    tgAlert("Открой Mini App через кнопку в Telegram (WebApp). Если открыть сайт напрямую — initData пустой.");
+    tgAlert("Открой Mini App через кнопку WebApp в Telegram у ЭТОГО же бота.\n\nЕсли открыть ссылку напрямую — initData пустой и сервер вернёт 401.");
     return false;
   }
 
   // -----------------------------
-  // Config
+  // Config / task types (Telegram)
   // -----------------------------
-  var ADMIN_IDS = [6482440657, 123456]; // поставь свой id (и можно dev)
-
+  var ADMIN_IDS = []; // можно оставить пустым — админ определяется на сервере, а тут только UI
   var ASSETS = {
     ya: "https://www.google.com/s2/favicons?sz=64&domain=yandex.ru",
     gm: "https://www.google.com/s2/favicons?sz=64&domain=google.com",
@@ -120,10 +143,13 @@
   var TG_TASK_TYPES = {
     tg_sub:   { label: "Подписка на канал",   cost: 30,  reward: 15, icon: "📢", action: "Подписаться" },
     tg_group: { label: "Вступление в группу", cost: 25,  reward: 12, icon: "👥", action: "Вступить" },
-    tg_react: { label: "Просмотр + Реакция",  cost: 10,  reward: 5,  icon: "❤️", action: "Смотреть пост" },
-    tg_poll:  { label: "Участие в опросе",    cost: 15,  reward: 7,  icon: "📊", action: "Голосовать" },
-    tg_start: { label: "Запуск бота /start",  cost: 25,  reward: 12, icon: "🤖", action: "Запустить" },
-    tg_msg:   { label: "Сообщение боту",      cost: 15,  reward: 7,  icon: "✉️", action: "Написать" }
+    tg_react: { label: "Просмотр + Реакция",  cost: 10,  reward: 5,   icon: "❤️", action: "Смотреть пост" },
+    tg_poll:  { label: "Участие в опросе",    cost: 15,  reward: 7,   icon: "📊", action: "Голосовать" },
+    tg_start: { label: "Запуск бота /start",  cost: 25,  reward: 12,  icon: "🤖", action: "Запустить" },
+    tg_msg:   { label: "Сообщение боту",      cost: 15,  reward: 7,   icon: "✉️", action: "Написать" },
+    tg_mapp:  { label: "Открыть Mini App",    cost: 40,  reward: 20,  icon: "📱", action: "Открыть App" },
+    tg_hold:  { label: "Подписка + 24ч",      cost: 60,  reward: 30,  icon: "⏳", action: "Подписаться" },
+    tg_invite:{ label: "Инвайт друзей",       cost: 100, reward: 50,  icon: "🤝", action: "Пригласить" }
   };
 
   // -----------------------------
@@ -131,15 +157,20 @@
   // -----------------------------
   var state = {
     filter: "all",
+    is_admin: false,
+    admin_counts: { proofs: 0, withdrawals: 0, tbank: 0 },
     user: { rub: 0, stars: 0, xp: 0, level: 1 },
     tasks: [],
     withdrawals: [],
     ops: [],
-    admin: { proofs: [], withdrawals: [], payments: [] }
+    admin_proofs: [],
+    admin_withdrawals: [],
+    admin_tbank: []
   };
 
   var isLinkValid = false;
   var linkCheckTimer = null;
+  var selectedProofFile = null; // сейчас не загружается, но UI оставили
   var activeTaskId = null;
 
   // -----------------------------
@@ -164,7 +195,12 @@
       seed = user.first_name || user.username || "U";
     }
 
-    var photoSrc = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
+    var photoSrc = "";
+    if (user && typeof user.photo_url === "string" && user.photo_url.indexOf("http") === 0) {
+      photoSrc = user.photo_url;
+    } else {
+      photoSrc = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
+    }
 
     if (headerName) headerName.innerText = displayName;
     if (profileName) profileName.innerText = displayName;
@@ -172,18 +208,25 @@
     function setAvatar(img) {
       if (!img) return;
       img.src = photoSrc;
-      img.onerror = function () { img.src = photoSrc; };
+      img.onerror = function () {
+        img.src = "https://ui-avatars.com/api/?name=" + encodeURIComponent(seed) + "&background=random&color=fff&size=128&bold=true";
+      };
     }
     setAvatar(headerAvatar);
     setAvatar(profileAvatar);
   }
 
-  function checkAdmin() {
-    var u = getTgUser();
+  function applyAdminUI() {
     var adminPanel = el("admin-panel-card");
     if (!adminPanel) return;
-    if (u && u.id && ADMIN_IDS.indexOf(Number(u.id)) >= 0) adminPanel.style.display = "block";
-    else adminPanel.style.display = "none";
+    adminPanel.style.display = state.is_admin ? "block" : "none";
+
+    var badge = el("admin-badge");
+    if (badge) {
+      var total = (state.admin_counts.proofs || 0) + (state.admin_counts.withdrawals || 0) + (state.admin_counts.tbank || 0);
+      badge.style.opacity = total > 0 ? "1" : "0";
+      badge.innerText = String(total);
+    }
   }
 
   // -----------------------------
@@ -224,7 +267,7 @@
   }
 
   // -----------------------------
-  // Link validation
+  // Link validation in create form
   // -----------------------------
   function isValidLink(s) {
     s = (s || "").trim();
@@ -263,34 +306,47 @@
           statusEl.className = "input-status visible " + (ok ? "valid" : "invalid");
           statusEl.innerHTML = ok ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
         }
-      }, 400);
+      }, 500);
     });
+  }
+
+  // -----------------------------
+  // Normalize task (UUID)
+  // -----------------------------
+  function normalizeTask(t) {
+    var myId = 0;
+    try { myId = Number(getTgUser().id || 0); } catch (e) { myId = 0; }
+
+    var ownerId = Number(t.owner_id || t.user_id || 0);
+    var owner = (ownerId && myId && ownerId === myId) ? "me" : "other";
+
+    // sub_type можно попытаться вытащить из instructions
+    var subType = null;
+    try {
+      var ins = String(t.instructions || "");
+      var m = ins.match(/TG_SUBTYPE:\s*([a-z0-9_]+)/i);
+      if (m && m[1]) subType = m[1];
+    } catch (e2) {}
+
+    return {
+      id: String(t.id),
+      type: String(t.type || "tg"),
+      subType: subType,
+      name: t.title || t.name || "Задание",
+      price: Number(t.reward_rub || t.reward || t.price || 0),
+      owner: owner,
+      checkType: t.check_type || t.checkType || ((t.type === "tg") ? "auto" : "manual"),
+      target: t.target_url || t.target || "",
+      text: t.instructions || t.text || "",
+      qtyLeft: Number(t.qty_left != null ? t.qty_left : 0),
+      qty: Number(t.qty_total || t.qty || 1),
+      raw: t
+    };
   }
 
   // -----------------------------
   // Data loading
   // -----------------------------
-  function normalizeTask(t) {
-    var myId = 0;
-    try { myId = Number(getTgUser().id || 0); } catch (e) { myId = 0; }
-    var ownerId = Number(t.owner_id || t.user_id || 0);
-    var owner = (ownerId && myId && ownerId === myId) ? "me" : "other";
-
-    return {
-      id: String(t.id),
-      type: String(t.type || "tg"),
-      name: t.title || t.name || "Задание",
-      price: Number(t.reward_rub || t.reward || 0),
-      owner: owner,
-      checkType: t.check_type || ((t.type === "tg") ? "auto" : "manual"),
-      target: t.target_url || t.target || "",
-      text: t.instructions || t.text || "",
-      qty: Number(t.qty_total || t.qty || 1),
-      subType: t.sub_type || t.subType || null,
-      raw: t
-    };
-  }
-
   async function loadData() {
     if (!ensureTelegramOrExplain()) {
       state.tasks = [];
@@ -298,7 +354,6 @@
       state.ops = [];
       state.user.rub = 0;
       state.user.stars = 0;
-      render();
       return;
     }
 
@@ -316,12 +371,30 @@
     try {
       var w = await apiPost("/api/withdraw/list", {});
       state.withdrawals = w.withdrawals || [];
-    } catch (e) { state.withdrawals = state.withdrawals || []; }
+    } catch (e1) {
+      state.withdrawals = state.withdrawals || [];
+    }
 
     try {
       var ops = await apiPost("/api/ops/list", {});
       state.ops = ops.operations || [];
-    } catch (e2) { state.ops = state.ops || []; }
+    } catch (e2) {
+      state.ops = state.ops || [];
+    }
+
+    // admin summary (if allowed)
+    try {
+      var s = await apiPost("/api/admin/summary", {});
+      if (s && s.ok && s.counts) {
+        state.is_admin = true;
+        state.admin_counts = s.counts || { proofs: 0, withdrawals: 0, tbank: 0 };
+      } else {
+        state.is_admin = false;
+      }
+    } catch (e3) {
+      state.is_admin = false;
+      state.admin_counts = { proofs: 0, withdrawals: 0, tbank: 0 };
+    }
   }
 
   // -----------------------------
@@ -332,15 +405,45 @@
     var bs = el("u-bal-star");
     if (br) br.innerText = Math.floor(state.user.rub).toLocaleString("ru-RU") + " ₽";
     if (bs) bs.innerText = Math.floor(state.user.stars).toLocaleString("ru-RU") + " ⭐";
+
+    var xpPerLevel = 100;
+    var currentLevel = Number(state.user.level || 1);
+    var nextLevelXP = currentLevel * xpPerLevel;
+    var prevLevelXP = (currentLevel - 1) * xpPerLevel;
+    var xpInCurrentLevel = Number(state.user.xp || 0) - prevLevelXP;
+    var xpNeeded = nextLevelXP - prevLevelXP;
+    var pct = xpNeeded > 0 ? Math.max(0, Math.min(100, (xpInCurrentLevel / xpNeeded) * 100)) : 0;
+
+    var lvlBadge = el("u-lvl-badge");
+    var xpCur = el("u-xp-cur");
+    var xpNext = el("u-xp-next");
+    var xpFill = el("u-xp-fill");
+
+    if (lvlBadge) lvlBadge.innerText = "LVL " + currentLevel;
+    if (xpCur) xpCur.innerText = String(state.user.xp || 0) + " XP";
+    if (xpNext) xpNext.innerText = String(nextLevelXP) + " XP";
+    if (xpFill) xpFill.style.width = pct + "%";
   }
 
   function renderTasks() {
     var box = el("tasks-list");
     if (!box) return;
+
     box.innerHTML = "";
 
+    if (!ensureTelegramOrExplain()) {
+      var warn = document.createElement("div");
+      warn.style.textAlign = "center";
+      warn.style.padding = "60px 20px";
+      warn.style.color = "var(--text-dim)";
+      warn.style.opacity = "0.75";
+      warn.innerText = "Открой Mini App через Telegram для загрузки задач.";
+      box.appendChild(warn);
+      return;
+    }
+
     var list = state.tasks.filter(function (t) {
-      if (state.filter === "all") return t.owner === "other";
+      if (state.filter === "all") return t.owner === "other" && (t.qtyLeft > 0);
       return t.owner === "me";
     });
 
@@ -353,7 +456,7 @@
       empty.innerHTML =
         '<div style="font-size:48px;margin-bottom:15px;filter:grayscale(1);">📭</div>' +
         '<div style="font-weight:600;">Задач пока нет</div>' +
-        '<div style="font-size:12px;margin-top:5px;">Создай свою или зайди позже</div>';
+        '<div style="font-size:12px;margin-top:5px;">Заходите позже или создайте свою</div>';
       box.appendChild(empty);
       return;
     }
@@ -369,8 +472,9 @@
 
       var brand = document.createElement("div");
       brand.className = "brand-box";
-      if (t.type === "tg") {
-        brand.innerHTML = '<div style="font-size:24px;">✈️</div>';
+
+      if (t.type === "tg" && t.subType && TG_TASK_TYPES[t.subType]) {
+        brand.innerHTML = '<div style="font-size:24px;">' + TG_TASK_TYPES[t.subType].icon + "</div>";
       } else if (ASSETS[t.type]) {
         brand.innerHTML = '<img src="' + ASSETS[t.type] + '" style="width:100%;height:100%;object-fit:contain;">';
       } else {
@@ -390,8 +494,15 @@
       price.style.fontSize = "14px";
       price.innerText = "+" + t.price + " ₽";
 
+      var sub = document.createElement("div");
+      sub.style.fontSize = "11px";
+      sub.style.color = "var(--text-dim)";
+      sub.style.marginTop = "2px";
+      sub.innerText = (t.owner === "me") ? ("Осталось: " + t.qtyLeft + "/" + t.qty) : ("Осталось: " + t.qtyLeft);
+
       meta.appendChild(title);
       meta.appendChild(price);
+      meta.appendChild(sub);
 
       left.appendChild(brand);
       left.appendChild(meta);
@@ -399,7 +510,9 @@
       var btn = document.createElement("button");
       btn.className = "btn btn-action";
       btn.innerText = (t.owner === "me") ? "Моё" : "Выполнить";
-      btn.onclick = function () { window.handleTask(btn, t.owner, t.id); };
+      btn.onclick = function () {
+        window.handleTask(btn, t.owner, t.id);
+      };
 
       item.appendChild(left);
       item.appendChild(btn);
@@ -412,20 +525,24 @@
     try {
       var d = new Date(v);
       if (isNaN(d.getTime())) return String(v);
-      return d.toLocaleString("ru-RU", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
-    } catch (e) { return String(v); }
+      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+      return String(v);
+    }
   }
 
   function providerTitle(p) {
     if (!p) return "Пополнение";
     if (p === "tbank") return "Пополнение (T-Bank)";
     if (p === "stars") return "Пополнение (Stars)";
+    if (p === "cryptobot") return "Пополнение (CryptoBot)";
     return "Пополнение";
   }
 
   function renderHistory() {
     var list = el("history-list");
     if (!list) return;
+
     list.innerHTML = "";
 
     var items = Array.isArray(state.ops) ? state.ops : [];
@@ -449,7 +566,7 @@
         title = providerTitle(item.provider);
         sign = "+";
         colorClass = (status === "paid") ? "amt-green" : "";
-        icon = (status === "paid") ? "✅" : (status === "rejected") ? "❌" : "⏳";
+        icon = (status === "paid") ? "✅" : (status === "rejected" || status === "failed") ? "❌" : "⏳";
       } else if (kind === "withdrawal") {
         title = "Вывод средств";
         sign = "-";
@@ -457,7 +574,7 @@
         icon = (status === "paid") ? "✅" : (status === "rejected") ? "❌" : "⏳";
       }
 
-      var statusText = (status === "paid") ? "Выполнено" : (status === "rejected") ? "Отклонено" : "Ожидает";
+      var statusText = (status === "paid") ? "Выполнено" : (status === "rejected" || status === "failed") ? "Отклонено" : "Ожидает";
 
       var row = document.createElement("div");
       row.className = "list-item";
@@ -476,17 +593,18 @@
   function renderWithdrawals() {
     var list = el("withdrawals-list");
     if (!list) return;
-    list.innerHTML = "";
 
+    list.innerHTML = "";
     var items = Array.isArray(state.withdrawals) ? state.withdrawals : [];
+
     if (!items.length) {
       list.innerHTML = '<div style="font-size:12px; color:var(--text-dim); text-align:center;">Нет активных заявок</div>';
       return;
     }
 
     items.forEach(function (w) {
-      var amount = Number((w.amount_rub != null) ? w.amount_rub : (w.amount != null) ? w.amount : 0);
-      var created = w.created_at || w.date || "";
+      var amount = Number((w.amount_rub != null) ? w.amount_rub : 0);
+      var created = w.created_at || "";
       var status = String(w.status || "pending");
 
       var stClass = "st-pending";
@@ -516,18 +634,20 @@
   function render() {
     renderBalance();
     renderTasks();
-    window.renderReferrals && window.renderReferrals();
+    renderReferrals();
+    applyAdminUI();
   }
-  window.render = render;
 
   // -----------------------------
   // Navigation
   // -----------------------------
   window.showTab = function (t) {
-    var navItems = document.querySelectorAll(".nav-item");
-    for (var i = 0; i < navItems.length; i++) rmClass(navItems[i], "active");
-    var navBtn = el("tab-" + t);
-    if (navBtn) addClass(navBtn, "active");
+    var tabs = ["tasks", "friends", "profile"];
+    for (var i = 0; i < tabs.length; i++) {
+      var id = "tab-" + tabs[i];
+      var btn = el(id);
+      if (btn) btn.classList.toggle("active", tabs[i] === t);
+    }
 
     setHidden(el("view-tasks"), t !== "tasks");
     setHidden(el("view-friends"), t !== "friends");
@@ -557,12 +677,6 @@
     if (tabProfile) addClass(tabProfile, "active");
   };
 
-  window.toggleTheme = function () {
-    document.body.classList.toggle("light-mode");
-    var isLight = document.body.classList.contains("light-mode");
-    try { if (tg.setHeaderColor) tg.setHeaderColor(isLight ? "#f2f4f7" : "#05070a"); } catch (e) {}
-  };
-
   // -----------------------------
   // Filters
   // -----------------------------
@@ -578,6 +692,19 @@
   // -----------------------------
   // Create task
   // -----------------------------
+  function populateTgTypes() {
+    var sel = el("t-tg-subtype");
+    if (!sel) return;
+    sel.innerHTML = "";
+    Object.keys(TG_TASK_TYPES).forEach(function (k) {
+      var t = TG_TASK_TYPES[k];
+      var opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = t.icon + " " + t.label + " (" + t.cost + "₽)";
+      sel.appendChild(opt);
+    });
+  }
+
   window.recalc = function () {
     var typeSelect = el("t-type");
     var subtypeSelect = el("t-tg-subtype");
@@ -616,19 +743,6 @@
     }
   };
 
-  function populateTgTypes() {
-    var sel = el("t-tg-subtype");
-    if (!sel) return;
-    sel.innerHTML = "";
-    Object.keys(TG_TASK_TYPES).forEach(function (k) {
-      var t = TG_TASK_TYPES[k];
-      var opt = document.createElement("option");
-      opt.value = k;
-      opt.textContent = t.icon + " " + t.label + " (" + t.cost + "₽)";
-      sel.appendChild(opt);
-    });
-  }
-
   window.createTask = async function () {
     if (!ensureTelegramOrExplain()) return;
 
@@ -646,11 +760,11 @@
     var instructions = (textEl ? textEl.value : "").trim();
 
     if (!qty || qty < 1) return tgAlert("Минимальное количество: 1");
-    if (!target) return tgAlert("Укажите ссылку");
+    if (!target) return tgAlert("Укажите ссылку на объект");
     if (!isLinkValid) return tgAlert("Укажите корректную ссылку и дождитесь проверки.");
 
     if (currency === "star") {
-      return tgAlert("Создание заданий за Stars пока отключено (Stars только для пополнения баланса).");
+      return tgAlert("Создание заданий за Stars пока выключено.\nStars используются для пополнения баланса.");
     }
 
     var pricePerItem = 0;
@@ -659,11 +773,14 @@
     var checkType = "manual";
     var tgChat = null;
     var tgKind = null;
+    var subType = null;
 
     if (type === "tg") {
       var stKey = subtypeEl ? subtypeEl.value : "tg_sub";
       var conf = TG_TASK_TYPES[stKey];
       if (!conf) return tgAlert("Выберите тип TG-задания");
+      subType = stKey;
+
       pricePerItem = Number(conf.cost || 0);
       workerReward = Number(conf.reward || 0);
       taskName = conf.label || "TG задание";
@@ -693,7 +810,8 @@
         qty_total: qty,
         check_type: checkType,
         tg_chat: tgChat,
-        tg_kind: tgKind
+        tg_kind: tgKind,
+        sub_type: subType
       });
 
       await loadData();
@@ -713,6 +831,10 @@
     if (!ensureTelegramOrExplain()) return;
 
     id = String(id || "");
+    if (owner === "me") {
+      return tgAlert("Это твоё задание.\nУдаление/остановка можно добавить отдельным эндпоинтом позже.");
+    }
+
     var task = null;
     for (var i = 0; i < state.tasks.length; i++) {
       if (String(state.tasks[i].id) === id) { task = state.tasks[i]; break; }
@@ -725,12 +847,18 @@
     if (el("td-reward")) el("td-reward").innerText = "+" + task.price + " ₽";
 
     var iconBox = el("td-icon");
-    var iconHtml = (task.type === "tg")
-      ? '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">✈️</div>'
-      : (ASSETS[task.type] ? '<img src="' + ASSETS[task.type] + '" style="width:100%;height:100%;object-fit:contain;">'
-                          : '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">📄</div>');
+    var iconHtml = "";
+    if (task.type === "tg" && task.subType && TG_TASK_TYPES[task.subType]) {
+      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">' + TG_TASK_TYPES[task.subType].icon + "</div>";
+      if (el("td-type-badge")) el("td-type-badge").innerText = TG_TASK_TYPES[task.subType].label.toUpperCase();
+    } else if (ASSETS[task.type]) {
+      iconHtml = '<img src="' + ASSETS[task.type] + '" style="width:100%;height:100%;object-fit:contain;">';
+      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+    } else {
+      iconHtml = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:32px;">📄</div>';
+      if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
+    }
     if (iconBox) iconBox.innerHTML = iconHtml;
-    if (el("td-type-badge")) el("td-type-badge").innerText = String(task.type).toUpperCase();
 
     if (el("td-link")) el("td-link").innerText = task.target;
     if (el("td-link-btn")) el("td-link-btn").href = task.target;
@@ -741,12 +869,19 @@
     setHidden(el("proof-auto"), !isAuto);
 
     if (el("p-username")) el("p-username").value = "";
+    if (el("p-file")) el("p-file").value = "";
+    if (el("p-filename")) { el("p-filename").innerText = "📷 Прикрепить скриншот"; el("p-filename").style.color = "var(--accent-cyan)"; }
+    selectedProofFile = null;
 
     var actionBtn = el("td-action-btn");
     if (actionBtn) {
       actionBtn.disabled = false;
+      rmClass(actionBtn, "working");
+
       if (isAuto) {
-        actionBtn.innerText = "⚡ Проверить выполнение";
+        var txt = "⚡ Проверить выполнение";
+        if (task.subType && TG_TASK_TYPES[task.subType]) txt = "⚡ Проверить: " + TG_TASK_TYPES[task.subType].action;
+        actionBtn.innerText = txt;
         actionBtn.onclick = function () { window.checkTgTask(activeTaskId); };
       } else {
         actionBtn.innerText = "📤 Отправить отчет";
@@ -768,10 +903,10 @@
       await loadData();
       render();
       window.closeModal();
-      tgAlert("✅ Готово! Если бот видит подписку — начисление сразу.");
+      tgAlert("✅ Проверка отправлена!\nЕсли бот видит подписку — начисление произойдёт сразу.");
     } catch (e) {
       if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Проверить выполнение"; }
-      tgAlert("Ошибка: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка проверки: " + (e && e.message ? e.message : "unknown"));
     }
   };
 
@@ -784,6 +919,7 @@
     var btn = el("td-action-btn");
     if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Отправка..."; }
 
+    // Скриншот не грузим (нет upload endpoint) — можно добавить позже.
     try {
       await apiPost("/api/task/submit", {
         task_id: String(taskId),
@@ -794,11 +930,25 @@
       await loadData();
       render();
       window.closeModal();
-      tgAlert("✅ Отчет отправлен! Дальше — модерация.");
+      tgAlert("✅ Отчет отправлен!\nДальше — модерация.");
     } catch (e) {
       if (btn) { btn.disabled = false; btn.innerHTML = "📤 Отправить отчет"; }
-      tgAlert("Ошибка: " + (e && e.message ? e.message : "unknown"));
+      tgAlert("Ошибка отправки: " + (e && e.message ? e.message : "unknown"));
     }
+  };
+
+  window.updateFileName = function (input) {
+    try {
+      if (input && input.files && input.files[0]) {
+        selectedProofFile = input.files[0];
+        var name = input.files[0].name || "file";
+        var pfn = el("p-filename");
+        if (pfn) {
+          pfn.innerText = "📄 " + (name.length > 20 ? name.substr(0, 18) + "..." : name);
+          pfn.style.color = "var(--text-main)";
+        }
+      }
+    } catch (e) {}
   };
 
   // -----------------------------
@@ -809,33 +959,40 @@
     if (!url) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(function () { tgAlert("Ссылка скопирована"); });
-    } else tgAlert(url);
+    } else {
+      tgAlert(url);
+    }
   };
 
   // -----------------------------
-  // Referrals
+  // Referrals (simple)
   // -----------------------------
-  window.renderReferrals = function () {
+  function renderReferrals() {
     var u = getTgUser();
-    var uid = (u && u.id) ? u.id : "12345";
+    var uid = (u && u.id) ? u.id : "0";
     var invite = "t.me/ReviewCashBot?start=" + uid;
-    if (el("invite-link")) el("invite-link").innerText = invite;
+
+    var linkEl = el("invite-link");
+    if (linkEl) linkEl.innerText = invite;
+
     if (el("ref-count")) el("ref-count").innerText = "0";
     if (el("ref-earn")) el("ref-earn").innerText = "0 ₽";
-  };
+  }
 
   window.copyInviteLink = function () {
     var u = getTgUser();
-    var uid = (u && u.id) ? u.id : "12345";
+    var uid = (u && u.id) ? u.id : "0";
     var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(inviteLink).then(function () { tgAlert("🔗 Ссылка скопирована!"); });
-    } else tgAlert(inviteLink);
+    } else {
+      tgAlert(inviteLink);
+    }
   };
 
   window.shareInvite = function () {
     var u = getTgUser();
-    var uid = (u && u.id) ? u.id : "12345";
+    var uid = (u && u.id) ? u.id : "0";
     var inviteLink = "https://t.me/ReviewCashBot?start=" + uid;
     tgOpen("https://t.me/share/url?url=" + encodeURIComponent(inviteLink) + "&text=" + encodeURIComponent("Зарабатывай на заданиях вместе со мной!"));
   };
@@ -849,8 +1006,11 @@
 
     if (method === "pay_stars") {
       if (!ensureTelegramOrExplain()) return;
-      try { tg.sendData(JSON.stringify({ action: "pay_stars", amount: String(val) })); }
-      catch (e) { tgAlert("Не удалось отправить данные. Открой Mini App из бота."); }
+      try {
+        tg.sendData(JSON.stringify({ action: "pay_stars", amount: String(val) }));
+      } catch (e) {
+        tgAlert("Не удалось отправить данные в Telegram. Открой Mini App из бота.");
+      }
       return;
     }
 
@@ -862,6 +1022,7 @@
   window.openTBankPay = function () {
     var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
+
     tbankAmount = val;
 
     if (el("tb-amount-display")) el("tb-amount-display").innerText = String(val) + " ₽";
@@ -882,7 +1043,9 @@
     if (!code) return;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(code).then(function () { tgAlert("Код скопирован!"); });
-    } else tgAlert(code);
+    } else {
+      tgAlert(code);
+    }
   };
 
   window.confirmTBank = async function () {
@@ -890,12 +1053,12 @@
 
     var sender = (el("tb-sender") ? el("tb-sender").value : "").trim();
     var code = (el("tb-code") ? el("tb-code").innerText : "").trim();
-    if (!sender) return tgAlert("Укажите имя отправителя");
+    if (!sender) return tgAlert("Укажите ваше имя отправителя");
     if (!code) return tgAlert("Нет кода платежа");
 
     try {
       await apiPost("/api/tbank/claim", { amount_rub: Number(tbankAmount), sender: sender, code: code });
-      tgAlert("✅ Заявка отправлена. Админ подтвердит вручную.");
+      tgAlert("✅ Заявка на пополнение отправлена.\nАдминистратор подтвердит вручную.");
       window.closeModal();
     } catch (e) {
       tgAlert("Ошибка T-Bank: " + (e && e.message ? e.message : "unknown"));
@@ -918,8 +1081,12 @@
 
     try {
       await apiPost("/api/withdraw/create", { amount_rub: amt, details: details });
-      var w = await apiPost("/api/withdraw/list", {});
-      state.withdrawals = w.withdrawals || [];
+      try {
+        var w = await apiPost("/api/withdraw/list", {});
+        state.withdrawals = w.withdrawals || [];
+      } catch (e2) {}
+      await loadData();
+      render();
       renderWithdrawals();
       tgAlert("✅ Заявка создана! Ожидайте обработки.");
     } catch (e) {
@@ -930,190 +1097,228 @@
   // -----------------------------
   // Admin panel
   // -----------------------------
-  function isMeAdmin() {
-    var u = getTgUser();
-    return u && u.id && ADMIN_IDS.indexOf(Number(u.id)) >= 0;
-  }
+  window.openAdminPanel = async function () {
+    if (!ensureTelegramOrExplain()) return;
+    if (!state.is_admin) return tgAlert("Нет прав администратора.");
 
-  async function adminRefresh() {
-    if (!isMeAdmin()) return;
+    await refreshAdminLists();
+    window.openModal("m-admin");
+  };
+
+  window.switchAdminTab = function (tab) {
+    var proofs = el("admin-view-proofs");
+    var wds = el("admin-view-withdrawals");
+    var tb = el("admin-view-tbank");
+
+    setHidden(proofs, tab !== "proofs");
+    setHidden(wds, tab !== "withdrawals");
+    setHidden(tb, tab !== "tbank");
+
+    var atP = el("at-proofs");
+    var atW = el("at-withdrawals");
+    var atT = el("at-tbank");
+    if (atP) atP.classList.toggle("active", tab === "proofs");
+    if (atW) atW.classList.toggle("active", tab === "withdrawals");
+    if (atT) atT.classList.toggle("active", tab === "tbank");
+  };
+
+  async function refreshAdminLists() {
+    try {
+      var s = await apiPost("/api/admin/summary", {});
+      state.is_admin = true;
+      state.admin_counts = s.counts || { proofs: 0, withdrawals: 0, tbank: 0 };
+    } catch (e0) {}
 
     try {
       var p = await apiPost("/api/admin/proof/list", {});
-      state.admin.proofs = p.proofs || [];
-    } catch (e) { state.admin.proofs = []; }
+      state.admin_proofs = p.proofs || [];
+    } catch (e1) {
+      state.admin_proofs = [];
+    }
 
     try {
       var w = await apiPost("/api/admin/withdraw/list", {});
-      state.admin.withdrawals = w.withdrawals || [];
-    } catch (e2) { state.admin.withdrawals = []; }
-
-    try {
-      var pay = await apiPost("/api/admin/payments/list", {});
-      state.admin.payments = pay.payments || [];
-    } catch (e3) { state.admin.payments = []; }
-
-    var badge = el("admin-badge");
-    var cnt = (state.admin.proofs.length || 0) + (state.admin.withdrawals.filter(function(x){return String(x.status||"") === "pending";}).length || 0) + (state.admin.payments.length || 0);
-    if (badge) {
-      badge.textContent = String(cnt);
-      badge.style.opacity = cnt > 0 ? "1" : "0";
+      state.admin_withdrawals = w.withdrawals || [];
+    } catch (e2) {
+      state.admin_withdrawals = [];
     }
 
-    renderAdminLists();
+    try {
+      var t = await apiPost("/api/admin/tbank/list", {});
+      state.admin_tbank = t.tbank || [];
+    } catch (e3) {
+      state.admin_tbank = [];
+    }
+
+    applyAdminUI();
+    renderAdminProofs();
+    renderAdminWithdrawals();
+    renderAdminTbank();
   }
 
-  function mkAdminCard(title, subtitle, rightHtml, btnOk, btnNo) {
+  function mkAdminCard(title, subtitle, rightHtml) {
     var card = document.createElement("div");
     card.className = "card";
     card.style.padding = "14px";
-
-    var top = document.createElement("div");
-    top.style.display = "flex";
-    top.style.justifyContent = "space-between";
-    top.style.gap = "10px";
-
-    var left = document.createElement("div");
-    left.innerHTML = '<div style="font-weight:800;">' + title + '</div><div style="font-size:12px; color:var(--text-dim); margin-top:4px;">' + subtitle + "</div>";
-
-    var right = document.createElement("div");
-    right.innerHTML = rightHtml || "";
-
-    top.appendChild(left);
-    top.appendChild(right);
-
-    var actions = document.createElement("div");
-    actions.style.display = "grid";
-    actions.style.gridTemplateColumns = "1fr 1fr";
-    actions.style.gap = "10px";
-    actions.style.marginTop = "12px";
-
-    var b1 = document.createElement("button");
-    b1.className = "btn btn-main";
-    b1.textContent = "✅ Принять";
-    b1.onclick = btnOk;
-
-    var b2 = document.createElement("button");
-    b2.className = "btn btn-secondary";
-    b2.textContent = "❌ Отклонить";
-    b2.onclick = btnNo;
-
-    actions.appendChild(b1);
-    actions.appendChild(b2);
-
-    card.appendChild(top);
-    card.appendChild(actions);
+    card.innerHTML =
+      '<div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">' +
+        '<div style="flex:1;">' +
+          '<div style="font-weight:900; margin-bottom:4px;">' + title + "</div>" +
+          '<div style="font-size:12px; color:var(--text-dim); line-height:1.35;">' + subtitle + "</div>" +
+        "</div>" +
+        '<div style="min-width:110px; text-align:right;">' + (rightHtml || "") + "</div>" +
+      "</div>";
     return card;
   }
 
-  async function adminDecision(endpoint, payload) {
+  function renderAdminProofs() {
+    var box = el("admin-list");
+    if (!box) return;
+    box.innerHTML = "";
+
+    if (!state.admin_proofs.length) {
+      box.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:10px;">Нет отчётов</div>';
+      return;
+    }
+
+    state.admin_proofs.forEach(function (p) {
+      var task = p.task || {};
+      var title = "Отчёт #" + p.id;
+      var subtitle =
+        "Task: " + (task.title || p.task_id) + "<br>" +
+        "User: " + p.user_id + "<br>" +
+        "Proof: " + (p.proof_text || "—") + "<br>" +
+        "Дата: " + fmtDate(p.created_at);
+
+      var right =
+        '<button class="btn btn-main" style="padding:8px 10px; font-size:12px; margin-bottom:8px;" data-a="ok">✅ Принять</button>' +
+        '<button class="btn btn-secondary" style="padding:8px 10px; font-size:12px;" data-a="no">❌ Отклонить</button>';
+
+      var card = mkAdminCard(title, subtitle, right);
+
+      var btnOk = card.querySelector('button[data-a="ok"]');
+      var btnNo = card.querySelector('button[data-a="no"]');
+
+      if (btnOk) btnOk.onclick = function () { adminDecisionProof(p.id, true); };
+      if (btnNo) btnNo.onclick = function () { adminDecisionProof(p.id, false); };
+
+      box.appendChild(card);
+    });
+  }
+
+  async function adminDecisionProof(proofId, approved) {
+    if (!ensureTelegramOrExplain()) return;
     try {
-      await apiPost(endpoint, payload);
-      await adminRefresh();
-      tgAlert("✅ Готово");
+      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: approved });
+      await refreshAdminLists();
+      tgAlert("Готово.");
     } catch (e) {
       tgAlert("Ошибка: " + (e && e.message ? e.message : "unknown"));
     }
   }
 
-  function renderAdminLists() {
-    var proofsBox = el("admin-list");
-    var wdBox = el("admin-withdraw-list");
-    var payBox = el("admin-pay-list");
+  function renderAdminWithdrawals() {
+    var box = el("admin-withdraw-list");
+    if (!box) return;
+    box.innerHTML = "";
 
-    if (proofsBox) {
-      proofsBox.innerHTML = "";
-      if (!state.admin.proofs.length) {
-        proofsBox.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:12px;">Нет отчётов</div>';
-      } else {
-        state.admin.proofs.forEach(function (p) {
-          var title = "Отчёт • user " + p.user_id;
-          var sub = "task_id: " + p.task_id + "<br>text: " + (p.proof_text || "");
-          proofsBox.appendChild(
-            mkAdminCard(
-              title,
-              sub,
-              '<div style="font-size:12px; opacity:.6;">' + fmtDate(p.created_at) + "</div>",
-              function(){ adminDecision("/api/admin/proof/decision", { proof_id: p.id, approved: true }); },
-              function(){ adminDecision("/api/admin/proof/decision", { proof_id: p.id, approved: false }); }
-            )
-          );
-        });
-      }
+    if (!state.admin_withdrawals.length) {
+      box.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:10px;">Нет заявок</div>';
+      return;
     }
 
-    if (wdBox) {
-      wdBox.innerHTML = "";
-      var wds = (state.admin.withdrawals || []).filter(function (x) { return String(x.status || "") === "pending"; });
-      if (!wds.length) {
-        wdBox.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:12px;">Нет выводов</div>';
-      } else {
-        wds.forEach(function (w) {
-          var title = "Вывод • " + (Number(w.amount_rub || 0)).toFixed(0) + " ₽";
-          var sub = "user: " + w.user_id + "<br>details: " + (w.details || "");
-          wdBox.appendChild(
-            mkAdminCard(
-              title,
-              sub,
-              '<div style="font-size:12px; opacity:.6;">' + fmtDate(w.created_at) + "</div>",
-              function(){ adminDecision("/api/admin/withdraw/decision", { withdraw_id: w.id, approved: true }); },
-              function(){ adminDecision("/api/admin/withdraw/decision", { withdraw_id: w.id, approved: false }); }
-            )
-          );
-        });
-      }
-    }
+    state.admin_withdrawals.forEach(function (w) {
+      var title = "Вывод #" + w.id + " • " + Number(w.amount_rub || 0).toFixed(0) + " ₽";
+      var subtitle =
+        "User: " + w.user_id + "<br>" +
+        "Details: " + (w.details || "—") + "<br>" +
+        "Status: " + (w.status || "pending") + "<br>" +
+        "Дата: " + fmtDate(w.created_at);
 
-    if (payBox) {
-      payBox.innerHTML = "";
-      if (!state.admin.payments.length) {
-        payBox.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:12px;">Нет пополнений</div>';
-      } else {
-        state.admin.payments.forEach(function (p) {
-          var title = "Пополнение • " + (Number(p.amount_rub || 0)).toFixed(0) + " ₽";
-          var meta = "";
-          try { meta = p.meta ? JSON.stringify(p.meta) : ""; } catch(e) { meta = ""; }
-          var sub = "provider: " + (p.provider || "") + "<br>user: " + p.user_id + "<br>ref: " + (p.provider_ref || "") + (meta ? "<br>meta: " + meta : "");
-          payBox.appendChild(
-            mkAdminCard(
-              title,
-              sub,
-              '<div style="font-size:12px; opacity:.6;">' + fmtDate(p.created_at) + "</div>",
-              function(){ adminDecision("/api/admin/payments/decision", { payment_id: p.id, approved: true }); },
-              function(){ adminDecision("/api/admin/payments/decision", { payment_id: p.id, approved: false }); }
-            )
-          );
-        });
-      }
+      var right =
+        '<button class="btn btn-main" style="padding:8px 10px; font-size:12px; margin-bottom:8px;" data-a="ok">✅ Выплатить</button>' +
+        '<button class="btn btn-secondary" style="padding:8px 10px; font-size:12px;" data-a="no">❌ Отклонить</button>';
+
+      var card = mkAdminCard(title, subtitle, right);
+
+      var btnOk = card.querySelector('button[data-a="ok"]');
+      var btnNo = card.querySelector('button[data-a="no"]');
+
+      if (btnOk) btnOk.onclick = function () { adminDecisionWithdraw(w.id, true); };
+      if (btnNo) btnNo.onclick = function () { adminDecisionWithdraw(w.id, false); };
+
+      box.appendChild(card);
+    });
+  }
+
+  async function adminDecisionWithdraw(withdrawId, approved) {
+    if (!ensureTelegramOrExplain()) return;
+    try {
+      await apiPost("/api/admin/withdraw/decision", { withdraw_id: withdrawId, approved: approved });
+      await refreshAdminLists();
+      tgAlert("Готово.");
+    } catch (e) {
+      tgAlert("Ошибка: " + (e && e.message ? e.message : "unknown"));
     }
   }
 
-  window.openAdminPanel = async function () {
-    if (!isMeAdmin()) return tgAlert("Нет доступа");
-    window.openModal("m-admin");
-    await adminRefresh();
-  };
+  function renderAdminTbank() {
+    var box = el("admin-tbank-list");
+    if (!box) return;
+    box.innerHTML = "";
 
-  window.switchAdminTab = function (tab) {
-    var tabs = ["proofs", "withdrawals", "payments"];
-    tabs.forEach(function (t) {
-      var btn = el("at-" + t);
-      if (btn) btn.classList.toggle("active", t === tab);
+    if (!state.admin_tbank.length) {
+      box.innerHTML = '<div style="text-align:center; color:var(--text-dim); padding:10px;">Нет заявок</div>';
+      return;
+    }
+
+    state.admin_tbank.forEach(function (p) {
+      var title = "T-Bank #" + p.id + " • " + Number(p.amount_rub || 0).toFixed(0) + " ₽";
+      var sender = (p.meta && p.meta.sender) ? p.meta.sender : "—";
+      var subtitle =
+        "User: " + p.user_id + "<br>" +
+        "Code: " + (p.provider_ref || "—") + "<br>" +
+        "Sender: " + sender + "<br>" +
+        "Дата: " + fmtDate(p.created_at);
+
+      var right =
+        '<button class="btn btn-main" style="padding:8px 10px; font-size:12px; margin-bottom:8px;" data-a="ok">✅ Зачислить</button>' +
+        '<button class="btn btn-secondary" style="padding:8px 10px; font-size:12px;" data-a="no">❌ Отклонить</button>';
+
+      var card = mkAdminCard(title, subtitle, right);
+
+      var btnOk = card.querySelector('button[data-a="ok"]');
+      var btnNo = card.querySelector('button[data-a="no"]');
+
+      if (btnOk) btnOk.onclick = function () { adminDecisionTbank(p.id, true); };
+      if (btnNo) btnNo.onclick = function () { adminDecisionTbank(p.id, false); };
+
+      box.appendChild(card);
     });
-    setHidden(el("admin-view-proofs"), tab !== "proofs");
-    setHidden(el("admin-view-withdrawals"), tab !== "withdrawals");
-    setHidden(el("admin-view-payments"), tab !== "payments");
-  };
+  }
+
+  async function adminDecisionTbank(paymentId, approved) {
+    if (!ensureTelegramOrExplain()) return;
+    try {
+      await apiPost("/api/admin/tbank/decision", { payment_id: paymentId, approved: approved });
+      await refreshAdminLists();
+      tgAlert("Готово.");
+    } catch (e) {
+      tgAlert("Ошибка: " + (e && e.message ? e.message : "unknown"));
+    }
+  }
 
   // -----------------------------
   // Boot
   // -----------------------------
   async function initApp() {
-    try { if (tg && tg.ready) tg.ready(); if (tg && tg.expand) tg.expand(); } catch (e) {}
+    try {
+      if (tg && tg.ready) tg.ready();
+      if (tg && tg.expand) tg.expand();
+    } catch (e) {}
 
     populateTgTypes();
     setupProfileUI();
-    checkAdmin();
     bindOverlayClose();
     installLinkWatcher();
     window.recalc();
@@ -1121,22 +1326,30 @@
     try {
       await loadData();
     } catch (e) {
-      tgAlert("Ошибка загрузки: " + (e && e.message ? e.message : "unknown") +
-        "\n\nЕсли видишь 401 — значит сервер не принял initData. Открой Mini App строго из кнопки этого же бота.");
+      // 401 -> чаще всего BOT_TOKEN mismatch
+      if (e && e.status === 401) {
+        tgAlert(
+          "HTTP 401\n\n" +
+          "Это значит: initData не прошёл проверку.\n\n" +
+          "Проверь:\n" +
+          "1) Mini App открыт кнопкой WebApp у ЭТОГО ЖЕ бота\n" +
+          "2) BOT_TOKEN на сервере — от того же бота (@" + (getTgUser().username || "bot") + ")\n"
+        );
+      } else {
+        tgAlert("Ошибка загрузки: " + (e && e.message ? e.message : "unknown"));
+      }
     }
 
     render();
 
     var loader = el("loader");
     if (loader) {
+      addClass(loader, "fade-out");
       setTimeout(function () {
         try { loader.remove(); } catch (e) { loader.style.display = "none"; }
+        var cont = document.querySelector(".app-container");
+        if (cont) addClass(cont, "anim-active");
       }, 250);
-    }
-
-    // админ бейдж обновим тоже
-    if (isMeAdmin()) {
-      try { await adminRefresh(); } catch(e2) {}
     }
   }
 
