@@ -2,6 +2,40 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <meta name="api-base" content="https://reviewcash-bot.onrender.com" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>ReviewCash Ultimate Pro</title>
+
+  <script>
+    window.addEventListener('error', function(event) {
+      var errBox = document.getElementById('global-error-box');
+      if(errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = 'Err: ' + event.message;
+      }
+      var loader = document.getElementById('loader');
+      if(loader) loader.style.display = 'none';
+    });
+  </script>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://miniapps.ai/sdk/miniapps-ai-v1.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div id="global-error-box" style="display:none; position:fixed; top:0; left:0; right:0; background:rgba(255,0,0,0.9); color:white; padding:15px; font-size:12px; z-index:10000; word-break:break-all;"></div>
+
+  <div id="loader" class="loader-overlay">
+    <div class="spinner"></div>
+    <div style="margin-top: 20px; font-weight: 700; color: var(--accent-cyan);">Загрузка...</div>
+  </div>
+
+  <!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
   <!-- Оставь пустым, чтобы API = текущий домен. Или впиши https://reviewcash-bot.onrender.com -->
   <meta name="api-base" content="" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
@@ -342,5 +376,9 @@
   </div>
 
   <script src="main.js?v=stable_20260209" defer></script>
+</body>
+</html>
+
+  <script src="main.js?v=20260210_full"></script>
 </body>
 </html>
