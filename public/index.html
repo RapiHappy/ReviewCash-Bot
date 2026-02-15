@@ -3,11 +3,14 @@
 <head>
   <meta charset="utf-8" />
 
-  <!-- Рекомендую оставить пустым: тогда API = текущий домен (тот же, где /app/) -->
+  <!-- Оставляем пустым: тогда API = текущий домен (тот же, где /app/) -->
   <meta name="api-base" content="" />
 
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
   <title>ReviewCash</title>
+
+  <!-- FIX: чтобы браузер не запрашивал /favicon.ico -->
+  <link rel="icon" href="data:,">
 
   <script>
     (function () {
@@ -28,8 +31,18 @@
 
       window.addEventListener("error", function (event) {
         var t = event && event.target;
+        var tag = t && t.tagName ? String(t.tagName).toUpperCase() : "";
         var url = t && (t.src || t.href);
-        if (url) return window.__showError("Не удалось загрузить ресурс: " + url);
+
+        // FIX: не показываем красную плашку из-за картинок/шрифтов/фавикона
+        if (url) {
+          var u = String(url);
+          if (tag === "IMG") return;
+          if (/fonts\.googleapis\.com|fonts\.gstatic\.com/i.test(u)) return;
+          if (/\/favicon\.ico(\?|$)/i.test(u)) return;
+          return window.__showError("Не удалось загрузить ресурс: " + u);
+        }
+
         window.__showError("Ошибка: " + (event.message || "Unknown error"), event.error);
       }, true);
 
@@ -59,7 +72,11 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
-            <img id="header-avatar" src="" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;">
+            <!-- FIX: src не должен быть пустым, иначе браузер пытается загрузить /app/ как картинку -->
+            <img id="header-avatar"
+                 src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+                 style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;"
+                 alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
           <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
@@ -106,7 +123,10 @@
       <div class="card">
         <div class="profile-header">
           <div class="avatar-ring">
-            <img class="avatar-img" id="u-pic" src="" alt="Avatar">
+            <!-- FIX: src не пустой -->
+            <img class="avatar-img" id="u-pic"
+                 src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+                 alt="Avatar">
             <div class="level-badge" id="u-lvl-badge">LVL 1</div>
           </div>
           <div class="balance-stack">
@@ -373,6 +393,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=full_20260210" defer></script>
+  <script src="main.js?v=full_20260215" defer></script>
 </body>
 </html>
