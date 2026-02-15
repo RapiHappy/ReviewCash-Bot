@@ -233,7 +233,6 @@ async def anti_fraud_check_and_touch(
     ip: str,
     user_agent: str,
     device_id: str | None = None,
-    device_name: str | None = None,
 ):
     # Если фронт не передал device_hash — просто пропускаем антифрод,
     # чтобы приложение не падало.
@@ -243,7 +242,6 @@ async def anti_fraud_check_and_touch(
     # В твоей БД user_devices.device_id = NOT NULL.
     # Фронт может не присылать device_id — тогда используем device_hash как стабильный идентификатор.
     did = (device_id or "").strip() or device_hash
-    dname = (device_name or "").strip() or f"dev_{did[:16]}"
 
     ip_hash = sha256_hex(ip or "")
     ua_hash = sha256_hex(user_agent or "")
@@ -483,7 +481,6 @@ async def api_sync(req: web.Request):
     uid = int(user["id"])
     device_hash = str(body.get("device_hash") or "").strip()
     device_id = str(body.get("device_id") or "").strip()
-    device_name = str(body.get("device_name") or body.get("device_label") or "").strip()
     ua = req.headers.get("User-Agent", "")
     ip = get_ip(req)
 
@@ -496,7 +493,7 @@ async def api_sync(req: web.Request):
 
     urow = await ensure_user(user, referrer_id=ref)
 
-    ok, reason = await anti_fraud_check_and_touch(uid, device_hash, ip, ua, device_id=device_id, device_name=device_name)
+    ok, reason = await anti_fraud_check_and_touch(uid, device_hash, ip, ua, device_id=device_id)
     if not ok:
         return web.json_response({"ok": False, "error": reason}, status=403)
 
@@ -1203,7 +1200,10 @@ async def on_webapp_data(message: Message):
     action = payload.get("action")
 
     if action == "pay_stars":
-        amount = float(payload.get("amount") or 0)
+        amount = parse_amount_rub(payload.get("amount_rub") or payload.get("amount") or payload.get("sum") or payload.get("value") or payload.get("rub"))
+        if amount is None:
+            return await message.answer("❌ Некорректная сумма")
+        amount = float(amount)
         if amount < MIN_TOPUP_RUB:
             return await message.answer(f"❌ Минимальная сумма пополнения — {MIN_TOPUP_RUB:.0f} ₽")
 
