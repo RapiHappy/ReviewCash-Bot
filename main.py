@@ -183,12 +183,9 @@ async def sb_select_in(
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
     """
-    Проверка Telegram WebApp initData:
-    - достаём пары из query-string
-    - убираем hash
-    - собираем data_check_string: "k=v" по алфавиту, через \n
-    - secret_key = sha256(bot_token)
-    - hmac_sha256(secret_key, data_check_string)
+    Правильная проверка Telegram WebApp initData:
+    secret_key = HMAC_SHA256(key="WebAppData", message=bot_token)
+    check = HMAC_SHA256(secret_key, data_check_string)
     """
     if not init_data:
         return None
@@ -199,10 +196,13 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
         return None
 
     data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
-    data_check_string = "\n".join(data_check_arr)
+    data_check_string = "
+".join(data_check_arr)
 
-    secret_key = hashlib.sha256(token.encode()).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    # ✅ ВОТ ЭТО ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+
+    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calc_hash, received_hash):
         return None
@@ -385,7 +385,9 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
     init_data = req.headers.get("X-Tg-InitData", "")
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
-        raise web.HTTPUnauthorized(text="Bad initData. Open Mini App from THIS bot button (token mismatch -> 401).")
+        raise web.HTTPUnauthorized(
+            text="Bad initData signature (hash mismatch). Это почти всегда означает неправильную формулу проверки на сервере или не тот BOT_TOKEN."
+        )
 
     user = parsed.get("user") or {}
     if not user or "id" not in user:
