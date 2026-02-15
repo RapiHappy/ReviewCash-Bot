@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import hmac
 import hashlib
 import asyncio
@@ -255,7 +256,6 @@ async def anti_fraud_check_and_touch(
                 "tg_user_id": user_id,
                 "device_id": did,          # ✅ FIX: not-null
                 "device_hash": device_hash,
-                "device_name": dname,
                 "last_seen_at": _now().isoformat(),
                 "ip_hash": ip_hash,
                 "user_agent_hash": ua_hash,
@@ -406,6 +406,45 @@ async def safe_json(req: web.Request) -> dict:
         return await req.json()
     except Exception:
         return {}
+
+
+def parse_amount_rub(v) -> float | None:
+    """
+    Парсит сумму из числа или строки (поддерживает "300", "300.5", "300,50", "300 ₽").
+    Возвращает float или None, если распарсить нельзя.
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    s = str(v).strip()
+    if not s:
+        return None
+
+    # normalize
+    s = s.replace("₽", "")
+    s = s.replace("RUB", "").replace("rub", "")
+    s = s.replace("\u00a0", "").replace("\xa0", "")
+    s = s.replace(" ", "")
+    s = s.replace(",", ".")
+
+    # keep digits and dot
+    s = re.sub(r"[^0-9.]", "", s)
+
+    # if multiple dots, keep last as decimal separator
+    if s.count(".") > 1:
+        parts = s.split(".")
+        s = "".join(parts[:-1]) + "." + parts[-1]
+
+    try:
+        return float(s)
+    except Exception:
+        return None
+
 
 async def require_init(req: web.Request) -> tuple[dict, dict]:
     """
@@ -642,8 +681,11 @@ async def api_withdraw_create(req: web.Request):
     uid = int(user["id"])
     body = await safe_json(req)
 
-    amount = float(body.get("amount_rub") or 0)
-    details = str(body.get("details") or "").strip()
+    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
+    if amount is None:
+        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
+
+    details = str(body.get("details") or body.get("requisites") or body.get("requisites_text") or body.get("card") or body.get("wallet") or "").strip()
 
     if amount < 300:
         return web.json_response({"ok": False, "error": "Минимум 300₽"}, status=400)
@@ -679,9 +721,12 @@ async def api_tbank_claim(req: web.Request):
     uid = int(user["id"])
     body = await safe_json(req)
 
-    amount = float(body.get("amount_rub") or 0)
-    sender = str(body.get("sender") or "").strip()
-    code = str(body.get("code") or "").strip()
+    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
+    if amount is None:
+        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
+
+    sender = str(body.get("sender") or body.get("name") or body.get("from") or body.get("payer") or "").strip()
+    code = str(body.get("code") or body.get("comment") or body.get("payment_code") or body.get("provider_ref") or body.get("reference") or "").strip()
 
     if amount < MIN_TOPUP_RUB:
         return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
@@ -701,6 +746,86 @@ async def api_tbank_claim(req: web.Request):
 
     await notify_admin(f"💳 T-Bank заявка\nСумма: {amount}₽\nUser: {uid}\nCode: {code}\nSender: {sender}")
     return web.json_response({"ok": True})
+
+
+# -------------------------
+# Telegram Stars (Mini App -> API): create invoice link
+# -------------------------
+async def api_stars_link(req: web.Request):
+    """
+    Возвращает invoice_link для оплаты Stars из Mini App.
+    Фронт может вызвать Telegram.WebApp.openInvoice(invoice_link).
+    """
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    body = await safe_json(req)
+
+    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
+    if amount is None:
+        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
+    if amount < MIN_TOPUP_RUB:
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
+
+    stars = int(round(float(amount) / STARS_RUB_RATE))
+    if stars <= 0:
+        stars = 1
+
+    payload_ref = f"stars_topup:{uid}:{float(amount):.2f}:{int(_now().timestamp())}"
+
+    try:
+        await sb_insert(T_PAY, {
+            "user_id": uid,
+            "provider": "stars",
+            "status": "pending",
+            "amount_rub": float(amount),
+            "provider_ref": payload_ref,
+            "meta": {"stars": stars, "stars_rub_rate": STARS_RUB_RATE}
+        })
+    except Exception as e:
+        log.exception("DB insert payment(stars) failed: %s", e)
+        return web.json_response({"ok": False, "error": "Ошибка записи платежа"}, status=500)
+
+    prices = [LabeledPrice(label=f"Пополнение {float(amount):.0f} ₽", amount=stars)]
+
+    # Prefer invoice link (удобно для Mini App)
+    try:
+        invoice_link = None
+        if hasattr(bot, "create_invoice_link"):
+            invoice_link = await bot.create_invoice_link(
+                title="Пополнение баланса",
+                description=f"Пополнение баланса на {float(amount):.0f} ₽ (Telegram Stars)",
+                payload=payload_ref,
+                provider_token="",
+                currency="XTR",
+                prices=prices,
+            )
+        else:
+            # Fallback: отправим инвойс сообщением (платёж всё равно сработает)
+            await bot.send_invoice(
+                chat_id=uid,
+                title="Пополнение баланса",
+                description=f"Пополнение баланса на {float(amount):.0f} ₽ (Telegram Stars)",
+                payload=payload_ref,
+                provider_token="",
+                currency="XTR",
+                prices=prices,
+            )
+
+        return web.json_response({
+            "ok": True,
+            "amount_rub": float(amount),
+            "stars": stars,
+            "payload": payload_ref,
+            "invoice_link": invoice_link,
+        })
+    except Exception as e:
+        log.exception("create_invoice_link/send_invoice(XTR) failed: %s", e)
+        try:
+            await sb_update(T_PAY, {"provider": "stars", "provider_ref": payload_ref}, {"status": "failed"})
+        except Exception:
+            pass
+        return web.json_response({"ok": False, "error": "Не удалось создать инвойс Stars"}, status=500)
+
 
 # -------------------------
 # CryptoBot create invoice (optional)
@@ -1201,6 +1326,8 @@ def make_app():
     app.router.add_post("/api/withdraw/list", api_withdraw_list)
 
     app.router.add_post("/api/tbank/claim", api_tbank_claim)
+
+    app.router.add_post("/api/pay/stars/link", api_stars_link)
 
     app.router.add_post("/api/ops/list", api_ops_list)
 
