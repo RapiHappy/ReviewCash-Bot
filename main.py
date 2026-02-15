@@ -186,6 +186,8 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     Правильная проверка Telegram WebApp initData:
     secret_key = HMAC_SHA256(key="WebAppData", message=bot_token)
     check = HMAC_SHA256(secret_key, data_check_string)
+
+    data_check_string = строки "k=v" по алфавиту, соединённые через \n
     """
     if not init_data:
         return None
@@ -196,13 +198,16 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
         return None
 
     data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
-    data_check_string = "
-".join(data_check_arr)
+    data_check_string = "\n".join(data_check_arr)
 
-    # ✅ ВОТ ЭТО ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+    # ✅ секрет для Mini App
     secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
 
-    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    calc_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
     if not hmac.compare_digest(calc_hash, received_hash):
         return None
