@@ -1,17 +1,13 @@
-/* ReviewCash MiniApp — FULL WORKING main.js (for your backend 2026-02-15)
-   Compatible endpoints:
-   - POST /api/sync
-   - POST /api/task/create
-   - POST /api/task/submit
-   - POST /api/withdraw/create
-   - POST /api/withdraw/list
-   - POST /api/tbank/claim
-   - POST /api/pay/stars/link
-   - POST /api/ops/list
-   - POST /api/admin/summary
-   - POST /api/admin/proof/list, /api/admin/proof/decision
-   - POST /api/admin/withdraw/list, /api/admin/withdraw/decision
-   - POST /api/admin/tbank/list, /api/admin/tbank/decision
+/* ReviewCash MiniApp — FULL stable main.js
+   Works with:
+   - /api/sync
+   - /api/task/create
+   - /api/task/submit
+   - /api/tbank/claim
+   - /api/pay/stars/link   ✅ (openInvoice)
+   - /api/withdraw/create, /api/withdraw/list
+   - /api/ops/list
+   - /api/admin/summary, /api/admin/proof/*, /api/admin/withdraw/*, /api/admin/tbank/*
 */
 
 (function () {
@@ -27,11 +23,11 @@
       showAlert: function (msg) { alert(msg); },
       showConfirm: function (msg, cb) { var r = confirm(msg); if (cb) cb(r); },
       openTelegramLink: function (url) { window.open(url, "_blank"); },
-      openInvoice: function (url, cb) { window.open(url, "_blank"); if (cb) cb("opened"); },
+      openInvoice: function (_url, cb) { if (cb) cb("failed"); },
       sendData: function (data) { alert("DEV MODE: sendData\n\n" + data); },
       ready: function () {},
       initData: "",
-      initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode", photo_url: null } }
+      initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode" } }
     }
   };
 
@@ -45,6 +41,10 @@
   }
   function tgOpen(url) {
     try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
+  }
+
+  function sleep(ms) {
+    return new Promise(function (r) { setTimeout(r, ms); });
   }
 
   function isTelegramWebApp() {
@@ -72,16 +72,6 @@
     }
   }
 
-  function getStartParam() {
-    try {
-      // Telegram WebApp can provide start_param
-      var p = tg && tg.initDataUnsafe ? tg.initDataUnsafe.start_param : "";
-      return String(p || "").trim();
-    } catch (e) {
-      return "";
-    }
-  }
-
   // -----------------------------
   // DOM helpers
   // -----------------------------
@@ -91,32 +81,6 @@
   function setHidden(node, hidden) { if (node) node.classList.toggle("hidden", !!hidden); }
 
   // -----------------------------
-  // Money parser (matches backend parse_amount_rub behavior)
-  // -----------------------------
-  function parseMoney(v) {
-    if (v == null) return NaN;
-    if (typeof v === "number") return isFinite(v) ? v : NaN;
-
-    var s = String(v).trim();
-    if (!s) return NaN;
-
-    s = s.replace(/\u00a0|\xa0/g, "");
-    s = s.replace(/\s+/g, "");
-    s = s.replace(/₽/g, "");
-    s = s.replace(/RUB|rub|руб\.?/gi, "");
-    s = s.replace(",", ".");
-    s = s.replace(/[^0-9.\-]/g, "");
-
-    if ((s.match(/\./g) || []).length > 1) {
-      var parts = s.split(".");
-      s = parts.slice(0, -1).join("") + "." + parts[parts.length - 1];
-    }
-
-    var n = parseFloat(s);
-    return isFinite(n) ? n : NaN;
-  }
-
-  // -----------------------------
   // API base
   // -----------------------------
   function getApiBase() {
@@ -124,8 +88,6 @@
     var v = meta ? meta.getAttribute("content") : "";
     v = (v || "").trim().replace(/\/+$/, "");
     if (v) return v;
-
-    // same origin
     return window.location.origin.replace(/\/+$/, "");
   }
   var API = getApiBase();
@@ -140,36 +102,14 @@
     return v;
   }
 
-  function getDeviceId() {
-    // device_id must be NOT NULL in your DB, backend already falls back to device_hash,
-    // but we send it anyway.
-    var v = "";
-    try { v = localStorage.getItem("device_id"); } catch (e) {}
-    if (!v) {
-      v = getDeviceHash(); // stable
-      try { localStorage.setItem("device_id", v); } catch (e2) {}
-    }
-    return v;
-  }
-
   async function apiPost(path, data) {
-    var payload = Object.assign({}, data || {});
-    payload.device_hash = getDeviceHash();
-    payload.device_id = getDeviceId();
-
-    // pass referrer_id if exists in start_param and looks like digits
-    try {
-      var sp = getStartParam();
-      if (sp && /^\d+$/.test(sp) && payload.referrer_id == null) payload.referrer_id = parseInt(sp, 10);
-    } catch (e) {}
-
     var res = await fetch(API + path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Tg-InitData": tgInitData()
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(Object.assign({}, data || {}, { device_hash: getDeviceHash() }))
     });
 
     var text = "";
@@ -179,10 +119,9 @@
     try { j = text ? JSON.parse(text) : {}; } catch (e2) { j = {}; }
 
     if (!res.ok || j.ok === false) {
-      var msg = (j && j.error) ? j.error : (text && text.length < 300 ? text : ("HTTP " + res.status));
+      var msg = (j && j.error) ? j.error : (text && text.length < 200 ? text : ("HTTP " + res.status));
       var err = new Error(msg || ("HTTP " + res.status));
       err.status = res.status;
-      err.payload = j;
       throw err;
     }
     return j;
@@ -233,9 +172,8 @@
 
   var isLinkValid = false;
   var linkCheckTimer = null;
-  var selectedProofFile = null; // no upload endpoint yet
+  var selectedProofFile = null;
   var activeTaskId = null;
-  var tbankAmount = 0;
 
   // -----------------------------
   // UI: profile header
@@ -331,7 +269,7 @@
   }
 
   // -----------------------------
-  // Link validation
+  // Link validation in create form
   // -----------------------------
   function isValidLink(s) {
     s = (s || "").trim();
@@ -370,7 +308,7 @@
           statusEl.className = "input-status visible " + (ok ? "valid" : "invalid");
           statusEl.innerHTML = ok ? "✅ Ссылка корректна" : "❌ Некорректная ссылка";
         }
-      }, 400);
+      }, 500);
     });
   }
 
@@ -694,7 +632,6 @@
   }
 
   function renderReferrals() {
-    // no referral API in backend yet -> show 0
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "0";
     var invite = "t.me/ReviewCashBot?start=" + uid;
@@ -809,8 +746,7 @@
     if (!out) return;
 
     if (cur === "star") {
-      // creation with Stars disabled in your UI logic
-      var stars = Math.ceil(totalRub / 1.0);
+      var stars = Math.ceil(totalRub / 1.5);
       out.innerText = stars + " ⭐";
       out.style.color = "var(--accent-gold)";
     } else {
@@ -840,7 +776,7 @@
     if (!isLinkValid) return tgAlert("Укажите корректную ссылку и дождитесь проверки.");
 
     if (currency === "star") {
-      return tgAlert("Создание заданий за Stars выключено.\nStars используются для пополнения баланса.");
+      return tgAlert("Создание заданий за Stars пока выключено.\nStars используются для пополнения баланса.");
     }
 
     var pricePerItem = 0;
@@ -908,7 +844,7 @@
 
     id = String(id || "");
     if (owner === "me") {
-      return tgAlert("Это твоё задание.\nУдаление/остановка можно добавить позже отдельным эндпоинтом.");
+      return tgAlert("Это твоё задание.\nУдаление/остановка можно добавить отдельным эндпоинтом позже.");
     }
 
     var task = null;
@@ -975,17 +911,11 @@
     if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Проверка..."; }
 
     try {
-      var r = await apiPost("/api/task/submit", { task_id: String(taskId) });
-
+      await apiPost("/api/task/submit", { task_id: String(taskId) });
       await loadData();
       render();
       window.closeModal();
-
-      if (r && r.status === "paid") {
-        tgAlert("✅ Выполнено!\nНачислено: +" + (Number(r.earned || 0).toFixed(0)) + " ₽");
-      } else {
-        tgAlert("✅ Отправлено.\nСтатус: " + (r.status || "ok"));
-      }
+      tgAlert("✅ Проверка отправлена!\nЕсли бот видит подписку — начисление произойдёт сразу.");
     } catch (e) {
       if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Проверить выполнение"; }
       tgAlert("Ошибка проверки: " + (e && e.message ? e.message : "unknown"));
@@ -1045,9 +975,6 @@
     }
   };
 
-  // -----------------------------
-  // Referrals
-  // -----------------------------
   window.copyInviteLink = function () {
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "0";
@@ -1067,52 +994,46 @@
   };
 
   // -----------------------------
-  // Payments: Stars + TBank (WORKING with your backend)
+  // Payments: Stars + TBank
   // -----------------------------
   window.processPay = async function (method) {
-    var val = parseMoney(el("sum-input") ? el("sum-input").value : 0);
+    var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
 
     if (method === "pay_stars") {
       if (!ensureTelegramOrExplain()) return;
 
-      // Preferred: /api/pay/stars/link -> invoice_link -> openInvoice
+      // ✅ Новый путь: получаем invoice_link с сервера и открываем через openInvoice
       try {
         var r = await apiPost("/api/pay/stars/link", { amount_rub: val });
-        var url = r.invoice_link || r.invoice_url || r.url || r.link;
+        var link = r && r.invoice_link ? String(r.invoice_link) : "";
 
-        if (url) {
-          if (window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.openInvoice === "function") {
-            window.Telegram.WebApp.openInvoice(url, function (status) {
-              // Telegram returns: "paid" | "cancelled" | "failed" (and sometimes others)
-              if (status === "paid") {
-                tgAlert("✅ Оплачено! Обновляю баланс…");
-                setTimeout(function () {
-                  loadData().then(render).catch(function () {});
-                }, 700);
-              } else if (status && status !== "opened") {
-                tgAlert("Счёт закрыт: " + status);
-              }
-            });
-          } else {
-            window.open(url, "_blank");
-          }
-          return;
+        if (!link) {
+          return tgAlert("Не удалось получить инвойс Stars. Попробуй ещё раз.");
         }
 
-        // If invoice_link == null, backend sent invoice to chat as fallback
-        tgAlert("⭐ Инвойс Stars отправлен в чат с ботом.\nОткрой чат и оплати сообщение-инвойс.");
-        return;
-      } catch (e1) {
-        // fallback to sendData (bot will send invoice)
-      }
-
-      // Fallback: sendData -> bot handler sends invoice
-      try {
-        tg.sendData(JSON.stringify({ action: "pay_stars", amount_rub: val }));
-        tgAlert("⭐ Запрос отправлен. Инвойс придёт в чат с ботом — оплати его там.");
-      } catch (e2) {
-        tgAlert("Не удалось отправить данные в Telegram. Открой Mini App из бота.");
+        if (tg && typeof tg.openInvoice === "function") {
+          tg.openInvoice(link, async function (status) {
+            // status: "paid" | "cancelled" | "failed"
+            if (status === "paid") {
+              // даём серверу секунду получить successful_payment и обновить баланс
+              await sleep(900);
+              await loadData();
+              render();
+              tgAlert("✅ Оплата прошла! Баланс обновлён.");
+            } else if (status === "cancelled") {
+              tgAlert("Платёж отменён.");
+            } else {
+              tgAlert("Платёж не выполнен.");
+            }
+          });
+        } else {
+          // fallback: старый метод через sendData (инвойс придёт в чат)
+          tg.sendData(JSON.stringify({ action: "pay_stars", amount_rub: String(val) }));
+          tgAlert("⭐ Инвойс отправлен в чат с ботом. Оплати его там.");
+        }
+      } catch (e) {
+        tgAlert("Ошибка Stars: " + (e && e.message ? e.message : "unknown"));
       }
       return;
     }
@@ -1120,13 +1041,14 @@
     tgAlert("Неизвестный метод оплаты: " + method);
   };
 
+  var tbankAmount = 0;
+
   window.openTBankPay = function () {
-    var val = parseMoney(el("sum-input") ? el("sum-input").value : 0);
+    var val = Number(el("sum-input") ? (el("sum-input").value || 0) : 0);
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
 
     tbankAmount = val;
-
-    if (el("tb-amount-display")) el("tb-amount-display").innerText = String(Math.floor(val)) + " ₽";
+    if (el("tb-amount-display")) el("tb-amount-display").innerText = String(val) + " ₽";
 
     var u = getTgUser();
     var uId = (u && u.id) ? u.id : "TEST";
@@ -1158,18 +1080,18 @@
     if (!code) return tgAlert("Нет кода платежа");
 
     try {
-      await apiPost("/api/tbank/claim", { amount_rub: tbankAmount, sender: sender, code: code });
-      await loadData();
-      render();
+      await apiPost("/api/tbank/claim", { amount_rub: Number(tbankAmount), sender: sender, code: code });
       tgAlert("✅ Заявка на пополнение отправлена.\nАдминистратор подтвердит вручную.");
       window.closeModal();
+      await loadData();
+      render();
     } catch (e) {
       tgAlert("Ошибка T-Bank: " + (e && e.message ? e.message : "unknown"));
     }
   };
 
   // -----------------------------
-  // Withdrawals (WORKING with your backend)
+  // Withdrawals
   // -----------------------------
   window.requestWithdraw = async function () {
     if (!ensureTelegramOrExplain()) return;
@@ -1177,14 +1099,13 @@
     var details = (el("w-details") ? el("w-details").value : "").trim();
     var amountStr = (el("w-amount") ? el("w-amount").value : "").trim();
 
-    var amt = parseMoney(amountStr);
+    var amt = Number(amountStr);
     if (!details) return tgAlert("Укажи реквизиты");
     if (!isFinite(amt) || amt <= 0) return tgAlert("Некорректная сумма");
     if (amt < 300) return tgAlert("Минимальная сумма: 300 ₽");
 
     try {
       await apiPost("/api/withdraw/create", { amount_rub: amt, details: details });
-
       try {
         var w = await apiPost("/api/withdraw/list", {});
         state.withdrawals = w.withdrawals || [];
@@ -1434,7 +1355,7 @@
       if (e && e.status === 401) {
         tgAlert(
           "HTTP 401\n\n" +
-          "initData не прошёл проверку.\n\n" +
+          "Это значит: initData не прошёл проверку.\n\n" +
           "Проверь:\n" +
           "1) Mini App открыт кнопкой WebApp у ЭТОГО ЖЕ бота\n" +
           "2) BOT_TOKEN на сервере — от того же бота\n"
