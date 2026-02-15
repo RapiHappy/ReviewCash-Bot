@@ -1148,15 +1148,35 @@ def make_app():
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
     static_dir = base_dir / "public"
-    if static_dir.exists():
-        async def app_index(req: web.Request):
-            return web.FileResponse(static_dir / "index.html")
+    index_path = static_dir / "index.html"
 
-        app.router.add_get("/app", lambda req: web.HTTPFound("/app/"))
+    async def app_redirect(req: web.Request):
+        raise web.HTTPFound("/app/")
+
+    async def app_missing(req: web.Request):
+        raise web.HTTPNotFound(
+            text="Mini App files not found. Expected: public/index.html рядом с main.py"
+        )
+
+    if static_dir.exists() and static_dir.is_dir() and index_path.exists():
+        async def app_index(req: web.Request):
+            try:
+                return web.FileResponse(index_path)
+            except Exception as e:
+                log.exception("Failed to serve Mini App index.html: %s", e)
+                raise web.HTTPInternalServerError(text="Failed to serve Mini App index.html")
+
+        app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
+        # serve all static assets under /app/
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
-        log.warning("Static dir not found: %s", static_dir)
+        log.error(
+            "Miniapp not found. static_dir=%s exists=%s is_dir=%s index_exists=%s",
+            static_dir, static_dir.exists(), static_dir.is_dir(), index_path.exists()
+        )
+        app.router.add_get("/app", app_missing)
+        app.router.add_get("/app/", app_missing)
 
     # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
