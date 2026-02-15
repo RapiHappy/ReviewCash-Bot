@@ -226,32 +226,61 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
-async def anti_fraud_check_and_touch(user_id: int, device_hash: str, ip: str, user_agent: str):
+async def anti_fraud_check_and_touch(
+    user_id: int,
+    device_hash: str,
+    ip: str,
+    user_agent: str,
+    device_id: str | None = None,
+    device_name: str | None = None,
+):
+    # Если фронт не передал device_hash — просто пропускаем антифрод,
+    # чтобы приложение не падало.
     if not device_hash:
         return True, None
+
+    # В твоей БД user_devices.device_id = NOT NULL.
+    # Фронт может не присылать device_id — тогда используем device_hash как стабильный идентификатор.
+    did = (device_id or "").strip() or device_hash
+    dname = (device_name or "").strip() or f"dev_{did[:16]}"
 
     ip_hash = sha256_hex(ip or "")
     ua_hash = sha256_hex(user_agent or "")
 
-    await sb_upsert(T_DEV, {
-        "tg_user_id": user_id,
-        "device_hash": device_hash,
-        "last_seen_at": _now().isoformat(),
-        "ip_hash": ip_hash,
-        "user_agent_hash": ua_hash
-    }, on_conflict="tg_user_id,device_hash")
+    # ВАЖНО: не даём /api/sync падать из-за антифрода (любой сбой БД -> пропускаем проверку)
+    try:
+        await sb_upsert(
+            T_DEV,
+            {
+                "tg_user_id": user_id,
+                "device_id": did,          # ✅ FIX: not-null
+                "device_hash": device_hash,
+                "device_name": dname,
+                "last_seen_at": _now().isoformat(),
+                "ip_hash": ip_hash,
+                "user_agent_hash": ua_hash,
+            },
+            on_conflict="tg_user_id,device_hash",
+        )
+    except Exception as e:
+        log.warning("user_devices upsert failed (anti-fraud bypassed): %s", e)
+        return True, None
 
     # сколько уникальных tg_user_id на device_hash
-    def _f():
-        return sb.table(T_DEV).select("tg_user_id").eq("device_hash", device_hash).execute()
-    res = await sb_exec(_f)
-
-    users = {row["tg_user_id"] for row in (res.data or []) if "tg_user_id" in row}
+    try:
+        def _f():
+            return sb.table(T_DEV).select("tg_user_id").eq("device_hash", device_hash).execute()
+        res = await sb_exec(_f)
+        users = {row["tg_user_id"] for row in (res.data or []) if "tg_user_id" in row}
+    except Exception as e:
+        log.warning("user_devices select failed (anti-fraud bypassed): %s", e)
+        return True, None
 
     if len(users) > MAX_ACCOUNTS_PER_DEVICE:
         await sb_update(T_USERS, {"user_id": user_id}, {"is_banned": True})
         return False, f"Слишком много аккаунтов на одном устройстве ({len(users)})."
     return True, None
+
 
 # -------------------------
 # users/balances
@@ -414,6 +443,8 @@ async def api_sync(req: web.Request):
 
     uid = int(user["id"])
     device_hash = str(body.get("device_hash") or "").strip()
+    device_id = str(body.get("device_id") or "").strip()
+    device_name = str(body.get("device_name") or body.get("device_label") or "").strip()
     ua = req.headers.get("User-Agent", "")
     ip = get_ip(req)
 
@@ -426,7 +457,7 @@ async def api_sync(req: web.Request):
 
     urow = await ensure_user(user, referrer_id=ref)
 
-    ok, reason = await anti_fraud_check_and_touch(uid, device_hash, ip, ua)
+    ok, reason = await anti_fraud_check_and_touch(uid, device_hash, ip, ua, device_id=device_id, device_name=device_name)
     if not ok:
         return web.json_response({"ok": False, "error": reason}, status=403)
 
@@ -1148,35 +1179,15 @@ def make_app():
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
     static_dir = base_dir / "public"
-    index_path = static_dir / "index.html"
-
-    async def app_redirect(req: web.Request):
-        raise web.HTTPFound("/app/")
-
-    async def app_missing(req: web.Request):
-        raise web.HTTPNotFound(
-            text="Mini App files not found. Expected: public/index.html рядом с main.py"
-        )
-
-    if static_dir.exists() and static_dir.is_dir() and index_path.exists():
+    if static_dir.exists():
         async def app_index(req: web.Request):
-            try:
-                return web.FileResponse(index_path)
-            except Exception as e:
-                log.exception("Failed to serve Mini App index.html: %s", e)
-                raise web.HTTPInternalServerError(text="Failed to serve Mini App index.html")
+            return web.FileResponse(static_dir / "index.html")
 
-        app.router.add_get("/app", app_redirect)
+        app.router.add_get("/app", lambda req: web.HTTPFound("/app/"))
         app.router.add_get("/app/", app_index)
-        # serve all static assets under /app/
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
-        log.error(
-            "Miniapp not found. static_dir=%s exists=%s is_dir=%s index_exists=%s",
-            static_dir, static_dir.exists(), static_dir.is_dir(), index_path.exists()
-        )
-        app.router.add_get("/app", app_missing)
-        app.router.add_get("/app/", app_missing)
+        log.warning("Static dir not found: %s", static_dir)
 
     # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
