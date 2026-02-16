@@ -55,6 +55,11 @@
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <!-- Fallback visibility fix: prevents "black screen" if CSS animation hides sections -->
+  <style>
+    .app-container section { display:block; visibility:visible; opacity:1; transform:none; }
+    .app-container section.hidden { display:none !important; }
+  </style>
 </head>
 
 <body>
