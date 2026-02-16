@@ -3,25 +3,19 @@
 <head>
   <meta charset="utf-8" />
 
-  <!-- Пусто = API на этом же домене (где /app/) -->
+  <!-- Оставляем пустым: тогда API = текущий домен (тот же, где /app/) -->
   <meta name="api-base" content="" />
 
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
   <title>ReviewCash</title>
 
-  <!-- чтобы браузер не запрашивал /favicon.ico -->
+  <!-- FIX: чтобы браузер не запрашивал /favicon.ico -->
   <link rel="icon" href="data:,">
 
   <script>
     (function () {
       function box() { return document.getElementById("global-error-box"); }
       function hideLoader() { var l = document.getElementById("loader"); if (l) l.style.display = "none"; }
-      function showApp() {
-        try {
-          var cont = document.querySelector(".app-container");
-          if (cont) cont.classList.add("anim-active");
-        } catch (e) {}
-      }
 
       window.__showError = function (msg, err) {
         try {
@@ -32,7 +26,6 @@
           }
         } catch (e) {}
         hideLoader();
-        showApp();
         try { console.error(msg, err); } catch (e2) {}
       };
 
@@ -41,14 +34,13 @@
         var tag = t && t.tagName ? String(t.tagName).toUpperCase() : "";
         var url = t && (t.src || t.href);
 
-        // не ругаемся на картинки/шрифты/фавикон
+        // FIX: не показываем красную плашку из-за картинок/шрифтов/фавикона
         if (url) {
           var u = String(url);
           if (tag === "IMG") return;
           if (/fonts\.googleapis\.com|fonts\.gstatic\.com/i.test(u)) return;
           if (/\/favicon\.ico(\?|$)/i.test(u)) return;
-          window.__showError("Не удалось загрузить ресурс: " + u);
-          return;
+          return window.__showError("Не удалось загрузить ресурс: " + u);
         }
 
         window.__showError("Ошибка: " + (event.message || "Unknown error"), event.error);
@@ -66,10 +58,7 @@
 </head>
 
 <body>
-  <div id="global-error-box"
-       style="display:none; position:fixed; top:0; left:0; right:0; background:rgba(255,0,0,0.92);
-              color:#fff; padding:12px 14px; font-size:12px; z-index:99999; white-space:pre-wrap; word-break:break-word;">
-  </div>
+  <div id="global-error-box" style="display:none; position:fixed; top:0; left:0; right:0; background:rgba(255,0,0,0.92); color:#fff; padding:12px 14px; font-size:12px; z-index:99999; white-space:pre-wrap; word-break:break-word;"></div>
 
   <div id="loader" class="loader-overlay">
     <div class="spinner"></div>
@@ -83,16 +72,12 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
-            <!-- src НЕ пустой, иначе браузер грузит /app/ как картинку -->
-            <img id="header-avatar"
-                 src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-                 style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;"
-                 alt="Avatar" />
+            <!-- FIX: src не должен быть пустым, иначе браузер пытается загрузить /app/ как картинку -->
+            <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;" alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
           <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
         </div>
-
         <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
           <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
@@ -135,9 +120,10 @@
       <div class="card">
         <div class="profile-header">
           <div class="avatar-ring">
-            <img class="avatar-img" id="u-pic"
-                 src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-                 alt="Avatar" />
+            <!-- FIX: src не пустой -->
+            <img class="avatar-img" id="u-pic" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Avatar">
+            src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+                 alt="Avatar">
             <div class="level-badge" id="u-lvl-badge">LVL 1</div>
           </div>
           <div class="balance-stack">
@@ -218,7 +204,7 @@
         <label class="input-label">Тип задания Telegram</label>
         <select id="t-tg-subtype" onchange="recalc()"></select>
         <div style="font-size:11px; color:var(--text-dim); margin:5px 0 0 5px;" id="tg-subtype-desc">
-          Исполнитель получит выплату, указанную в карточке задания
+          Исполнитель получит ~50% от стоимости
         </div>
       </div>
 
@@ -279,8 +265,7 @@
           <span id="td-link" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85%; font-size:13px; color:var(--accent-cyan);">https://...</span>
           <span>🔗</span>
         </div>
-        <a id="td-link-btn" href="#" target="_blank" class="btn btn-secondary"
-           style="width:100%; margin-top:10px; padding:10px; font-size:13px;">↗️ Перейти к выполнению</a>
+        <a id="td-link-btn" href="#" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; font-size:13px;">↗️ Перейти к выполнению</a>
       </div>
 
       <div class="detail-block">
@@ -291,10 +276,9 @@
       <div id="td-proof-area" style="margin-top:25px; border-top:1px solid var(--glass-border); padding-top:20px;">
         <div id="proof-manual" class="hidden">
           <h3 style="margin:0 0 10px; font-size:16px;">📸 Отчет о выполнении</h3>
-          <label class="input-label">Ваш Никнейм / Имя</label>
-          <input type="text" id="p-username" placeholder="Пример: Alex99">
-
-          <label class="input-label">Скриншот доказательства (обязательно)</label>
+          <label class="input-label">Имя/ник в отзыве (как отображается)</label>
+          <input type="text" id="p-username" placeholder="Например: Я.К.">
+          <label class="input-label">Скриншот доказательства</label>
           <div class="file-upload-btn" onclick="document.getElementById('p-file').click()">
             <span id="p-filename">📷 Прикрепить скриншот</span>
           </div>
@@ -382,8 +366,7 @@
       </div>
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по ссылке, указав код в комментарии:</p>
-      <a href="https://www.tinkoff.ru/rm/r_TfPtbPbddX.PiDdKULdka/kkRwB91205" target="_blank"
-         class="btn btn-secondary" style="width:100%; text-decoration:none; margin-bottom:20px; justify-content:center;">🔗 Открыть Т-Банк</a>
+      <a href="https://www.tinkoff.ru/rm/r_TfPtbPbddX.PiDdKULdka/kkRwB91205" target="_blank" class="btn btn-secondary" style="width:100%; text-decoration:none; margin-bottom:20px; justify-content:center;">🔗 Открыть Т-Банк</a>
 
       <p style="font-size:13px; color:var(--text-dim); margin-bottom:5px;">3. Ваше имя (отправителя):</p>
       <input type="text" id="tb-sender" placeholder="Например: Иван И." style="margin-top:0;">
@@ -407,6 +390,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=full_20260216_fix" defer></script>
+  <script src="main.js?v=fix_20260216" defer></script>
 </body>
 </html>
