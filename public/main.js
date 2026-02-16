@@ -1,10 +1,11 @@
-/* ReviewCash MiniApp — FULL stable main.js
+/* ReviewCash MiniApp — FULL stable main.js (proof upload + mandatory image + admin shows target link + proof image + stars invoice link)
    Works with:
    - /api/sync
    - /api/task/create
    - /api/task/submit
+   - /api/proof/upload   ✅ NEW
+   - /api/pay/stars/link ✅ Stars invoice link
    - /api/tbank/claim
-   - /api/pay/stars/link   ✅ (openInvoice)
    - /api/withdraw/create, /api/withdraw/list
    - /api/ops/list
    - /api/admin/summary, /api/admin/proof/*, /api/admin/withdraw/*, /api/admin/tbank/*
@@ -23,9 +24,9 @@
       showAlert: function (msg) { alert(msg); },
       showConfirm: function (msg, cb) { var r = confirm(msg); if (cb) cb(r); },
       openTelegramLink: function (url) { window.open(url, "_blank"); },
-      openInvoice: function (_url, cb) { if (cb) cb("failed"); },
       sendData: function (data) { alert("DEV MODE: sendData\n\n" + data); },
       ready: function () {},
+      openInvoice: function (url, cb) { window.open(url, "_blank"); if (cb) cb("unknown"); },
       initData: "",
       initDataUnsafe: { user: { id: 123456, username: "dev_user", first_name: "Dev", last_name: "Mode" } }
     }
@@ -41,10 +42,6 @@
   }
   function tgOpen(url) {
     try { tg.openTelegramLink(url); } catch (e) { window.open(url, "_blank"); }
-  }
-
-  function sleep(ms) {
-    return new Promise(function (r) { setTimeout(r, ms); });
   }
 
   function isTelegramWebApp() {
@@ -127,6 +124,34 @@
     return j;
   }
 
+  async function apiUploadProof(file) {
+    if (!file) throw new Error("Нет файла");
+    var fd = new FormData();
+    fd.append("file", file, file.name || "proof.png");
+
+    var res = await fetch(API + "/api/proof/upload", {
+      method: "POST",
+      headers: { "X-Tg-InitData": tgInitData() },
+      body: fd
+    });
+
+    var text = "";
+    try { text = await res.text(); } catch (e) { text = ""; }
+
+    var j = {};
+    try { j = text ? JSON.parse(text) : {}; } catch (e2) { j = {}; }
+
+    if (!res.ok || j.ok === false) {
+      var msg = (j && j.error) ? j.error : (text && text.length < 200 ? text : ("HTTP " + res.status));
+      var err = new Error(msg || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
+    }
+
+    if (!j.url) throw new Error("Upload ok, but no url");
+    return j.url;
+  }
+
   function ensureTelegramOrExplain() {
     if (isTelegramWebApp()) return true;
     tgAlert("Открой Mini App через кнопку WebApp в Telegram у ЭТОГО же бота.\n\nЕсли открыть ссылку напрямую — initData пустой и сервер вернёт 401.");
@@ -165,6 +190,7 @@
     tasks: [],
     withdrawals: [],
     ops: [],
+    referrals: { count: 0, earned_rub: 0 }, // если сервер не отдаёт — будет 0
     admin_proofs: [],
     admin_withdrawals: [],
     admin_tbank: []
@@ -193,7 +219,6 @@
       if (user.username) displayName = "@" + user.username;
       else if (user.first_name || user.last_name) displayName = (user.first_name || "") + " " + (user.last_name || "");
       else displayName = "Пользователь";
-
       seed = user.first_name || user.username || "U";
     }
 
@@ -220,8 +245,7 @@
 
   function applyAdminUI() {
     var adminPanel = el("admin-panel-card");
-    if (!adminPanel) return;
-    adminPanel.style.display = state.is_admin ? "block" : "none";
+    if (adminPanel) adminPanel.style.display = state.is_admin ? "block" : "none";
 
     var badge = el("admin-badge");
     if (badge) {
@@ -249,9 +273,7 @@
       window.recalc();
     }
 
-    if (id === "m-withdraw") {
-      renderWithdrawals();
-    }
+    if (id === "m-withdraw") renderWithdrawals();
   };
 
   window.closeModal = function () {
@@ -383,6 +405,13 @@
       state.ops = state.ops || [];
     }
 
+    // referrals (если есть эндпоинт — ок, если нет — просто нули)
+    try {
+      var ref = await apiPost("/api/referrals", {});
+      if (ref && ref.ok) state.referrals = { count: Number(ref.count || 0), earned_rub: Number(ref.earned_rub || 0) };
+    } catch (eR) {}
+
+    // admin summary
     try {
       var s = await apiPost("/api/admin/summary", {});
       if (s && s.ok && s.counts) {
@@ -639,8 +668,8 @@
     var linkEl = el("invite-link");
     if (linkEl) linkEl.innerText = invite;
 
-    if (el("ref-count")) el("ref-count").innerText = "0";
-    if (el("ref-earn")) el("ref-earn").innerText = "0 ₽";
+    if (el("ref-count")) el("ref-count").innerText = String(state.referrals.count || 0);
+    if (el("ref-earn")) el("ref-earn").innerText = (Number(state.referrals.earned_rub || 0)).toFixed(0) + " ₽";
   }
 
   function render() {
@@ -882,7 +911,7 @@
 
     if (el("p-username")) el("p-username").value = "";
     if (el("p-file")) el("p-file").value = "";
-    if (el("p-filename")) { el("p-filename").innerText = "📷 Прикрепить скриншот"; el("p-filename").style.color = "var(--accent-cyan)"; }
+    if (el("p-filename")) { el("p-filename").innerText = "📷 Прикрепить скриншот (обязательно)"; el("p-filename").style.color = "var(--accent-cyan)"; }
     selectedProofFile = null;
 
     var actionBtn = el("td-action-btn");
@@ -928,14 +957,20 @@
     var uname = (el("p-username") ? el("p-username").value : "").trim();
     if (!uname) return tgAlert("Укажите ваше имя/никнейм.");
 
+    // ✅ ОБЯЗАТЕЛЬНО: скрин
+    if (!selectedProofFile) return tgAlert("Нужно прикрепить скриншот доказательства.");
+
     var btn = el("td-action-btn");
-    if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Отправка..."; }
+    if (btn) { btn.disabled = true; btn.innerHTML = "⏳ Загрузка скрина..."; }
 
     try {
+      var proofUrl = await apiUploadProof(selectedProofFile);
+
+      if (btn) btn.innerHTML = "⏳ Отправка отчёта...";
       await apiPost("/api/task/submit", {
         task_id: String(taskId),
         proof_text: uname,
-        proof_url: ""
+        proof_url: proofUrl
       });
 
       await loadData();
@@ -955,7 +990,7 @@
         var name = input.files[0].name || "file";
         var pfn = el("p-filename");
         if (pfn) {
-          pfn.innerText = "📄 " + (name.length > 20 ? name.substr(0, 18) + "..." : name);
+          pfn.innerText = "📄 " + (name.length > 24 ? name.substr(0, 22) + "..." : name);
           pfn.style.color = "var(--text-main)";
         }
       }
@@ -975,6 +1010,9 @@
     }
   };
 
+  // -----------------------------
+  // Referrals
+  // -----------------------------
   window.copyInviteLink = function () {
     var u = getTgUser();
     var uid = (u && u.id) ? u.id : "0";
@@ -1003,37 +1041,23 @@
     if (method === "pay_stars") {
       if (!ensureTelegramOrExplain()) return;
 
-      // ✅ Новый путь: получаем invoice_link с сервера и открываем через openInvoice
       try {
         var r = await apiPost("/api/pay/stars/link", { amount_rub: val });
-        var link = r && r.invoice_link ? String(r.invoice_link) : "";
-
-        if (!link) {
-          return tgAlert("Не удалось получить инвойс Stars. Попробуй ещё раз.");
+        if (r && r.invoice_link) {
+          if (tg && typeof tg.openInvoice === "function") {
+            tg.openInvoice(r.invoice_link, function (_status) {
+              // после закрытия инвойса просто обновим данные
+              loadData().then(render).catch(function(){});
+            });
+          } else {
+            tgOpen(r.invoice_link);
+          }
+          return;
         }
 
-        if (tg && typeof tg.openInvoice === "function") {
-          tg.openInvoice(link, async function (status) {
-            // status: "paid" | "cancelled" | "failed"
-            if (status === "paid") {
-              // даём серверу секунду получить successful_payment и обновить баланс
-              await sleep(900);
-              await loadData();
-              render();
-              tgAlert("✅ Оплата прошла! Баланс обновлён.");
-            } else if (status === "cancelled") {
-              tgAlert("Платёж отменён.");
-            } else {
-              tgAlert("Платёж не выполнен.");
-            }
-          });
-        } else {
-          // fallback: старый метод через sendData (инвойс придёт в чат)
-          tg.sendData(JSON.stringify({ action: "pay_stars", amount_rub: String(val) }));
-          tgAlert("⭐ Инвойс отправлен в чат с ботом. Оплати его там.");
-        }
+        tgAlert("Инвойс Stars отправлен в чат с ботом. Оплати сообщение-инвойс.");
       } catch (e) {
-        tgAlert("Ошибка Stars: " + (e && e.message ? e.message : "unknown"));
+        tgAlert("Stars ошибка: " + (e && e.message ? e.message : "unknown"));
       }
       return;
     }
@@ -1048,6 +1072,7 @@
     if (!isFinite(val) || val < 300) return tgAlert("Минимальная сумма пополнения — 300 ₽");
 
     tbankAmount = val;
+
     if (el("tb-amount-display")) el("tb-amount-display").innerText = String(val) + " ₽";
 
     var u = getTgUser();
@@ -1083,8 +1108,6 @@
       await apiPost("/api/tbank/claim", { amount_rub: Number(tbankAmount), sender: sender, code: code });
       tgAlert("✅ Заявка на пополнение отправлена.\nАдминистратор подтвердит вручную.");
       window.closeModal();
-      await loadData();
-      render();
     } catch (e) {
       tgAlert("Ошибка T-Bank: " + (e && e.message ? e.message : "unknown"));
     }
@@ -1110,7 +1133,6 @@
         var w = await apiPost("/api/withdraw/list", {});
         state.withdrawals = w.withdrawals || [];
       } catch (e2) {}
-
       await loadData();
       render();
       renderWithdrawals();
@@ -1126,7 +1148,6 @@
   window.openAdminPanel = async function () {
     if (!ensureTelegramOrExplain()) return;
     if (!state.is_admin) return tgAlert("Нет прав администратора.");
-
     await refreshAdminLists();
     window.openModal("m-admin");
   };
@@ -1209,12 +1230,25 @@
 
     state.admin_proofs.forEach(function (p) {
       var task = p.task || {};
+      var target = task.target_url || "";
+      var proofUrl = p.proof_url || "";
+
+      var targetHtml = target
+        ? ('<a href="' + target + '" target="_blank" style="color:var(--accent-cyan); text-decoration:none;">Открыть объект</a>')
+        : "—";
+
+      var imgHtml = proofUrl
+        ? ('<a href="' + proofUrl + '" target="_blank"><img src="' + proofUrl + '" style="margin-top:8px; width:100%; max-width:220px; border-radius:12px; border:1px solid var(--glass-border); object-fit:cover;"></a>')
+        : '<div style="margin-top:8px; opacity:0.7;">(нет скрина)</div>';
+
       var title = "Отчёт #" + p.id;
       var subtitle =
         "Task: " + (task.title || p.task_id) + "<br>" +
+        "Ссылка объекта: " + targetHtml + "<br>" +
         "User: " + p.user_id + "<br>" +
-        "Proof: " + (p.proof_text || "—") + "<br>" +
-        "Дата: " + fmtDate(p.created_at);
+        "Ник/текст: " + (p.proof_text || "—") + "<br>" +
+        "Дата: " + fmtDate(p.created_at) +
+        imgHtml;
 
       var right =
         '<button class="btn btn-main" style="padding:8px 10px; font-size:12px; margin-bottom:8px;" data-a="ok">✅ Принять</button>' +
