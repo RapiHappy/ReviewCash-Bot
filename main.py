@@ -1425,7 +1425,8 @@ async def tg_webhook(req: web.Request):
     return web.Response(text="OK")
 
 def make_app():
-    app = web.Application(middlewares=[cors_middleware])
+    # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
+    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
 
