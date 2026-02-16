@@ -166,9 +166,27 @@
   }
 
   function showSection(id) {
-    qsa(".app-container > section").forEach(sec => sec.classList.add("hidden"));
+    // Robust visibility: do not rely on CSS animation classes (some builds hide sections by default)
+    const secs = qsa(".app-container section");
+    secs.forEach(sec => {
+      sec.classList.add("hidden");
+      sec.classList.remove("active");
+      sec.style.setProperty("display","none","important");
+      sec.style.setProperty("visibility","hidden","important");
+      sec.style.setProperty("opacity","0","important");
+      sec.style.setProperty("transform","none","important");
+    });
+
     const el = $("view-" + id);
-    if (el) el.classList.remove("hidden");
+    if (el) {
+      el.classList.remove("hidden");
+      el.classList.add("active");
+      el.style.setProperty("display","block","important");
+      el.style.setProperty("visibility","visible","important");
+      el.style.setProperty("opacity","1","important");
+      el.style.setProperty("transform","none","important");
+    }
+
     try { setActiveTab(id); } catch (e) {}
   }
 
@@ -189,9 +207,19 @@
     // Defensive: never let the app become an empty black screen
     try {
       const app = qs(".app-container");
-      if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
+      if (app) {
+        app.style.setProperty("display","block","important");
+        app.style.setProperty("visibility","visible","important");
+        app.style.setProperty("opacity","1","important");
+      }
       const vt = $("view-tasks");
-      if (vt) vt.classList.remove("hidden");
+      if (vt) {
+        vt.classList.remove("hidden");
+        vt.style.setProperty("display","block","important");
+        vt.style.setProperty("visibility","visible","important");
+        vt.style.setProperty("opacity","1","important");
+        vt.style.setProperty("transform","none","important");
+      }
     } catch (e) {}
   }
 
