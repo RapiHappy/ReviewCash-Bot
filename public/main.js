@@ -28,8 +28,8 @@
   // DOM helpers
   // --------------------
   const $ = (id) => document.getElementById(id);
-  const qs = (sel, root = document) => root.querySelector(sel);
-  const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const qs = (sel, root = document) => (root || document).querySelector(sel);
+  const qsa = (sel, root = document) => Array.from((root || document).querySelectorAll(sel));
 
   // --------------------
   // Telegram WebApp
@@ -169,7 +169,7 @@
     qsa(".app-container > section").forEach(sec => sec.classList.add("hidden"));
     const el = $("view-" + id);
     if (el) el.classList.remove("hidden");
-    setActiveTab(id);
+    try { setActiveTab(id); } catch (e) {}
   }
 
   function openOverlay(id) {
@@ -182,6 +182,17 @@
   function closeAllOverlays() {
     qsa(".overlay").forEach(el => { el.style.display = "none"; });
     document.body.style.overflow = "";
+  }
+
+
+  function forceInitialView() {
+    // Defensive: never let the app become an empty black screen
+    try {
+      const app = qs(".app-container");
+      if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
+      const vt = $("view-tasks");
+      if (vt) vt.classList.remove("hidden");
+    } catch (e) {}
   }
 
   // Make closeModal global (HTML uses it)
@@ -238,6 +249,7 @@
     renderTasks();
     await refreshWithdrawals();
     await refreshOpsSilent();
+    await refreshReferrals();
     await checkAdmin();
   }
 
@@ -295,7 +307,26 @@
     state._inviteLink = link;
   }
 
+  
   // --------------------
+  // Referrals (Friends view)
+  // --------------------
+  async function refreshReferrals() {
+    try {
+      const res = await apiPost("/api/referrals", {});
+      if (res && res.ok) {
+        const count = Number(res.count || 0);
+        const earned = Number(res.earned_rub || 0);
+        const elC = $("ref-count");
+        const elE = $("ref-earn");
+        if (elC) elC.textContent = String(count);
+        if (elE) elE.textContent = fmtRub(earned).replace(" ₽", " ₽");
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+// --------------------
   // Tasks
   // --------------------
   function setFilter(f) {
@@ -942,10 +973,12 @@
         state.isAdmin = true;
         state.adminCounts = res.counts || state.adminCounts;
         renderAdminBadge();
-        $("admin-panel-card").style.display = "block";
+        const apc = $("admin-panel-card");
+        if (apc) apc.style.display = "block";
       } else {
         state.isAdmin = false;
-        $("admin-panel-card").style.display = "none";
+        const apc2 = $("admin-panel-card");
+        if (apc2) apc2.style.display = "none";
       }
     } catch (e) {
       state.isAdmin = false;
@@ -973,9 +1006,12 @@
     const t = $("at-" + tab);
     if (t) t.classList.add("active");
 
-    $("admin-view-proofs").classList.toggle("hidden", tab !== "proofs");
-    $("admin-view-withdrawals").classList.toggle("hidden", tab !== "withdrawals");
-    $("admin-view-tbank").classList.toggle("hidden", tab !== "tbank");
+    const avp = $("admin-view-proofs");
+    const avw = $("admin-view-withdrawals");
+    const avt = $("admin-view-tbank");
+    if (avp) avp.classList.toggle("hidden", tab !== "proofs");
+    if (avw) avw.classList.toggle("hidden", tab !== "withdrawals");
+    if (avt) avt.classList.toggle("hidden", tab !== "tbank");
 
     if (tab === "proofs") await loadAdminProofs();
     if (tab === "withdrawals") await loadAdminWithdrawals();
@@ -1135,6 +1171,7 @@
   async function bootstrap() {
     state.api = getApiBase();
     initDeviceHash();
+    forceInitialView();
 
     if (tg) {
       try {
