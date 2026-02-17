@@ -458,6 +458,30 @@ async def touch_limit(uid: int, key: str):
         on_conflict="user_id,limit_key"
     )
 
+
+# -------------------------
+# user notifications (mute/unmute) via user_limits
+# -------------------------
+MUTE_NOTIFY_KEY = "mute_notify"
+
+async def is_notify_muted(uid: int) -> bool:
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY}, limit=1)
+        return bool(r.data)
+    except Exception:
+        return False
+
+async def set_notify_muted(uid: int, muted: bool):
+    if muted:
+        await sb_upsert(
+            T_LIMITS,
+            {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY, "last_at": _now().isoformat()},
+            on_conflict="user_id,limit_key"
+        )
+    else:
+        await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY})
+
+
 # -------------------------
 # Telegram auto-check: member status
 # -------------------------
@@ -480,7 +504,13 @@ async def notify_admin(text: str):
         except Exception:
             pass
 
-async def notify_user(uid: int, text: str):
+async def notify_user(uid: int, text: str, force: bool = False):
+    if not force:
+        try:
+            if await is_notify_muted(uid):
+                return
+        except Exception:
+            pass
     try:
         await bot.send_message(uid, text)
     except Exception:
@@ -1299,6 +1329,9 @@ async def cmd_start(message: Message):
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
 
+    muted = await is_notify_muted(uid)
+
+    kb.button(text=("🔕 Уведомления: ВЫКЛ" if muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
     kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
 
     text = (
@@ -1312,6 +1345,7 @@ async def cmd_start(message: Message):
         f"🎁 Рефералка: бонус {REF_BONUS_RUB:.0f}₽ за друга, когда он выполнит первое задание.\n"
         "⚡ TG задания проверяются автоматически, если бот добавлен в чат и может проверять участников.\n"
     )
+    kb.adjust(1)
     await message.answer(text, reply_markup=kb.as_markup())
 
 @dp.callback_query(F.data == "help_newbie")
@@ -1324,6 +1358,46 @@ async def cb_help(cq: CallbackQuery):
         "• Отзывы — прикрепи скрин и отправь на модерацию\n"
         "• В профиле можно пополнить и вывести\n"
     )
+@dp.callback_query(F.data == "toggle_notify")
+async def cb_toggle_notify(cq: CallbackQuery):
+    uid = cq.from_user.id
+    muted = await is_notify_muted(uid)
+    new_muted = not muted
+    await set_notify_muted(uid, new_muted)
+
+    try:
+        kb = InlineKeyboardBuilder()
+
+        miniapp_url = MINIAPP_URL
+        if not miniapp_url:
+            base = SERVER_BASE_URL or BASE_URL
+            if base:
+                miniapp_url = base.rstrip("/") + "/app/"
+
+        if miniapp_url:
+            kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
+        kb.button(text=("🔕 Уведомления: ВЫКЛ" if new_muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
+        kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
+        kb.adjust(1)
+
+        await cq.message.edit_reply_markup(reply_markup=kb.as_markup())
+    except Exception:
+        pass
+
+    await cq.answer("Уведомления выключены 🔕" if new_muted else "Уведомления включены 🔔", show_alert=False)
+
+    # Confirm in chat (force=true so it always arrives)
+    await notify_user(uid, ("🔕 Уведомления отключены. Чтобы включить — нажми кнопку ещё раз." if new_muted
+                            else "🔔 Уведомления включены."), force=True)
+
+@dp.message(Command("notify"))
+async def cmd_notify(message: Message):
+    uid = message.from_user.id
+    muted = await is_notify_muted(uid)
+    new_muted = not muted
+    await set_notify_muted(uid, new_muted)
+    await message.answer("🔕 Уведомления отключены." if new_muted else "🔔 Уведомления включены.")
+
 
 @dp.message(Command("me"))
 async def cmd_me(message: Message):
