@@ -32,14 +32,99 @@
   const qsa = (sel, root = document) => Array.from((root || document).querySelectorAll(sel));
 
   // --------------------
+  // Small helpers
+  // --------------------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // --------------------
+  // Toasts (pretty messages)
+  // --------------------
+  function toast(kind, title, msg, ttlMs) {
+    const root = $("toast-root");
+    if (!root) return;
+
+    const k = (kind === "success" || kind === "error" || kind === "info") ? kind : "info";
+    const safe = (s) => String(s || "");
+
+    const icon = (function () {
+      if (k === "success") return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+      if (k === "error") return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
+    })();
+
+    const el = document.createElement("div");
+    el.className = `toast ${k}`;
+    el.innerHTML = `
+      <div class="toast-ico">${icon}</div>
+      <div class="toast-body">
+        <div class="toast-title">${safe(title || (k === "error" ? "Ошибка" : (k === "success" ? "Готово" : "Сообщение")))}</div>
+        <div class="toast-msg">${safe(msg)}</div>
+      </div>
+      <div class="toast-close" aria-label="Close">✕</div>
+    `;
+
+    const remove = () => {
+      try { el.classList.remove("show"); } catch (e) {}
+      setTimeout(() => { try { el.remove(); } catch (e2) {} }, 200);
+    };
+    el.querySelector(".toast-close").onclick = remove;
+
+    root.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("show"));
+
+    const ttl = Number.isFinite(ttlMs) ? ttlMs : (k === "error" ? 6500 : 3500);
+    setTimeout(remove, ttl);
+  }
+  window.__rcToast = toast;
+
+  // --------------------
+  // Loader (entry animation)
+  // --------------------
+  function setLoaderText(text) {
+    const sub = $("loader-sub");
+    if (sub) sub.textContent = String(text || "");
+  }
+
+  function showLoader(text) {
+    const l = $("loader");
+    if (!l) return;
+    if (text) setLoaderText(text);
+    l.style.display = "flex";
+    l.classList.remove("hide");
+  }
+
+  function hideLoader() {
+    const l = $("loader");
+    if (!l) return;
+    l.classList.add("hide");
+    setTimeout(() => { try { l.style.display = "none"; } catch (e) {} }, 260);
+  }
+  window.__rcHideLoader = hideLoader;
+
+  // --------------------
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
   function tgAlert(msg) {
+    const s = String(msg || "");
+    // Auto-detect kind
+    let kind = "info";
+    if (/^\d{3}:/i.test(s) || /\bPOST\b|\bGET\b|ошиб|error|fail|лимит|not found|forbidden|unauthorized/i.test(s)) kind = "error";
+    if (/✅|готово|успеш|начислено|сохранено|скопировано/i.test(s)) kind = "success";
+
+    // Prefer pretty toast
     try {
-      if (tg && tg.showAlert) return tg.showAlert(String(msg));
+      if (window.__rcToast && document.getElementById("toast-root")) {
+        window.__rcToast(kind, kind === "error" ? "Ошибка" : (kind === "success" ? "Готово" : "Сообщение"), s);
+        return;
+      }
     } catch (e) {}
-    alert(String(msg));
+
+    // Fallback to Telegram alert
+    try {
+      if (tg && tg.showAlert) return tg.showAlert(s);
+    } catch (e2) {}
+    alert(s);
   }
   function tgHaptic(type = "impact", style = "light") {
     try {
@@ -166,27 +251,16 @@
   }
 
   function showSection(id) {
-    // Robust visibility: do not rely on CSS animation classes (some builds hide sections by default)
-    const secs = qsa(".app-container section");
-    secs.forEach(sec => {
+    qsa(".app-container > section").forEach(sec => {
       sec.classList.add("hidden");
       sec.classList.remove("active");
-      sec.style.setProperty("display","none","important");
-      sec.style.setProperty("visibility","hidden","important");
-      sec.style.setProperty("opacity","0","important");
-      sec.style.setProperty("transform","none","important");
     });
-
     const el = $("view-" + id);
     if (el) {
       el.classList.remove("hidden");
-      el.classList.add("active");
-      el.style.setProperty("display","block","important");
-      el.style.setProperty("visibility","visible","important");
-      el.style.setProperty("opacity","1","important");
-      el.style.setProperty("transform","none","important");
+      // animate-in
+      requestAnimationFrame(() => { try { el.classList.add("active"); } catch (e) {} });
     }
-
     try { setActiveTab(id); } catch (e) {}
   }
 
@@ -207,18 +281,11 @@
     // Defensive: never let the app become an empty black screen
     try {
       const app = qs(".app-container");
-      if (app) {
-        app.style.setProperty("display","block","important");
-        app.style.setProperty("visibility","visible","important");
-        app.style.setProperty("opacity","1","important");
-      }
+      if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
       const vt = $("view-tasks");
       if (vt) {
         vt.classList.remove("hidden");
-        vt.style.setProperty("display","block","important");
-        vt.style.setProperty("visibility","visible","important");
-        vt.style.setProperty("opacity","1","important");
-        vt.style.setProperty("transform","none","important");
+        vt.classList.add("active");
       }
     } catch (e) {}
   }
@@ -368,10 +435,16 @@
 
   function taskIcon(t) {
     const type = String(t.type || "");
-    if (type === "tg") return "✈️";
-    if (type === "ya") return "📍";
-    if (type === "gm") return "🌍";
-    return "✅";
+    if (type === "tg") {
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg>';
+    }
+    if (type === "ya") {
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-4.5 7-11a7 7 0 0 0-14 0c0 6.5 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>';
+    }
+    if (type === "gm") {
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
   }
 
   function taskTypeLabel(t) {
@@ -411,7 +484,7 @@
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-              <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${taskIcon(t)}</div>
+              <div class="brand-box rc-icon" style="width:38px; height:38px;">${taskIcon(t)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
                 <div style="font-size:12px; color:var(--text-dim);">${taskTypeLabel(t)} • осталось ${left}/${total}</div>
@@ -442,7 +515,11 @@
 
     $("td-title").textContent = task.title || "Задание";
     $("td-reward").textContent = "+" + fmtRub(task.reward_rub || 0);
-    $("td-icon").textContent = taskIcon(task);
+    const tdi = $("td-icon");
+    if (tdi) {
+      tdi.classList.add("rc-icon");
+      tdi.innerHTML = taskIcon(task);
+    }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
     $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
@@ -1201,6 +1278,9 @@
     initDeviceHash();
     forceInitialView();
 
+    // Show beautiful loader until first sync finished
+    showLoader("Подключаемся…");
+
     if (tg) {
       try {
         tg.ready();
@@ -1213,19 +1293,25 @@
     bindOverlayClose();
     initTgSubtypeSelect();
 
-    // hide loader quickly
-    const loader = $("loader");
-    if (loader) loader.style.display = "none";
-
     // initial tab
     showTab("tasks");
     setFilter("all");
     recalc();
 
     try {
+      const t0 = Date.now();
+      setLoaderText("Загружаем профиль…");
       await syncAll();
+      // Keep loader visible a tiny bit so animation feels smooth
+      const dt = Date.now() - t0;
+      if (dt < 520) await sleep(520 - dt);
+      setLoaderText("Готово!");
+      await sleep(120);
+      hideLoader();
     } catch (e) {
+      tgHaptic("error");
       tgAlert(String(e.message || e));
+      hideLoader();
     }
   }
 
