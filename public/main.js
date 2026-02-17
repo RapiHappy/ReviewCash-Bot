@@ -31,120 +31,27 @@
   const qs = (sel, root = document) => (root || document).querySelector(sel);
   const qsa = (sel, root = document) => Array.from((root || document).querySelectorAll(sel));
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
   // --------------------
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-  function tgAlert(msg) {
-    const raw = String(msg ?? "").trim();
+  function tgAlert(msg, kind) {
+    const raw = String(msg ?? "");
+    const pretty = prettyErrorMessage(raw);
+    const k = kind || guessKind(pretty);
 
-    // Prettify: remove noisy tail like '(POST /api/..)' and strip leading status
-    let text = raw.replace(/\s*\(POST\s+[^)]+\)\s*$/i, "").trim();
-    let status = null;
-    const m = text.match(/^(\d{3}):\s*(.*)$/);
-    if (m) { status = Number(m[1]); text = (m[2] || "").trim(); }
+    // Prefer in-app toast (nicer than Telegram default alert)
+    const stack = getToastStack();
+    if (stack) {
+      showToast(pretty, k);
+      return;
+    }
 
-    // Infer toast type
-    let type = "info";
-    if (status && status >= 400) type = "error";
-    if (/✅|готово|создано|отправлен|оплачено|скопировано/i.test(text)) type = "success";
-    if (/ошибк|некоррект|минимум|укажи|прикрепи|лимит|не прош/i.test(text)) type = "error";
-
-    // Custom toast (preferred)
     try {
-      if (typeof window.__toast === "function") {
-        window.__toast({
-          type,
-          title: type === "error" ? "Ошибка" : (type === "success" ? "Готово" : "Сообщение"),
-          message: text || raw,
-        });
-        return;
-      }
+      if (tg && tg.showAlert) return tg.showAlert(pretty);
     } catch (e) {}
-
-    // Fallback: Telegram system alert
-    try {
-      if (tg && tg.showAlert) return tg.showAlert(text || raw);
-    } catch (e) {}
-    alert(text || raw);
+    alert(pretty);
   }
-
-  // --- Toast UI ---
-  function toastIconSvg(type) {
-    if (type === "success") return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-    if (type === "error") return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>';
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16h.01"/><path d="M12 8v4"/><path d="M10.3 3h3.4L22 20H2L10.3 3z"/></svg>';
-  }
-
-  function ensureToastRoot() {
-    const el = document.getElementById("toast-root");
-    if (el) return el;
-    const d = document.createElement("div");
-    d.id = "toast-root";
-    d.className = "toast-root";
-    document.body.appendChild(d);
-    return d;
-  }
-
-  function showToast(opts) {
-    const root = ensureToastRoot();
-    const type = (opts && opts.type) ? String(opts.type) : "info";
-    const title = (opts && opts.title) ? String(opts.title) : (type === "error" ? "Ошибка" : (type === "success" ? "Готово" : "Сообщение"));
-    const message = (opts && opts.message) ? String(opts.message) : "";
-    const timeout = (opts && typeof opts.timeout === "number") ? opts.timeout : (type === "error" ? 6500 : 3500);
-
-    const toast = document.createElement("div");
-    toast.className = "toast " + type;
-    toast.innerHTML = `
-      <div class="toast-ico">${toastIconSvg(type)}</div>
-      <div class="toast-body">
-        <div class="toast-title">${safeText(title)}</div>
-        <div class="toast-msg">${safeText(message)}</div>
-      </div>
-      <div class="toast-close" aria-label="Close">✕</div>
-    `;
-
-    const remove = () => {
-      toast.classList.remove("show");
-      setTimeout(() => { try { toast.remove(); } catch(e) {} }, 200);
-    };
-
-    const closer = toast.querySelector(".toast-close");
-    if (closer) closer.onclick = remove;
-
-    root.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add("show"));
-    if (timeout > 0) setTimeout(remove, timeout);
-  }
-
-  window.__toast = showToast;
-
-  // --------------------
-  // Entry loader (beautiful)
-  // --------------------
-  const __loaderMinMs = 520;
-  function setLoaderText(text) {
-    const el = document.getElementById("loader-sub");
-    if (el) el.textContent = String(text || "");
-  }
-  function showLoader(text) {
-    const l = document.getElementById("loader");
-    if (!l) return;
-    if (text) setLoaderText(text);
-    l.style.display = "flex";
-    l.classList.remove("hide");
-  }
-  function hideLoader() {
-    const l = document.getElementById("loader");
-    if (!l) return;
-    l.classList.add("hide");
-    setTimeout(() => { try { l.style.display = "none"; } catch(e){} }, 260);
-  }
-  window.__rcHideLoader = hideLoader;
-
-
   function tgHaptic(type = "impact", style = "light") {
     try {
       if (!tg || !tg.HapticFeedback) return;
@@ -152,6 +59,93 @@
       if (type === "success") tg.HapticFeedback.notificationOccurred("success");
       if (type === "error") tg.HapticFeedback.notificationOccurred("error");
     } catch (e) {}
+  }
+
+
+
+  // --------------------
+  // UI helpers: toasts + loader + better errors
+  // --------------------
+  function getToastStack() {
+    return document.getElementById("toast-stack");
+  }
+
+  function guessKind(msg) {
+    const s = String(msg || "");
+    if (/^\d{3}\s*:/i.test(s)) return "error";
+    if (/\b(ошибка|error|не удалось|лимит|запрещено|отклон|нельзя)\b/i.test(s)) return "error";
+    if (/✅|готово|успеш|выполнен|создан/i.test(s)) return "success";
+    return "info";
+  }
+
+  function prettyErrorMessage(s) {
+    const m = String(s || "").trim();
+    // Strip internal (POST /path) tail
+    const m1 = m.replace(/\s*\(POST\s+[^)]+\)\s*$/i, "");
+    // Convert "400: ..." -> "..."
+    const m2 = m1.replace(/^\d{3}\s*:\s*/i, "");
+    return m2 || m || "Ошибка";
+  }
+
+  function showToast(msg, kind = "info", ttl = 3800) {
+    const stack = getToastStack();
+    if (!stack) return;
+    stack.style.display = "flex";
+
+    const el = document.createElement("div");
+    el.className = "rc-toast rc-" + (kind || "info");
+
+    const ico = document.createElement("div");
+    ico.className = "rc-ico";
+    ico.textContent = (kind === "success") ? "✓" : (kind === "error" ? "!" : "i");
+
+    const text = document.createElement("div");
+    text.className = "rc-msg";
+    text.textContent = String(msg || "");
+
+    const x = document.createElement("button");
+    x.className = "rc-x";
+    x.type = "button";
+    x.textContent = "×";
+    x.addEventListener("click", () => removeToast(el));
+
+    el.appendChild(ico);
+    el.appendChild(text);
+    el.appendChild(x);
+    stack.appendChild(el);
+
+    requestAnimationFrame(() => el.classList.add("rc-in"));
+
+    let t = null;
+    if (ttl && ttl > 0) {
+      t = setTimeout(() => removeToast(el), ttl);
+    }
+
+    function removeToast(node) {
+      try { if (t) clearTimeout(t); } catch (e) {}
+      if (!node || !node.parentNode) return;
+      node.classList.remove("rc-in");
+      setTimeout(() => {
+        try { node.remove(); } catch (e) {}
+        // hide stack when empty
+        try { if (stack.children.length === 0) stack.style.display = "none"; } catch (e2) {}
+      }, 240);
+    }
+  }
+
+  function showLoader(text = "Загрузка…", sub = "") {
+    const l = document.getElementById("loader");
+    if (!l) return;
+    const t = document.getElementById("loader-text");
+    const s = document.getElementById("loader-sub");
+    if (t) t.textContent = String(text || "Загрузка…");
+    if (s) s.textContent = String(sub || "");
+    l.style.display = "flex";
+  }
+
+  function hideLoader() {
+    const l = document.getElementById("loader");
+    if (l) l.style.display = "none";
   }
 
   // --------------------
@@ -262,14 +256,6 @@
   function safeText(s) {
     return String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
   }
-  function safeAttr(s) {
-    return String(s || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
 
   function setActiveTab(tabId) {
     qsa(".nav-item", qs(".nav-bar")).forEach(el => el.classList.remove("active"));
@@ -278,29 +264,17 @@
   }
 
   function showSection(id) {
-    // Smooth page switch (fade/slide) + never allow empty screen
-    const token = (showSection.__tok = (showSection.__tok || 0) + 1);
-    const secs = qsa(".app-container section");
-    const target = $("view-" + id) || $("view-tasks");
-    if (!target) return;
+    const secs = qsa(".app-container > section");
+    secs.forEach(sec => { sec.classList.remove("rc-active"); sec.classList.add("hidden"); });
 
-    secs.forEach(sec => {
-      if (sec === target) return;
-      sec.classList.remove("active");
-      if (!sec.classList.contains("hidden")) {
-        setTimeout(() => {
-          if (showSection.__tok !== token) return;
-          sec.classList.add("hidden");
-        }, 220);
-      }
-    });
-
-    target.classList.remove("hidden");
-    requestAnimationFrame(() => {
-      if (showSection.__tok !== token) return;
-      target.classList.add("active");
-    });
-
+    const el = $("view-" + id);
+    if (el) {
+      el.classList.remove("hidden");
+      // trigger transition
+      requestAnimationFrame(() => {
+        try { el.classList.add("rc-active"); } catch (e) {}
+      });
+    }
     try { setActiveTab(id); } catch (e) {}
   }
 
@@ -323,7 +297,7 @@
       const app = qs(".app-container");
       if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
       const vt = $("view-tasks");
-      if (vt) { vt.classList.remove("hidden"); vt.classList.add("active"); }
+      if (vt) vt.classList.remove("hidden");
     } catch (e) {}
   }
 
@@ -379,12 +353,10 @@
     renderProfile();
     renderInvite();
     renderTasks();
-
-    // Не блокируем первый экран доп. запросами — они догружаются параллельно
-    refreshWithdrawals().catch(() => {});
-    refreshOpsSilent().catch(() => {});
-    refreshReferrals().catch(() => {});
-    checkAdmin().catch(() => {});
+    await refreshWithdrawals();
+    await refreshOpsSilent();
+    await refreshReferrals();
+    await checkAdmin();
   }
 
   function renderHeader() {
@@ -471,23 +443,16 @@
     renderTasks();
   }
   window.setFilter = setFilter;
+  const BRAND_SVGS = {
+    ya: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="4" width="56" height="56" rx="14" fill="#FFCC00"/><path d="M32 14c-8.5 0-15.5 7-15.5 15.5C16.5 41.2 32 54 32 54s15.5-12.8 15.5-24.5C47.5 21 40.5 14 32 14z" fill="#D61E3B"/><circle cx="32" cy="29.5" r="6.3" fill="#111827"/></svg>`,
+    gm: `<svg xmlns="http://www.w3.org/2000/svg" aria-label="Google" role="img" viewBox="0 0 512 512"><rect width="512" height="512" rx="15%" fill="#fff"/><path fill="#4285f4" d="M386 400c45-42 65-112 53-179H260v74h102c-4 24-18 44-38 57z"/><path fill="#34a853" d="M90 341a192 192 0 0 0 296 59l-62-48c-53 35-141 22-171-60z"/><path fill="#fbbc02" d="M153 292c-8-25-8-48 0-73l-63-49c-23 46-30 111 0 171z"/><path fill="#ea4335" d="M153 219c22-69 116-109 179-50l55-54c-78-75-230-72-297 55z"/></svg>`,
+    tg: `<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15.5" fill="#229ED9"/><path fill="#fff" d="M29.919 6.163l-4.225 19.925c-.319 1.406-1.15 1.756-2.331 1.094l-6.438-4.744-3.106 2.988c-.344.344-.631.631-1.294.631l.463-6.556 11.931-10.781c.519-.462-.113-.719-.806-.256l-14.75 9.288-6.35-1.988c-1.381-.431-1.406-1.381.288-2.044l24.837-9.569c1.15-.431 2.156.256 1.781 2.013z"/></svg>`,
+  };
 
-  function taskIconSvg(t, px = 20) {
-    const type = String((t && t.type) || "");
-    const size = Number(px) || 20;
-    const common = `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:${size}px;height:${size}px"`;
-
-    if (type === "tg") {
-      return `<svg ${common}><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9 22 2z"/></svg>`;
-    }
-    if (type === "ya") {
-      return `<svg ${common}><path d="M12 21s7-4.35 7-11a7 7 0 0 0-14 0c0 6.65 7 11 7 11z"/><path d="M12 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>`;
-    }
-    if (type === "gm") {
-      return `<svg ${common}><path d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9z"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>`;
-    }
-
-    return `<svg ${common}><path d="M9 12h6"/><path d="M12 9v6"/><path d="M7 4h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>`;
+  function brandIconHtml(task) {
+    const t = String((task && (task.type || task.platform)) || "").toLowerCase();
+    const svg = (t === "ya") ? BRAND_SVGS.ya : (t === "gm") ? BRAND_SVGS.gm : BRAND_SVGS.tg;
+    return `<span class=\"brand-ico\" aria-hidden=\"true\">${svg}</span>`;
   }
 
   function taskTypeLabel(t) {
@@ -527,7 +492,7 @@
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-              <div class="brand-box rc-icon" data-tt="${safeAttr(t.type || '')}" style="width:38px; height:38px;">${taskIconSvg(t, 18)}</div>
+              <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
                 <div style="font-size:12px; color:var(--text-dim);">${taskTypeLabel(t)} • осталось ${left}/${total}</div>
@@ -558,8 +523,7 @@
 
     $("td-title").textContent = task.title || "Задание";
     $("td-reward").textContent = "+" + fmtRub(task.reward_rub || 0);
-    const _ico = $("td-icon");
-    if (_ico) { _ico.classList.add("rc-icon"); _ico.setAttribute("data-tt", String(task.type || "")); _ico.innerHTML = taskIconSvg(task, 28); }
+    $("td-icon").innerHTML = brandIconHtml(task);
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
     $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
@@ -1199,7 +1163,7 @@
               <b>Ник:</b> ${safeText(p.proof_text || "")}
             </div>
           </div>
-          <div class="brand-box rc-icon" data-tt="${safeAttr(t.type || '')}" style="width:46px; height:46px;">${taskIconSvg(t, 22)}</div>
+          <div class="brand-box" style="width:46px; height:46px; font-size:22px;">${brandIconHtml(t)}</div>
         </div>
         ${linkHtml}
         ${imgHtml}
@@ -1329,9 +1293,8 @@
 
     bindOverlayClose();
     initTgSubtypeSelect();
-
-    // Show loader until first sync (nice entry)
-    showLoader("Подключаемся…");
+    // keep loader visible until first successful sync/render
+    showLoader("Загрузка…", "Подключаемся");
 
     // initial tab
     showTab("tasks");
@@ -1339,17 +1302,11 @@
     recalc();
 
     try {
-      const t0 = Date.now();
-      setLoaderText("Загружаем профиль…");
       await syncAll();
-      const dt = Date.now() - t0;
-      if (dt < __loaderMinMs) await sleep(__loaderMinMs - dt);
-      setLoaderText("Готово!");
-      await sleep(120);
       hideLoader();
     } catch (e) {
-      tgAlert(String(e.message || e));
       hideLoader();
+      tgAlert(String(e.message || e));
     }
   }
 
