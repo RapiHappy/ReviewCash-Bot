@@ -180,7 +180,14 @@
       animation: rcSpin 0.9s linear infinite;
     }
     @keyframes rcSpin { to { transform: rotate(360deg); } }
-  </style>
+  
+    /* Loader fade-out */
+    .loader-overlay.rc-hide{
+      opacity:0;
+      transition: opacity .35s ease;
+      pointer-events:none;
+    }
+    </style>
 
 </head>
 
@@ -444,6 +451,7 @@
         <div class="admin-tab active" onclick="switchAdminTab('proofs')" id="at-proofs">Отчёты</div>
         <div class="admin-tab" onclick="switchAdminTab('withdrawals')" id="at-withdrawals">Выводы</div>
         <div class="admin-tab" onclick="switchAdminTab('tbank')" id="at-tbank">T-Bank</div>
+        <div class="admin-tab" onclick="switchAdminTab('tasks')" id="at-tasks">Задания</div>
       </div>
 
       <div id="admin-view-proofs">
@@ -456,6 +464,11 @@
 
       <div id="admin-view-tbank" class="hidden">
         <div id="admin-tbank-list" style="display:flex; flex-direction:column; gap:15px;"></div>
+      </div>
+
+      <div id="admin-view-tasks" class="hidden">
+        <div style="margin:10px 0 12px; color:var(--text-dim); font-size:12px;">Удалять задания может только главный админ.</div>
+        <div id="admin-task-list" style="display:flex; flex-direction:column; gap:15px;"></div>
       </div>
     </div>
   </div>
@@ -523,6 +536,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=ui_20260218a" defer></script>
+  <script src="main.js?v=ui_20260218b" defer></script>
 </body>
 </html>
