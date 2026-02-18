@@ -1,4 +1,4 @@
-import os
+аimport os
 import json
 import re
 import hmac
@@ -1503,21 +1503,28 @@ def make_app():
     app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
-
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
-    static_dir = base_dir / "public"
+
+    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
+    if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
+        static_dir = base_dir
+    else:
+        static_dir = base_dir / "public"
+
     if static_dir.exists():
+        async def app_redirect(req: web.Request):
+            raise web.HTTPFound("/app/")
+
         async def app_index(req: web.Request):
             return web.FileResponse(static_dir / "index.html")
 
-        app.router.add_get("/app", lambda req: web.HTTPFound("/app/"))
+        app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-
-    # tg webhook
+# tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
     # API
