@@ -34,6 +34,8 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
 
+APP_VER = os.getenv("APP_VER", "ui_20260218a")
+
 # -------------------------
 # ENV
 # -------------------------
@@ -1324,7 +1326,7 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + "/app/"
+            miniapp_url = base.rstrip("/") + f"/app/?v={APP_VER}"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1372,7 +1374,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + "/app/"
+                miniapp_url = base.rstrip("/") + f"/app/?v={APP_VER}"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1517,10 +1519,22 @@ def make_app():
             raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            return web.FileResponse(static_dir / "index.html")
+            resp = web.FileResponse(static_dir / "index.html")
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            return resp
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
+
+        async def app_main_js(req: web.Request):
+            resp = web.FileResponse(static_dir / "main.js")
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            return resp
+
+        app.router.add_get("/app/main.js", app_main_js)
+
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
