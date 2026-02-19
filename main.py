@@ -43,20 +43,9 @@ SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE", "").strip()  # requir
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 
-# Главный админ (только он может удалять задания в админке)
-_main_admin_env = os.getenv("MAIN_ADMIN_ID", "").strip()
-if _main_admin_env.isdigit():
-    MAIN_ADMIN_ID = int(_main_admin_env)
-elif ADMIN_IDS:
+MAIN_ADMIN_ID = int(os.getenv("MAIN_ADMIN_ID", "0") or 0)
+if not MAIN_ADMIN_ID and ADMIN_IDS:
     MAIN_ADMIN_ID = int(ADMIN_IDS[0])
-else:
-    MAIN_ADMIN_ID = 0
-
-# Anti-spam limits (1 минута; при спаме — 10 минут)
-ACTION_COOLDOWN_SEC = int(os.getenv("ACTION_COOLDOWN_SEC", "60").strip())
-SPAM_LOCK_SEC = int(os.getenv("SPAM_LOCK_SEC", "600").strip())
-SPAM_THRESHOLD = int(os.getenv("SPAM_THRESHOLD", "3").strip())
-SPAM_WINDOW_SEC = int(os.getenv("SPAM_WINDOW_SEC", "180").strip())
 
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()       # example: https://your-service.onrender.com/app/
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "").strip()  # example: https://your-service.onrender.com
@@ -136,6 +125,15 @@ T_STATS = "stats_daily"
 T_REF = "referral_events"
 
 # -------------------------
+# In-memory rate limiting (per process)
+#   - 1 minute between actions
+#   - if spamming, block for 10 minutes
+# -------------------------
+RATE_LIMIT_STATE: dict[tuple[int, str], dict] = {}
+TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
+
+
+# -------------------------
 # helpers: supabase safe exec in thread
 # -------------------------
 async def sb_exec(fn):
@@ -146,6 +144,125 @@ def _now():
 
 def _day():
     return date.today()
+
+def json_error(status: int, error: str, code: str | None = None, **extra):
+    payload = {"ok": False, "error": error}
+    if code:
+        payload["code"] = code
+    payload.update(extra)
+    return web.json_response(payload, status=status)
+
+def rate_limit_enforce(uid: int, action: str, min_interval_sec: int = 60, spam_strikes: int = 3, block_sec: int = 600):
+    now = _now().timestamp()
+    key = (int(uid), str(action))
+    st = RATE_LIMIT_STATE.get(key, {"last_ok": 0.0, "strikes": 0, "blocked_until": 0.0})
+    if st.get("blocked_until", 0.0) > now:
+        left = int(st["blocked_until"] - now)
+        raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": f"Слишком часто. Блок {max(1, left // 60)} мин.", "code": "SPAM_BLOCK", "retry_after": left}), content_type="application/json")
+    last_ok = float(st.get("last_ok", 0.0))
+    if last_ok and (now - last_ok) < min_interval_sec:
+        st["strikes"] = int(st.get("strikes", 0)) + 1
+        left = int(min_interval_sec - (now - last_ok))
+        if st["strikes"] >= spam_strikes:
+            st["blocked_until"] = now + block_sec
+            st["strikes"] = 0
+            RATE_LIMIT_STATE[key] = st
+            raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": "Слишком часто. Блок 10 минут.", "code": "SPAM_BLOCK", "retry_after": block_sec}), content_type="application/json")
+        RATE_LIMIT_STATE[key] = st
+        raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": f"Лимит: раз в 1 минуту. Осталось ~{left}с", "code": "RATE_LIMIT", "retry_after": left}), content_type="application/json")
+    st["last_ok"] = now
+    st["strikes"] = 0
+    RATE_LIMIT_STATE[key] = st
+
+def normalize_tg_chat(s: str | None) -> str | None:
+    if not s:
+        return None
+    t = str(s).strip()
+    if not t:
+        return None
+    # accept https://t.me/name or @name or name
+    t = re.sub(r"^https?://t\.me/", "", t)
+    t = t.split("?")[0].split("/")[0]
+    if not t.startswith("@"):
+        t = "@" + t
+    # keep only @, letters, digits, underscore
+    t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
+    return t if len(t) > 1 else None
+
+async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
+    # cache for 5 minutes
+    key = str(chat_username).lower()
+    now = _now().timestamp()
+    if key in TG_CHAT_CACHE:
+        ts, ok, msg = TG_CHAT_CACHE[key]
+        if (now - ts) < 300:
+            return ok, msg
+    try:
+        me = await bot.get_me()
+        chat = await bot.get_chat(chat_username)
+        member = await bot.get_chat_member(chat_username, me.id)
+        status = getattr(member, "status", None)
+        ctype = getattr(chat, "type", "")
+        if status in ("left", "kicked"):
+            TG_CHAT_CACHE[key] = (now, False, "Добавь бота в группу/канал, иначе TG-задание создать нельзя.")
+            return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
+        if ctype == "channel" and status != "administrator":
+            TG_CHAT_CACHE[key] = (now, False, "Для канала нужно добавить бота и сделать админом.")
+            return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
+        TG_CHAT_CACHE[key] = (now, True, "")
+        return True, ""
+    except Exception:
+        TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить чат. Добавь бота в группу/канал (и для канала — админом), затем попробуй снова.")
+        return False, TG_CHAT_CACHE[key][2]
+
+# -------------------------
+# API: TG chat check (for UI animation)
+# -------------------------
+async def api_tg_check_chat(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    # Light rate limit: ~1 request per 2 seconds; spam -> 1 minute block
+    rate_limit_enforce(uid, "tg_check", min_interval_sec=2, spam_strikes=8, block_sec=60)
+
+    body = await safe_json(req)
+    target = str(body.get("target") or body.get("chat") or body.get("target_url") or "").strip()
+
+    chat = normalize_tg_chat(target)
+    if not chat:
+        return web.json_response({
+            "ok": True,
+            "valid": False,
+            "code": "TG_CHAT_REQUIRED",
+            "message": "Укажи @канал или @группу (например @MyChannel).",
+        })
+
+    ok_chat, msg = await ensure_bot_in_chat(chat)
+    if not ok_chat:
+        return web.json_response({
+            "ok": True,
+            "valid": False,
+            "code": "TG_BOT_NOT_IN_CHAT",
+            "chat": chat,
+            "message": msg,
+        })
+
+    title = chat
+    ctype = ""
+    try:
+        ch = await bot.get_chat(chat)
+        ctype = getattr(ch, "type", "") or ""
+        title = getattr(ch, "title", "") or getattr(ch, "username", "") or chat
+    except Exception:
+        pass
+
+    return web.json_response({
+        "ok": True,
+        "valid": True,
+        "chat": chat,
+        "type": ctype,
+        "title": title,
+    })
+
 
 async def sb_upsert(table: str, row: dict, on_conflict: str | None = None):
     def _f():
@@ -335,15 +452,21 @@ async def sub_rub(uid: int, amount: float) -> bool:
 # stats
 # -------------------------
 async def stats_add(field: str, amount: float):
-    day = _day().isoformat()
-    r = await sb_select(T_STATS, {"day": day}, limit=1)
-    if r.data:
-        cur = float(r.data[0].get(field) or 0)
-        await sb_update(T_STATS, {"day": day}, {field: cur + float(amount)})
-    else:
-        row = {"day": day, "revenue_rub": 0, "payouts_rub": 0, "topups_rub": 0, "active_users": 0}
-        row[field] = float(amount)
-        await sb_insert(T_STATS, row)
+    """Best-effort daily stats.
+    Never blocks payouts/flows if stats table is missing or schema differs.
+    """
+    try:
+        day = _day().isoformat()
+        r = await sb_select(T_STATS, {"day": day}, limit=1)
+        if r.data:
+            cur = float(r.data[0].get(field) or 0)
+            await sb_update(T_STATS, {"day": day}, {field: cur + float(amount)})
+        else:
+            row = {"day": day, "revenue_rub": 0, "payouts_rub": 0, "topups_rub": 0, "active_users": 0}
+            row[field] = float(amount)
+            await sb_insert(T_STATS, row)
+    except Exception as e:
+        log.warning("stats_add skipped (%s): %s", field, e)
 
 # -------------------------
 # referral system (bonus 1 time after first paid task)
@@ -475,127 +598,6 @@ async def touch_limit(uid: int, key: str):
 
 
 # -------------------------
-# Anti-spam rate limits (topup requests + proof submits)
-# -------------------------
-class RateLimiter:
-    def __init__(self, cooldown_sec: int, spam_lock_sec: int, spam_threshold: int, spam_window_sec: int):
-        self.cooldown = int(max(1, cooldown_sec))
-        self.lock = int(max(self.cooldown, spam_lock_sec))
-        self.threshold = int(max(1, spam_threshold))
-        self.window = int(max(1, spam_window_sec))
-        # key: (uid, action) -> dict
-        self._s = {}
-
-    def check(self, uid: int, action: str) -> tuple[bool, int]:
-        # returns (ok, retry_after_sec)
-        import time
-        now = int(time.time())
-        k = (int(uid), str(action))
-        st = self._s.get(k) or {"last_ok": 0, "viol": [], "lock_until": 0}
-
-        # active lock
-        if st.get("lock_until", 0) and now < int(st["lock_until"]):
-            self._s[k] = st
-            return False, int(st["lock_until"]) - now
-
-        last_ok = int(st.get("last_ok", 0) or 0)
-        if last_ok and (now - last_ok) < self.cooldown:
-            # violation
-            viol = [v for v in (st.get("viol") or []) if (now - int(v)) <= self.window]
-            viol.append(now)
-            if len(viol) >= self.threshold:
-                st["lock_until"] = now + self.lock
-                st["viol"] = []
-                self._s[k] = st
-                return False, self.lock
-            st["viol"] = viol
-            self._s[k] = st
-            return False, self.cooldown - (now - last_ok)
-
-        # ok
-        st["last_ok"] = now
-        st["lock_until"] = 0
-        st["viol"] = []
-        self._s[k] = st
-        return True, 0
-
-rate_limiter = RateLimiter(ACTION_COOLDOWN_SEC, SPAM_LOCK_SEC, SPAM_THRESHOLD, SPAM_WINDOW_SEC)
-
-def _rl_err_msg(retry_after: int) -> str:
-    retry_after = int(max(1, retry_after))
-    if retry_after >= 300:
-        return f"Слишком много запросов. Подожди ~{max(1, retry_after//60)} мин."
-    return f"Лимит: раз в 1 минуту. Осталось ~{retry_after} сек."
-
-async def enforce_rate_limit_json(uid: int, action: str):
-    ok, retry = rate_limiter.check(uid, action)
-    if ok:
-        return None
-    return web.json_response({"ok": False, "error": _rl_err_msg(retry)}, status=429)
-
-# -------------------------
-# TG chat parsing + checks for TG task creation
-# -------------------------
-def normalize_tg_chat(raw: str) -> str | None:
-    raw = (raw or '').strip()
-    if not raw:
-        return None
-    # accept @name or t.me/name
-    m = re.search(r"(?:t\.me|telegram\.me)/([A-Za-z0-9_+]+)", raw)
-    if m:
-        name = m.group(1)
-        # invite links (+...) cannot be validated
-        if name.startswith('+') or name.lower().startswith('joinchat'):
-            return None
-        raw = '@' + name.lstrip('@')
-    if raw.startswith('@') and len(raw) > 2:
-        return raw
-    # numeric id
-    if re.fullmatch(r"-?\d+", raw):
-        return raw
-    return None
-
-async def tg_check_bot_added(chat: str, owner_uid: int) -> tuple[bool, str]:
-    # 1) bot must be in chat
-    try:
-        me = await bot.get_me()
-        bot_id = int(me.id)
-    except Exception:
-        bot_id = 0
-    try:
-        cm = await bot.get_chat_member(chat_id=chat, user_id=bot_id)
-        st = getattr(cm, 'status', None)
-        if st in ('left', 'kicked') or st is None:
-            return False, 'Чтобы создать TG-задание, добавь бота в эту группу/канал.'
-    except Exception:
-        return False, 'Не могу проверить чат. Укажи @username канала/группы и добавь туда бота.'
-
-    # 2) owner should be admin/creator (обычно иначе он бы не смог добавить бота)
-    try:
-        om = await bot.get_chat_member(chat_id=chat, user_id=int(owner_uid))
-        ost = getattr(om, 'status', None)
-        if ost not in ('administrator', 'creator'):
-            # не блокируем жёстко, но даём понятную причину
-            return False, 'Ты должен быть админом/создателем канала/группы, чтобы создать задание.'
-    except Exception:
-        # если не смогли проверить владельца — не валим
-        pass
-
-    # 3) for channels: require bot admin (иначе авто-проверка/доступ часто не работает)
-    try:
-        chat_obj = await bot.get_chat(chat_id=chat)
-        ctype = getattr(chat_obj, 'type', '')
-        if ctype == 'channel':
-            cm2 = await bot.get_chat_member(chat_id=chat, user_id=bot_id)
-            st2 = getattr(cm2, 'status', None)
-            if st2 not in ('administrator', 'creator'):
-                return False, 'В канале сделай бота администратором — иначе проверка/доступ может не работать.'
-    except Exception:
-        pass
-
-    return True, ''
-
-# -------------------------
 # user notifications (mute/unmute) via user_limits
 # -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
@@ -719,6 +721,12 @@ async def require_admin(req: web.Request) -> dict:
         raise web.HTTPForbidden(text="Not admin")
     return user
 
+async def require_main_admin(req: web.Request) -> dict:
+    _, user = await require_init(req)
+    if int(user["id"]) != int(MAIN_ADMIN_ID or 0):
+        raise web.HTTPForbidden(text="Not main admin")
+    return user
+
 # -------------------------
 # API: referrals summary (for MiniApp)
 # -------------------------
@@ -760,12 +768,8 @@ async def api_sync(req: web.Request):
     bal = await get_balance(uid)
     tasks = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
 
-    is_admin = uid in ADMIN_IDS
-    is_main_admin = bool(MAIN_ADMIN_ID and uid == MAIN_ADMIN_ID)
-
     return web.json_response({
         "ok": True,
-        "flags": {"is_admin": is_admin, "is_main_admin": is_main_admin},
         "user": {
             "user_id": uid,
             "username": user.get("username"),
@@ -868,15 +872,15 @@ async def api_task_create(req: web.Request):
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
-    # TG tasks: require bot added to target group/channel
-    if ttype == 'tg':
-        tg_norm = normalize_tg_chat(tg_chat or '')
-        if not tg_norm:
-            return web.json_response({"ok": False, "error": 'Укажи @username группы/канала (инвайт-ссылки не подходят) и добавь туда бота.'}, status=400)
-        tg_chat = tg_norm
-        ok_tg, err_tg = await tg_check_bot_added(tg_chat, uid)
-        if not ok_tg:
-            return web.json_response({"ok": False, "error": err_tg}, status=400)
+    # TG task: require bot in chat/channel
+    if ttype == "tg":
+        tg_chat_n = normalize_tg_chat(tg_chat or target_url)
+        if not tg_chat_n:
+            return json_error(400, "Для TG задания укажи @группу или @канал (например @MyChannel)", code="TG_CHAT_REQUIRED")
+        tg_chat = tg_chat_n
+        ok_chat, msg = await ensure_bot_in_chat(tg_chat)
+        if not ok_chat:
+            return json_error(400, msg, code="TG_BOT_NOT_IN_CHAT")
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
@@ -920,11 +924,8 @@ async def api_task_create(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
-
-    rl = await enforce_rate_limit_json(uid, 'proof_submit')
-    if rl is not None:
-        return rl
 
     task_id = str(body.get("task_id") or "").strip()
     proof_text = str(body.get("proof_text") or "").strip()
@@ -1058,11 +1059,8 @@ async def api_withdraw_list(req: web.Request):
 async def api_tbank_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
-
-    rl = await enforce_rate_limit_json(uid, 'topup_request')
-    if rl is not None:
-        return rl
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
     if amount is None:
@@ -1096,11 +1094,8 @@ async def api_tbank_claim(req: web.Request):
 async def api_stars_link(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
-
-    rl = await enforce_rate_limit_json(uid, 'topup_request')
-    if rl is not None:
-        return rl
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
     if amount is None:
@@ -1280,7 +1275,7 @@ async def api_ops_list(req: web.Request):
 # ADMIN API
 # =========================================================
 async def api_admin_summary(req: web.Request):
-    await require_admin(req)
+    user = await require_admin(req)
 
     proofs = await sb_select(T_COMP, {"status": "pending"}, limit=1000)
     wds = await sb_select(T_WD, {"status": "pending"}, limit=1000)
@@ -1289,12 +1284,16 @@ async def api_admin_summary(req: web.Request):
         return sb.table(T_PAY).select("id").eq("provider", "tbank").eq("status", "pending").execute()
     tp = await sb_exec(_f)
 
+    tasks = await sb_select(T_TASKS, {"status": "active"}, limit=2000)
+
     return web.json_response({
         "ok": True,
+        "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"]),
         "counts": {
             "proofs": len(proofs.data or []),
             "withdrawals": len(wds.data or []),
             "tbank": len(tp.data or []),
+            "tasks": len(tasks.data or []),
         }
     })
 
@@ -1331,7 +1330,13 @@ async def api_admin_proof_decision(req: web.Request):
     body = await safe_json(req)
 
     proof_id = body.get("proof_id")
-    approved = bool(body.get("approved"))
+    approved_raw = body.get("approved")
+    if isinstance(approved_raw, bool):
+        approved = approved_raw
+    elif isinstance(approved_raw, (int, float)):
+        approved = bool(approved_raw)
+    else:
+        approved = str(approved_raw).strip().lower() in ("1","true","yes","y","on")
 
     if proof_id is None:
         raise web.HTTPBadRequest(text="Missing proof_id")
@@ -1351,12 +1356,26 @@ async def api_admin_proof_decision(req: web.Request):
     task = (t.data or [{}])[0]
     reward = float(task.get("reward_rub") or 0)
 
-    if approved:
-        await add_rub(user_id, reward)
-        await stats_add("payouts_rub", reward)
 
-        # XP + referral bonus (after first paid task)
-        await add_xp(user_id, XP_PER_TASK_PAID)
+    if approved:
+        # 1) начисление — обязательное, иначе не принимаем
+        try:
+            await add_rub(user_id, reward)
+        except Exception as e:
+            log.exception("approve proof failed: add_rub uid=%s reward=%s err=%s", user_id, reward, e)
+            return web.json_response({
+                "ok": False,
+                "code": "PAYOUT_FAILED",
+                "message": "Не удалось принять отчёт: ошибка начисления. Проверь таблицу balances (rub_balance) и права Supabase."
+            }, status=200)
+
+        # 2) статистика/XP/рефералка — best effort (не блокируем модерацию)
+        await stats_add("payouts_rub", reward)
+        try:
+            await add_xp(user_id, XP_PER_TASK_PAID)
+        except Exception as e:
+            log.warning("add_xp skipped: %s", e)
+
         await maybe_pay_referral_bonus(user_id)
 
         await sb_update(T_COMP, {"id": proof_id}, {
@@ -1467,27 +1486,6 @@ async def api_admin_tbank_decision(req: web.Request):
 
     return web.json_response({"ok": True})
 
-
-# -------------------------
-# ADMIN: delete task (only MAIN_ADMIN_ID)
-# -------------------------
-async def api_admin_task_delete(req: web.Request):
-    admin = await require_admin(req)
-    if not MAIN_ADMIN_ID or int(admin['id']) != int(MAIN_ADMIN_ID):
-        raise web.HTTPForbidden(text='Only main admin can delete tasks')
-    body = await safe_json(req)
-    task_id = str(body.get('task_id') or '').strip()
-    if not task_id:
-        raise web.HTTPBadRequest(text='Missing task_id')
-
-    r = await sb_select(T_TASKS, {'id': task_id}, limit=1)
-    if not r.data:
-        return web.json_response({'ok': False, 'error': 'Task not found'}, status=404)
-    # soft-delete
-    await sb_update(T_TASKS, {'id': task_id}, {'status': 'deleted', 'qty_left': 0})
-    await notify_admin(f'🗑 Задание удалено главным админом. TaskID: {task_id}')
-    return web.json_response({'ok': True})
-
 # =========================================================
 # Telegram handlers
 # =========================================================
@@ -1507,7 +1505,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + "/app/"
+            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+
+    if miniapp_url and "v=" not in miniapp_url:
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1555,7 +1556,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + "/app/"
+                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1712,6 +1713,7 @@ def make_app():
 
     # API
     app.router.add_post("/api/sync", api_sync)
+    app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/submit", api_task_submit)
 
@@ -1740,6 +1742,7 @@ def make_app():
     app.router.add_post("/api/admin/withdraw/decision", api_admin_withdraw_decision)
     app.router.add_post("/api/admin/tbank/list", api_admin_tbank_list)
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
+    app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
 
     return app
@@ -1770,3 +1773,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# -------------------------
+# ADMIN: tasks list + delete (delete only by main admin)
+# -------------------------
+async def api_admin_task_list(req: web.Request):
+    await require_admin(req)
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=50)
+    tasks = sel.data or []
+    # show minimal fields
+    return web.json_response({"ok": True, "tasks": tasks})
+
+async def api_admin_task_delete(req: web.Request):
+    await require_main_admin(req)
+    body = await safe_json(req)
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        return json_error(400, "task_id required", code="BAD_TASK_ID")
+    # delete task and related proofs (best effort)
+    await sb_delete(T_TASKS, {"id": task_id})
+    try:
+        await sb_delete(T_PROOFS, {"task_id": task_id})
+    except Exception:
+        pass
+    return web.json_response({"ok": True})
