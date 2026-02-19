@@ -275,38 +275,64 @@
   }
 
   async function apiPost(path, body) {
-    const url = state.api + path;
-    const res = await fetch(url, {
+  const url = state.api + path;
+  const ctrl = new AbortController();
+  const t = window.setTimeout(() => ctrl.abort(), 20000);
+  let res;
+  try {
+    res = await fetch(url, {
       method: "POST",
       headers: apiHeaders(true),
       body: JSON.stringify(body || {}),
+      signal: ctrl.signal,
     });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) {}
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : text || (res.status + " " + res.statusText);
-      const err = new Error(String(msg || "Ошибка")); err.status = res.status; err.path = path; err.raw = `${res.status}: ${msg} (POST ${path})`; throw err;
-    }
-    return data;
+  } catch (e) {
+    const err = new Error(e && e.name === "AbortError" ? "Сервер долго отвечает. Попробуй ещё раз." : "Нет соединения с сервером");
+    err.status = 0; err.path = path; throw err;
+  } finally {
+    window.clearTimeout(t);
   }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) {}
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) ? (data.error || data.message) : (text || (res.status + " " + res.statusText));
+    const err = new Error(String(msg || "Ошибка"));
+    err.status = res.status; err.path = path; err.raw = `${res.status}: ${msg} (POST ${path})`;
+    throw err;
+  }
+  return data;
+}
 
   async function apiPostForm(path, formData) {
-    const url = state.api + path;
-    const res = await fetch(url, {
+  const url = state.api + path;
+  const ctrl = new AbortController();
+  const t = window.setTimeout(() => ctrl.abort(), 40000);
+  let res;
+  try {
+    res = await fetch(url, {
       method: "POST",
       headers: apiHeaders(false),
       body: formData,
+      signal: ctrl.signal,
     });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) {}
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : text || (res.status + " " + res.statusText);
-      const err = new Error(String(msg || "Ошибка")); err.status = res.status; err.path = path; err.raw = `${res.status}: ${msg} (POST ${path})`; throw err;
-    }
-    return data;
+  } catch (e) {
+    const err = new Error(e && e.name === "AbortError" ? "Загрузка заняла слишком много времени. Попробуй ещё раз." : "Нет соединения с сервером");
+    err.status = 0; err.path = path; throw err;
+  } finally {
+    window.clearTimeout(t);
   }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) {}
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) ? (data.error || data.message) : (text || (res.status + " " + res.statusText));
+    const err = new Error(String(msg || "Ошибка"));
+    err.status = res.status; err.path = path; err.raw = `${res.status}: ${msg} (POST ${path})`;
+    throw err;
+  }
+  return data;
+}
 
   // --------------------
   // Utils
@@ -1675,12 +1701,14 @@ if (!list.length) {
     setPlatformFilter(state.platformFilter);
     recalc();
 
-    try {
-      await syncAll();
-    } catch (e) {
-      tgAlert(String(e.message || e));
-    }
+      try {
+    await syncAll();
+  } catch (e) {
+    tgAlert(String(e.message || e), "error", "Подключение");
+  } finally {
+    hideLoader();
   }
+}
 
   document.addEventListener("DOMContentLoaded", bootstrap);
 
