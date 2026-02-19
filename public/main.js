@@ -540,6 +540,43 @@
 // --------------------
   // Tasks
   // --------------------
+
+  // Completed tasks (per user) live in localStorage so they disappear after you finish them.
+  // Keyed by Telegram user_id to avoid mixing different accounts on the same device.
+  function completedKey() {
+    const uid = state.user ? state.user.user_id : null;
+    return "rc_completed_tasks_" + String(uid || "anon");
+  }
+
+  function loadCompletedIds() {
+    try {
+      const raw = localStorage.getItem(completedKey());
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  function saveCompletedIds(set) {
+    try {
+      localStorage.setItem(completedKey(), JSON.stringify(Array.from(set)));
+    } catch (e) {}
+  }
+
+  function markTaskCompleted(taskId) {
+    const id = String(taskId || "");
+    if (!id) return;
+    const set = loadCompletedIds();
+    set.add(id);
+    saveCompletedIds(set);
+  }
+
+  function isTaskCompleted(taskId) {
+    const id = String(taskId || "");
+    if (!id) return false;
+    return loadCompletedIds().has(id);
+  }
   function setFilter(f) {
     state.filter = f === "my" ? "my" : "all";
     const fa = $("f-all"), fm = $("f-my");
@@ -626,6 +663,9 @@
 
     const uid = state.user ? state.user.user_id : null;
     let list = state.tasks.slice();
+
+    // Hide tasks that this user already completed
+    list = list.filter(t => !isTaskCompleted(t && t.id));
 
     if (state.filter === "my" && uid) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
@@ -783,6 +823,10 @@ if (!list.length) {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
+        // Make the task disappear right away for this user
+        markTaskCompleted(task.id);
+        state.tasks = state.tasks.filter(t => String(t.id) !== String(task.id));
+        renderTasks();
         closeAllOverlays();
         tgHaptic("success");
         tgAlert("Готово! Начислено: +" + fmtRub(res.earned || task.reward_rub || 0));
@@ -833,6 +877,10 @@ if (!list.length) {
       });
 
       if (res && res.ok) {
+        // Make the task disappear right away for this user
+        markTaskCompleted(task.id);
+        state.tasks = state.tasks.filter(t => String(t.id) !== String(task.id));
+        renderTasks();
         // save nickname per platform so user doesn't type every time
         const t = String(task.type || "");
         let key = "rc_last_nick_generic";
