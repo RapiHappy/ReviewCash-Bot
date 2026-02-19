@@ -1771,8 +1771,6 @@ def main():
     app.on_cleanup.append(on_cleanup)
     web.run_app(app, host="0.0.0.0", port=PORT)
 
-if __name__ == "__main__":
-    main()
 
 
 # -------------------------
@@ -1798,3 +1796,6 @@ async def api_admin_task_delete(req: web.Request):
     except Exception:
         pass
     return web.json_response({"ok": True})
+
+if __name__ == "__main__":
+    main()
