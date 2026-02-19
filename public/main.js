@@ -248,6 +248,7 @@
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
     currentTask: null,
+    currentTab: "tasks",
     isAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
     tbankCode: "",
@@ -392,10 +393,13 @@
     } catch (e) {}
   }
 
-  function closeAllOverlays() {
-    qsa(".overlay").forEach(el => { el.style.display = "none"; });
-    document.body.style.overflow = "";
-  }
+  
+function closeAllOverlays() {
+  qsa('.overlay').forEach(el => { el.style.display = 'none'; });
+  document.body.style.overflow = '';
+  try { stopAdminTasksAutoRefresh(); } catch (e) {}
+  try { if (state.currentTab === 'tasks') refreshTasksSilent(); } catch (e) {}
+}
 
 
   function forceInitialView() {
@@ -465,6 +469,102 @@
     await refreshReferrals();
     await checkAdmin();
   }
+
+// --------------------
+// Auto-refresh: tasks pages update automatically
+// --------------------
+let _tasksAutoTimer = 0;
+let _adminTasksAutoTimer = 0;
+let _syncInFlight = false;
+
+function _isSectionVisible(id) {
+  const el = document.getElementById("view-" + id);
+  if (!el) return false;
+  return !el.classList.contains("hidden");
+}
+
+function _anyOverlayOpen() {
+  const ovs = Array.from(document.querySelectorAll('.overlay'));
+  return ovs.some(el => (el.style.display && el.style.display !== 'none'));
+}
+
+async function refreshTasksSilent() {
+  if (_syncInFlight) return;
+  _syncInFlight = true;
+  try {
+    const payload = { device_hash: state.deviceHash, device_id: state.deviceHash };
+    try {
+      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
+      if (ref) payload.referrer_id = ref;
+    } catch (e) {}
+
+    const data = await apiPost('/api/sync', payload);
+    if (!data || !data.ok) return;
+
+    if (data.user) state.user = data.user;
+    if (data.balance) state.balance = data.balance;
+
+    const newTasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const oldSig = JSON.stringify((state.tasks || []).map(t => String(t.id)));
+    const newSig = JSON.stringify(newTasks.map(t => String(t.id)));
+    state.tasks = newTasks;
+
+    if (_isSectionVisible('tasks')) {
+      if (!_anyOverlayOpen()) {
+        renderHeader();
+        renderProfile();
+        renderTasks();
+      } else {
+        // Keep state updated without UI flicker while modal is open
+        void oldSig; void newSig;
+      }
+    }
+  } catch (e) {
+    // silent
+  } finally {
+    _syncInFlight = false;
+  }
+}
+
+function startTasksAutoRefresh() {
+  stopTasksAutoRefresh();
+  refreshTasksSilent();
+  _tasksAutoTimer = window.setInterval(() => {
+    if (state.currentTab !== 'tasks') return;
+    if (!_isSectionVisible('tasks')) return;
+    refreshTasksSilent();
+  }, 12000);
+}
+
+function stopTasksAutoRefresh() {
+  if (_tasksAutoTimer) window.clearInterval(_tasksAutoTimer);
+  _tasksAutoTimer = 0;
+}
+
+function startAdminTasksAutoRefresh() {
+  stopAdminTasksAutoRefresh();
+  _adminTasksAutoTimer = window.setInterval(async () => {
+    try {
+      const avts = document.getElementById('admin-view-tasks');
+      if (!avts || avts.classList.contains('hidden')) return;
+      const m = document.getElementById('m-admin');
+      if (!m || m.style.display === 'none' || m.style.display === '') return;
+      await loadAdminTasks();
+      await checkAdmin();
+    } catch (e) {}
+  }, 15000);
+}
+
+function stopAdminTasksAutoRefresh() {
+  if (_adminTasksAutoTimer) window.clearInterval(_adminTasksAutoTimer);
+  _adminTasksAutoTimer = 0;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (state.currentTab === 'tasks') refreshTasksSilent();
+  }
+});
 
   function renderHeader() {
     const u = state.user || {};
@@ -1210,12 +1310,21 @@ if (!list.length) {
   // --------------------
   // Tabs
   // --------------------
-  function showTab(tab) {
-    if (tab === "friends") showSection("friends");
-    else if (tab === "profile") showSection("profile");
-    else showSection("tasks");
+  
+function showTab(tab) {
+  state.currentTab = tab || 'tasks';
+  if (tab === 'friends') {
+    showSection('friends');
+    stopTasksAutoRefresh();
+  } else if (tab === 'profile') {
+    showSection('profile');
+    stopTasksAutoRefresh();
+  } else {
+    showSection('tasks');
+    startTasksAutoRefresh();
   }
-  window.showTab = showTab;
+}
+window.showTab = showTab;
 
   // --------------------
   // Friends: copy/share invite
@@ -1500,7 +1609,7 @@ if (!list.length) {
     if (tab === "proofs") await loadAdminProofs();
     if (tab === "withdrawals") await loadAdminWithdrawals();
     if (tab === "tbank") await loadAdminTbank();
-    if (tab === "tasks") await loadAdminTasks();
+    if (tab === "tasks") { await loadAdminTasks(); startAdminTasksAutoRefresh(); } else { stopAdminTasksAutoRefresh(); }
   };
 
   function adminCard(html) {
