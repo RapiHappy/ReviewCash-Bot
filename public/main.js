@@ -245,6 +245,7 @@
     user: null,
     balance: { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 },
     tasks: [],
+    taskBanUntil: null,
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
     currentTask: null,
@@ -340,6 +341,16 @@
   function fmtRub(v) {
     const n = Number(v || 0);
     return (Math.round(n * 100) / 100).toLocaleString("ru-RU") + " ₽";
+  }
+
+  function formatDt(iso) {
+    try {
+      const d = new Date(String(iso));
+      if (!isFinite(d.getTime())) return String(iso || "");
+      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+      return String(iso || "");
+    }
   }
   function fmtStars(v) {
     const n = Number(v || 0);
@@ -454,6 +465,7 @@
 
     state.user = data.user;
     state.balance = data.balance || state.balance;
+    state.taskBanUntil = data.task_ban_until || null;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
 
     renderHeader();
@@ -668,6 +680,16 @@
     // Hide tasks that this user already completed
     list = list.filter(t => !isTaskCompleted(t && t.id));
 
+    // Task-ban mode: show banner and hide tasks
+    if (state.taskBanUntil) {
+      box.innerHTML = `<div class="card" style="opacity:0.9; border:1px solid rgba(255,70,70,0.35);">
+        <div style="font-weight:900;">🚫 Доступ к заданиям временно ограничен</div>
+        <div style="margin-top:6px; font-size:13px; opacity:0.85;">Вы сможете отправлять отчёты после: <b>${safeText(formatDt(state.taskBanUntil))}</b></div>
+        <div style="margin-top:10px; font-size:12px; opacity:0.75;">⚠️ За фейковые отчёты/отзывы может быть применён штраф и блокировка.</div>
+      </div>`;
+      return;
+    }
+
     if (state.filter === "my" && uid) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
     }
@@ -730,11 +752,14 @@ if (!list.length) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
+    $("td-text").textContent = (task.instructions || "Выполните задание и отправьте отчёт.") + "\n\n⚠️ Внимание: фейковые отчёты/отзывы и отзывы не со своего аккаунта могут привести к штрафу и блокировке.";
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) a.href = link || "#";
+    if (a) {
+      a.href = "#";
+      a.onclick = (ev) => { ev.preventDefault(); openTaskLink(task); };
+    }
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -786,6 +811,33 @@ if (!list.length) {
     openOverlay("m-task-details");
   }
 
+
+  async function openTaskLink(task) {
+    const t = task || state.currentTask;
+    if (!t) return;
+    const link = normalizeUrl(t.target_url || "");
+    if (!link) return tgAlert("Нет ссылки у задания", "error");
+
+    try {
+      const res = await apiPost("/api/task/click", { task_id: String(t.id) });
+      if (res && res.ok) {
+        // ok
+      } else {
+        throw new Error(res && (res.error || res.message) ? (res.error || res.message) : "Ошибка");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      return tgAlert(String(e.message || e), "error");
+    }
+
+    try {
+      if (tg && tg.openLink) tg.openLink(link);
+      else window.open(link, "_blank");
+    } catch (e) {
+      window.open(link, "_blank");
+    }
+  }
+
   window.copyLink = function () {
     const el = $("td-link");
     const text = el ? el.textContent : "";
@@ -832,6 +884,7 @@ if (!list.length) {
         tgHaptic("success");
         tgAlert("Готово! Начислено: +" + fmtRub(res.earned || task.reward_rub || 0));
         await syncAll();
+    startAutoRefresh();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка проверки");
       }
@@ -1548,18 +1601,21 @@ if (!list.length) {
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
+        <button class="btn btn-secondary" data-fake="1" style="width:100%; margin-top:10px; border:1px solid rgba(255,70,70,0.35);">🚫 Фейк (бан 3 дня)</button>
       `);
 
-      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c);
-      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c);
+      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c, false);
+      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c, false);
+      const fb = c.querySelector('[data-fake="1"]');
+      if (fb) fb.onclick = async () => decideProof(p.id, false, c, true);
       box.appendChild(c);
     });
   }
 
-  async function decideProof(proofId, approved, cardEl) {
+  async function decideProof(proofId, approved, cardEl, isFake) {
     try {
       tgHaptic("impact");
-      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved });
+      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved, fake: !!isFake });
       tgHaptic("success");
       if (cardEl) cardEl.remove();
       await checkAdmin();
@@ -1758,6 +1814,27 @@ if (!list.length) {
     hideLoader();
   }
 }
+
+let __autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (__autoRefreshTimer) return;
+  __autoRefreshTimer = setInterval(async () => {
+    try {
+      if (document.hidden) return;
+      await syncAll();
+      if (state.isAdmin) await checkAdmin();
+    } catch (e) {
+      // silent
+    }
+  }, 15000);
+
+  document.addEventListener("visibilitychange", async () => {
+    if (!document.hidden) {
+      try { await syncAll(); } catch (e) {}
+    }
+  });
+}
+
 
   document.addEventListener("DOMContentLoaded", bootstrap);
 
