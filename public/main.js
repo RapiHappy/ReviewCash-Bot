@@ -506,6 +506,9 @@
     });
   }
 
+  // Make it available even if something calls it as a global
+  try { window.startTasksAutoRefresh = startTasksAutoRefresh; } catch (e) {}
+
     state.deviceHash = v;
   }
 
@@ -1853,7 +1856,7 @@ if (!list.length) {
 
       try {
     await syncAll();
-    startTasksAutoRefresh();
+        if (typeof window.startTasksAutoRefresh === 'function') window.startTasksAutoRefresh();
   } catch (e) {
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
