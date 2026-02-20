@@ -245,13 +245,15 @@
     user: null,
     balance: { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 },
     tasks: [],
-    taskBanUntil: null,
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
     currentTask: null,
     isAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
     tbankCode: "",
+    currentSection: "tasks",
+    _tasksSig: "",
+    _tasksRefreshTimer: null,
   };
 
   // --------------------
@@ -342,16 +344,6 @@
     const n = Number(v || 0);
     return (Math.round(n * 100) / 100).toLocaleString("ru-RU") + " ₽";
   }
-
-  function formatDt(iso) {
-    try {
-      const d = new Date(String(iso));
-      if (!isFinite(d.getTime())) return String(iso || "");
-      return d.toLocaleString("ru-RU", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    } catch (e) {
-      return String(iso || "");
-    }
-  }
   function fmtStars(v) {
     const n = Number(v || 0);
     return n.toLocaleString("ru-RU") + " ⭐";
@@ -369,6 +361,7 @@
   }
 
   function showSection(id) {
+    state.currentSection = id;
     // Smooth entry animation (no more "black blink")
     qsa(".app-container > section").forEach(sec => {
       sec.classList.add("hidden");
@@ -465,8 +458,11 @@
 
     state.user = data.user;
     state.balance = data.balance || state.balance;
-    state.taskBanUntil = data.task_ban_until || null;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+    // If some tasks were completed before user_id was known, migrate from anon bucket
+    migrateCompletedAnonToUser();
+    state._tasksSig = tasksSignature(state.tasks);
 
     renderHeader();
     renderProfile();
@@ -475,7 +471,77 @@
     await refreshWithdrawals();
     await refreshOpsSilent();
     await refreshReferrals();
-    await checkAdmin();
+    
+  // --------------------
+  // Tasks auto-refresh (so new tasks appear without reopening the app)
+  // --------------------
+  function tasksSignature(tasks) {
+    try {
+      const parts = (Array.isArray(tasks) ? tasks : []).map(t => {
+        const id = String(t && t.id || "");
+        const left = String(t && (t.qty_left ?? "") );
+        const total = String(t && (t.qty_total ?? "") );
+        const st = String(t && (t.status ?? "") );
+        return id + ":" + left + "/" + total + ":" + st;
+      }).sort();
+      return parts.join("|");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  async function syncTasksOnly(forceRender = false) {
+    try {
+      const payload = { device_hash: state.deviceHash, device_id: state.deviceHash };
+      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
+      if (ref) payload.referrer_id = ref;
+
+      const data = await apiPost("/api/sync", payload);
+      if (!data || !data.ok) return;
+
+      // keep user/balance fresh too (so header numbers update)
+      state.user = data.user || state.user;
+      state.balance = data.balance || state.balance;
+      const newTasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+      migrateCompletedAnonToUser();
+
+      const newSig = tasksSignature(newTasks);
+      const changed = newSig !== state._tasksSig;
+
+      if (changed) {
+        state.tasks = newTasks;
+        state._tasksSig = newSig;
+      }
+
+      // render only when user is on tasks screen (or when forced)
+      if (forceRender || (changed && state.currentSection === "tasks")) {
+        renderHeader();
+        renderProfile();
+        renderTasks();
+      }
+    } catch (e) {
+      // silent
+    }
+  }
+
+  function startTasksAutoRefresh() {
+    try {
+      if (state._tasksRefreshTimer) clearInterval(state._tasksRefreshTimer);
+    } catch (e) {}
+
+    // refresh every 12s while app is visible
+    state._tasksRefreshTimer = setInterval(() => {
+      if (document.hidden) return;
+      syncTasksOnly(false);
+    }, 12000);
+
+    // also refresh when user returns to the app
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
+    });
+  }
+await checkAdmin();
   }
 
   function renderHeader() {
@@ -558,6 +624,24 @@
   function completedKey() {
     const uid = state.user ? state.user.user_id : null;
     return "rc_completed_tasks_" + String(uid || "anon");
+  }
+
+  function migrateCompletedAnonToUser() {
+    try {
+      const uid = state.user ? state.user.user_id : null;
+      if (!uid) return;
+      const anonKey = "rc_completed_tasks_anon";
+      const userKey = "rc_completed_tasks_" + String(uid);
+      const rawAnon = localStorage.getItem(anonKey);
+      if (!rawAnon) return;
+      const anonArr = JSON.parse(rawAnon);
+      if (!Array.isArray(anonArr) || !anonArr.length) { localStorage.removeItem(anonKey); return; }
+      const rawUser = localStorage.getItem(userKey);
+      const userArr = rawUser ? JSON.parse(rawUser) : [];
+      const merged = new Set([...(Array.isArray(userArr) ? userArr : []).map(String), ...anonArr.map(String)]);
+      localStorage.setItem(userKey, JSON.stringify(Array.from(merged)));
+      localStorage.removeItem(anonKey);
+    } catch (e) {}
   }
 
   function loadCompletedIds() {
@@ -680,16 +764,6 @@
     // Hide tasks that this user already completed
     list = list.filter(t => !isTaskCompleted(t && t.id));
 
-    // Task-ban mode: show banner and hide tasks
-    if (state.taskBanUntil) {
-      box.innerHTML = `<div class="card" style="opacity:0.9; border:1px solid rgba(255,70,70,0.35);">
-        <div style="font-weight:900;">🚫 Доступ к заданиям временно ограничен</div>
-        <div style="margin-top:6px; font-size:13px; opacity:0.85;">Вы сможете отправлять отчёты после: <b>${safeText(formatDt(state.taskBanUntil))}</b></div>
-        <div style="margin-top:10px; font-size:12px; opacity:0.75;">⚠️ За фейковые отчёты/отзывы может быть применён штраф и блокировка.</div>
-      </div>`;
-      return;
-    }
-
     if (state.filter === "my" && uid) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
     }
@@ -752,14 +826,11 @@ if (!list.length) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = (task.instructions || "Выполните задание и отправьте отчёт.") + "\n\n⚠️ Внимание: фейковые отчёты/отзывы и отзывы не со своего аккаунта могут привести к штрафу и блокировке.";
+    $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) {
-      a.href = "#";
-      a.onclick = (ev) => { ev.preventDefault(); openTaskLink(task); };
-    }
+    if (a) a.href = link || "#";
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -811,33 +882,6 @@ if (!list.length) {
     openOverlay("m-task-details");
   }
 
-
-  async function openTaskLink(task) {
-    const t = task || state.currentTask;
-    if (!t) return;
-    const link = normalizeUrl(t.target_url || "");
-    if (!link) return tgAlert("Нет ссылки у задания", "error");
-
-    try {
-      const res = await apiPost("/api/task/click", { task_id: String(t.id) });
-      if (res && res.ok) {
-        // ok
-      } else {
-        throw new Error(res && (res.error || res.message) ? (res.error || res.message) : "Ошибка");
-      }
-    } catch (e) {
-      tgHaptic("error");
-      return tgAlert(String(e.message || e), "error");
-    }
-
-    try {
-      if (tg && tg.openLink) tg.openLink(link);
-      else window.open(link, "_blank");
-    } catch (e) {
-      window.open(link, "_blank");
-    }
-  }
-
   window.copyLink = function () {
     const el = $("td-link");
     const text = el ? el.textContent : "";
@@ -884,7 +928,6 @@ if (!list.length) {
         tgHaptic("success");
         tgAlert("Готово! Начислено: +" + fmtRub(res.earned || task.reward_rub || 0));
         await syncAll();
-    startAutoRefresh();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка проверки");
       }
@@ -1268,6 +1311,8 @@ if (!list.length) {
     if (tab === "friends") showSection("friends");
     else if (tab === "profile") showSection("profile");
     else showSection("tasks");
+    // when user opens tasks tab — refresh immediately
+    try { syncTasksOnly(true); } catch (e) {}
   }
   window.showTab = showTab;
 
@@ -1601,21 +1646,18 @@ if (!list.length) {
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
-        <button class="btn btn-secondary" data-fake="1" style="width:100%; margin-top:10px; border:1px solid rgba(255,70,70,0.35);">🚫 Фейк (бан 3 дня)</button>
       `);
 
-      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c, false);
-      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c, false);
-      const fb = c.querySelector('[data-fake="1"]');
-      if (fb) fb.onclick = async () => decideProof(p.id, false, c, true);
+      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c);
+      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c);
       box.appendChild(c);
     });
   }
 
-  async function decideProof(proofId, approved, cardEl, isFake) {
+  async function decideProof(proofId, approved, cardEl) {
     try {
       tgHaptic("impact");
-      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved, fake: !!isFake });
+      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved });
       tgHaptic("success");
       if (cardEl) cardEl.remove();
       await checkAdmin();
@@ -1808,33 +1850,13 @@ if (!list.length) {
 
       try {
     await syncAll();
+    startTasksAutoRefresh();
   } catch (e) {
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
     hideLoader();
   }
 }
-
-let __autoRefreshTimer = null;
-function startAutoRefresh() {
-  if (__autoRefreshTimer) return;
-  __autoRefreshTimer = setInterval(async () => {
-    try {
-      if (document.hidden) return;
-      await syncAll();
-      if (state.isAdmin) await checkAdmin();
-    } catch (e) {
-      // silent
-    }
-  }, 15000);
-
-  document.addEventListener("visibilitychange", async () => {
-    if (!document.hidden) {
-      try { await syncAll(); } catch (e) {}
-    }
-  });
-}
-
 
   document.addEventListener("DOMContentLoaded", bootstrap);
 
