@@ -761,6 +761,9 @@ await checkAdmin();
     const uid = state.user ? state.user.user_id : null;
     let list = state.tasks.slice();
 
+    // Hide tasks that are fully completed (no slots left)
+    list = list.filter(t => Number(t && t.qty_left || 0) > 0);
+
     // Hide tasks that this user already completed
     list = list.filter(t => !isTaskCompleted(t && t.id));
 
@@ -794,10 +797,10 @@ if (!list.length) {
               <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                <div style="font-size:12px; color:var(--text-dim);">${taskTypeLabel(t)} • осталось ${left}/${total}</div>
+                <div style="font-size:12px; color:var(--text-dim);">${(state.filter==="my") ? `${taskTypeLabel(t)} • выполнено ${Math.max(0,total-left)}/${total} • осталось ${left}/${total}` : `${taskTypeLabel(t)}`}</div>
               </div>
             </div>
-            <div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>
+            ${(state.filter==="my") ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>` : ``}
           </div>
           <div style="text-align:right; min-width:90px;">
             <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
@@ -1865,4 +1868,5 @@ if (!list.length) {
   window.copyInviteLink = window.copyInviteLink;
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
+  window.startTasksAutoRefresh = startTasksAutoRefresh;
 })();
