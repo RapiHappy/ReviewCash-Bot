@@ -5,7 +5,7 @@ import hmac
 import hashlib
 import asyncio
 import logging
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from urllib.parse import parse_qsl
 from pathlib import Path
 
@@ -420,7 +420,33 @@ def calc_level(xp: int) -> int:
 async def get_balance(uid: int):
     r = await sb_select(T_BAL, {"user_id": uid}, limit=1)
     if r.data:
-        return r.data[0]
+        row = r.data[0] or {}
+        # normalize possible NULLs from DB
+        xp = int(row.get("xp") or 0)
+        lvl = row.get("level")
+        try:
+            lvl = int(lvl) if lvl is not None else None
+        except Exception:
+            lvl = None
+        calc_lvl = calc_level(xp)
+        if not lvl or lvl < 1:
+            lvl = calc_lvl
+        # if DB stored wrong level - fix silently
+        if lvl != calc_lvl:
+            lvl = calc_lvl
+        row["xp"] = xp
+        row["level"] = lvl
+        # best-effort persist fixes
+        try:
+            await sb_update(T_BAL, {"user_id": uid}, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
+        except Exception:
+            pass
+        return row
+    # ensure row exists
+    try:
+        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "level": 1, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
+    except Exception:
+        pass
     return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
 
 async def set_xp_level(uid: int, xp: int):
@@ -621,6 +647,77 @@ async def set_notify_muted(uid: int, muted: bool):
 
 
 # -------------------------
+# Task access bans + "must click link" tracking
+# -------------------------
+TASK_BAN_KEY = "task_ban_until"
+CLICK_PREFIX = "clicked_task:"
+CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())  # must click within 6h
+
+def _parse_dt(v):
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+async def get_task_ban_until(uid: int):
+    """Returns datetime until user is blocked from submitting tasks, or None."""
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY}, limit=1)
+        if not r.data:
+            return None
+        until = _parse_dt(r.data[0].get("last_at"))
+        if not until:
+            return None
+        # expired -> cleanup
+        if until <= _now():
+            try:
+                await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY})
+            except Exception:
+                pass
+            return None
+        return until
+    except Exception:
+        return None
+
+async def set_task_ban(uid: int, days: int = 3):
+    until = _now() + timedelta(days=int(days))
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": uid, "limit_key": TASK_BAN_KEY, "last_at": until.isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+    return until
+
+async def touch_task_click(uid: int, task_id: str):
+    key = CLICK_PREFIX + str(task_id)
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": uid, "limit_key": key, "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+async def require_recent_task_click(uid: int, task_id: str) -> bool:
+    """Returns True if user clicked task link recently."""
+    key = CLICK_PREFIX + str(task_id)
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
+        if not r.data:
+            return False
+        dt = _parse_dt(r.data[0].get("last_at"))
+        if not dt:
+            return False
+        return (_now() - dt).total_seconds() <= CLICK_WINDOW_SEC
+    except Exception:
+        return False
+
+async def clear_task_click(uid: int, task_id: str):
+    key = CLICK_PREFIX + str(task_id)
+    try:
+        await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": key})
+    except Exception:
+        pass
+
+# -------------------------
 # Telegram auto-check: member status
 # -------------------------
 async def tg_is_member(chat: str, user_id: int) -> bool:
@@ -766,7 +863,11 @@ async def api_sync(req: web.Request):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
     bal = await get_balance(uid)
-    tasks = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
+    banned_until = await get_task_ban_until(uid)
+    tasks = []
+    if not banned_until:
+        tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
+        tasks = tsel.data or []
 
     return web.json_response({
         "ok": True,
@@ -778,7 +879,8 @@ async def api_sync(req: web.Request):
             "photo_url": user.get("photo_url"),
         },
         "balance": bal,
-        "tasks": tasks.data or [],
+        "tasks": tasks,
+        "task_ban_until": banned_until.isoformat() if banned_until else None,
     })
 
 # -------------------------
@@ -918,6 +1020,31 @@ async def api_task_create(req: web.Request):
 
     return web.json_response({"ok": True, "task": task})
 
+
+# -------------------------
+# API: task click (must open link before submitting proof)
+# -------------------------
+async def api_task_click(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    body = await safe_json(req)
+
+    banned_until = await get_task_ban_until(uid)
+    if banned_until:
+        return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
+
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        raise web.HTTPBadRequest(text="Missing task_id")
+
+    t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
+    if not t.data:
+        return web.json_response({"ok": False, "error": "Task not found"}, status=404)
+
+    await touch_task_click(uid, task_id)
+    return web.json_response({"ok": True})
+
+
 # -------------------------
 # API: submit task
 # -------------------------
@@ -926,6 +1053,10 @@ async def api_task_submit(req: web.Request):
     uid = int(user["id"])
     rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
+
+    banned_until = await get_task_ban_until(uid)
+    if banned_until:
+        return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
 
     task_id = str(body.get("task_id") or "").strip()
     proof_text = str(body.get("proof_text") or "").strip()
@@ -958,6 +1089,12 @@ async def api_task_submit(req: web.Request):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
+
+    # require that user opened the task link (anti-fake) for manual checks
+    if not is_auto:
+        ok_clicked = await require_recent_task_click(uid, task_id)
+        if not ok_clicked:
+            return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
     if is_auto:
         chat = task.get("tg_chat") or ""
         if not chat:
@@ -1004,6 +1141,8 @@ async def api_task_submit(req: web.Request):
         "proof_text": proof_text,
         "proof_url": proof_url
     })
+
+    await clear_task_click(uid, task_id)
 
     if task.get("type") == "ya":
         await touch_limit(uid, "ya_review")
@@ -1338,6 +1477,8 @@ async def api_admin_proof_decision(req: web.Request):
     else:
         approved = str(approved_raw).strip().lower() in ("1","true","yes","y","on")
 
+    fake = bool(body.get("fake"))
+
     if proof_id is None:
         raise web.HTTPBadRequest(text="Missing proof_id")
 
@@ -1393,12 +1534,24 @@ async def api_admin_proof_decision(req: web.Request):
 
         await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽")
     else:
+        # rejected / fake
+        new_status = "fake" if fake else "rejected"
         await sb_update(T_COMP, {"id": proof_id}, {
-            "status": "rejected",
+            "status": new_status,
             "moderated_by": int(admin["id"]),
             "moderated_at": _now().isoformat(),
         })
-        await notify_user(user_id, "❌ Отчёт отклонён модератором.")
+        if fake:
+            try:
+                until = await set_task_ban(user_id, days=3)
+            except Exception:
+                until = None
+            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня."
+            if until:
+                txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
+            await notify_user(user_id, txt)
+        else:
+            await notify_user(user_id, "❌ Отчёт отклонён модератором.")
 
     return web.json_response({"ok": True})
 
@@ -1715,6 +1868,7 @@ def make_app():
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
+    app.router.add_post("/api/task/click", api_task_click)
     app.router.add_post("/api/task/submit", api_task_submit)
 
     # proof upload
