@@ -435,43 +435,7 @@
       v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
       localStorage.setItem(k, v);
     }
-    state.deviceHash = v;
-  }
 
-  // --------------------
-  // Sync + render
-  // --------------------
-  async function syncAll() {
-    const payload = {
-      device_hash: state.deviceHash,
-      device_id: state.deviceHash,
-    };
-
-    // start_param referral (from Telegram)
-    try {
-      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
-      if (ref) payload.referrer_id = ref;
-    } catch (e) {}
-
-    const data = await apiPost("/api/sync", payload);
-    if (!data || !data.ok) throw new Error("Bad /api/sync response");
-
-    state.user = data.user;
-    state.balance = data.balance || state.balance;
-    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-    // If some tasks were completed before user_id was known, migrate from anon bucket
-    migrateCompletedAnonToUser();
-    state._tasksSig = tasksSignature(state.tasks);
-
-    renderHeader();
-    renderProfile();
-    renderInvite();
-    renderTasks();
-    await refreshWithdrawals();
-    await refreshOpsSilent();
-    await refreshReferrals();
-    
   // --------------------
   // Tasks auto-refresh (so new tasks appear without reopening the app)
   // --------------------
@@ -541,10 +505,46 @@
       if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
     });
   }
-await checkAdmin();
+
+    state.deviceHash = v;
   }
 
-  function renderHeader() {
+  // --------------------
+  // Sync + render
+  // --------------------
+  async function syncAll() {
+const payload = {
+      device_hash: state.deviceHash,
+      device_id: state.deviceHash,
+    };
+
+    // start_param referral (from Telegram)
+    try {
+      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
+      if (ref) payload.referrer_id = ref;
+    } catch (e) {}
+
+    const data = await apiPost("/api/sync", payload);
+    if (!data || !data.ok) throw new Error("Bad /api/sync response");
+
+    state.user = data.user;
+    state.balance = data.balance || state.balance;
+    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+    // If some tasks were completed before user_id was known, migrate from anon bucket
+    migrateCompletedAnonToUser();
+    state._tasksSig = tasksSignature(state.tasks);
+
+    renderHeader();
+    renderProfile();
+    renderInvite();
+    renderTasks();
+    await refreshWithdrawals();
+    await refreshOpsSilent();
+    await refreshReferrals();
+    await checkAdmin();
+  }
+function renderHeader() {
     const u = state.user || {};
     const name = (u.first_name || u.username || "Пользователь");
     const pic = u.photo_url || "";
@@ -797,10 +797,10 @@ if (!list.length) {
               <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                <div style="font-size:12px; color:var(--text-dim);">${(state.filter==="my") ? `${taskTypeLabel(t)} • выполнено ${Math.max(0,total-left)}/${total} • осталось ${left}/${total}` : `${taskTypeLabel(t)}`}</div>
+                <div style="font-size:12px; color:var(--text-dim);">${(state.filter==="my" && uid && Number(t.owner_id)===Number(uid)) ? `${taskTypeLabel(t)} • выполнено ${Math.max(0,total-left)}/${total} • осталось ${left}/${total}` : `${taskTypeLabel(t)}`}</div>
               </div>
             </div>
-            ${(state.filter==="my") ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>` : ``}
+            ${(state.filter==="my" && uid && Number(t.owner_id)===Number(uid)) ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>` : ``}
           </div>
           <div style="text-align:right; min-width:90px;">
             <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
