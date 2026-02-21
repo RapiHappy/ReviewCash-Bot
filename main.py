@@ -1840,10 +1840,14 @@ def make_app():
     app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
-    # static miniapp at /app/
+    # static miniapp at /app/# static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
-    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
+    # ВАЖНО: раздаём ТОЛЬКО папку public/
+    # (иначе если index.html/main.js случайно окажутся рядом с main.py,
+    # приложение может подхватить "не тот" маленький main.js и ломаться)
+    static_dir = base_dir / "public"
+# Если main.py случайно лежит внутри public/, то раздаём текущую папку.
     if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
         static_dir = base_dir
     else:
