@@ -439,6 +439,40 @@
   }
 
   // --------------------
+  // Sync + render
+  // --------------------
+  async function syncAll() {
+    const payload = {
+      device_hash: state.deviceHash,
+      device_id: state.deviceHash,
+    };
+
+    // start_param referral (from Telegram)
+    try {
+      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
+      if (ref) payload.referrer_id = ref;
+    } catch (e) {}
+
+    const data = await apiPost("/api/sync", payload);
+    if (!data || !data.ok) throw new Error("Bad /api/sync response");
+
+    state.user = data.user;
+    state.balance = data.balance || state.balance;
+    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+    // If some tasks were completed before user_id was known, migrate from anon bucket
+    migrateCompletedAnonToUser();
+    state._tasksSig = tasksSignature(state.tasks);
+
+    renderHeader();
+    renderProfile();
+    renderInvite();
+    renderTasks();
+    await refreshWithdrawals();
+    await refreshOpsSilent();
+    await refreshReferrals();
+    
+  // --------------------
   // Tasks auto-refresh (so new tasks appear without reopening the app)
   // --------------------
   function tasksSignature(tasks) {
@@ -507,49 +541,10 @@
       if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
     });
   }
-
-  // Make it available even if something calls it as a global
-  try { window.startTasksAutoRefresh = startTasksAutoRefresh; } catch (e) {}
-
-    state.deviceHash = v;
+await checkAdmin();
   }
 
-  // --------------------
-  // Sync + render
-  // --------------------
-  async function syncAll() {
-const payload = {
-      device_hash: state.deviceHash,
-      device_id: state.deviceHash,
-    };
-
-    // start_param referral (from Telegram)
-    try {
-      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
-      if (ref) payload.referrer_id = ref;
-    } catch (e) {}
-
-    const data = await apiPost("/api/sync", payload);
-    if (!data || !data.ok) throw new Error("Bad /api/sync response");
-
-    state.user = data.user;
-    state.balance = data.balance || state.balance;
-    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-    // If some tasks were completed before user_id was known, migrate from anon bucket
-    migrateCompletedAnonToUser();
-    state._tasksSig = tasksSignature(state.tasks);
-
-    renderHeader();
-    renderProfile();
-    renderInvite();
-    renderTasks();
-    await refreshWithdrawals();
-    await refreshOpsSilent();
-    await refreshReferrals();
-    await checkAdmin();
-  }
-function renderHeader() {
+  function renderHeader() {
     const u = state.user || {};
     const name = (u.first_name || u.username || "Пользователь");
     const pic = u.photo_url || "";
@@ -766,11 +761,11 @@ function renderHeader() {
     const uid = state.user ? state.user.user_id : null;
     let list = state.tasks.slice();
 
-    // Hide tasks that are fully completed (no slots left)
-    list = list.filter(t => Number(t && t.qty_left || 0) > 0);
-
     // Hide tasks that this user already completed
     list = list.filter(t => !isTaskCompleted(t && t.id));
+
+    // Hide tasks that are fully completed (no slots left)
+    list = list.filter(t => Number(t.qty_left || 0) > 0);
 
     if (state.filter === "my" && uid) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
@@ -787,10 +782,22 @@ if (!list.length) {
     }
 
     box.innerHTML = "";
+    
     list.forEach(t => {
       const left = Number(t.qty_left || 0);
       const total = Number(t.qty_total || 0);
-      const prog = total > 0 ? Math.round(((total - left) / total) * 100) : 0;
+      const done = Math.max(0, total - left);
+      const prog = total > 0 ? Math.round((done / total) * 100) : 0;
+
+      const isOwner = (state.filter === "my" && uid && Number(t.owner_id) === Number(uid));
+
+      const metaLine = isOwner
+        ? `${taskTypeLabel(t)} • выполнено ${done}/${total} • осталось ${left}/${total}`
+        : `${taskTypeLabel(t)}`;
+
+      const progressHtml = isOwner
+        ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>`
+        : ``;
 
       const card = document.createElement("div");
       card.className = "card";
@@ -802,10 +809,10 @@ if (!list.length) {
               <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                <div style="font-size:12px; color:var(--text-dim);">${(state.filter==="my" && uid && Number(t.owner_id)===Number(uid)) ? `${taskTypeLabel(t)} • выполнено ${Math.max(0,total-left)}/${total} • осталось ${left}/${total}` : `${taskTypeLabel(t)}`}</div>
+                <div style="font-size:12px; color:var(--text-dim);">${metaLine}</div>
               </div>
             </div>
-            ${(state.filter==="my" && uid && Number(t.owner_id)===Number(uid)) ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>` : ``}
+            ${progressHtml}
           </div>
           <div style="text-align:right; min-width:90px;">
             <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
@@ -816,7 +823,7 @@ if (!list.length) {
       card.addEventListener("click", () => openTaskDetails(t));
       box.appendChild(card);
     });
-  }
+}
 
   function normalizeUrl(u) {
     let s = String(u || "").trim();
@@ -1858,7 +1865,7 @@ if (!list.length) {
 
       try {
     await syncAll();
-        if (typeof window.startTasksAutoRefresh === 'function') window.startTasksAutoRefresh();
+    startTasksAutoRefresh();
   } catch (e) {
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
@@ -1873,6 +1880,4 @@ if (!list.length) {
   window.copyInviteLink = window.copyInviteLink;
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
-  window.startTasksAutoRefresh = startTasksAutoRefresh;
 })();
-
