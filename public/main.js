@@ -435,6 +435,8 @@
       v = "dev_" + Math.random().toString(16).slice(2) + Date.now().toString(16);
       localStorage.setItem(k, v);
     }
+    state.deviceHash = v;
+  }
 
   // --------------------
   // Tasks auto-refresh (so new tasks appear without reopening the app)
