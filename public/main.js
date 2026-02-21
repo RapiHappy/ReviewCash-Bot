@@ -1875,3 +1875,4 @@ if (!list.length) {
   window.openAdminPanel = window.openAdminPanel;
   window.startTasksAutoRefresh = startTasksAutoRefresh;
 })();
+
