@@ -441,37 +441,7 @@
   // --------------------
   // Sync + render
   // --------------------
-  async function syncAll() {
-    const payload = {
-      device_hash: state.deviceHash,
-      device_id: state.deviceHash,
-    };
-
-    // start_param referral (from Telegram)
-    try {
-      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
-      if (ref) payload.referrer_id = ref;
-    } catch (e) {}
-
-    const data = await apiPost("/api/sync", payload);
-    if (!data || !data.ok) throw new Error("Bad /api/sync response");
-
-    state.user = data.user;
-    state.balance = data.balance || state.balance;
-    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
-
-    // If some tasks were completed before user_id was known, migrate from anon bucket
-    migrateCompletedAnonToUser();
-    state._tasksSig = tasksSignature(state.tasks);
-
-    renderHeader();
-    renderProfile();
-    renderInvite();
-    renderTasks();
-    await refreshWithdrawals();
-    await refreshOpsSilent();
-    await refreshReferrals();
-    
+  
   // --------------------
   // Tasks auto-refresh (so new tasks appear without reopening the app)
   // --------------------
@@ -541,7 +511,39 @@
       if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
     });
   }
-await checkAdmin();
+
+async function syncAll() {
+    const payload = {
+      device_hash: state.deviceHash,
+      device_id: state.deviceHash,
+    };
+
+    // start_param referral (from Telegram)
+    try {
+      const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
+      if (ref) payload.referrer_id = ref;
+    } catch (e) {}
+
+    const data = await apiPost("/api/sync", payload);
+    if (!data || !data.ok) throw new Error("Bad /api/sync response");
+
+    state.user = data.user;
+    state.balance = data.balance || state.balance;
+    state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+    // If some tasks were completed before user_id was known, migrate from anon bucket
+    migrateCompletedAnonToUser();
+    state._tasksSig = tasksSignature(state.tasks);
+
+    renderHeader();
+    renderProfile();
+    renderInvite();
+    renderTasks();
+    await refreshWithdrawals();
+    await refreshOpsSilent();
+    await refreshReferrals();
+    
+  await checkAdmin();
   }
 
   function renderHeader() {
