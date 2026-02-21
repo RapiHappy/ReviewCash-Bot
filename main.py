@@ -1820,6 +1820,21 @@ async def cors_middleware(req: web.Request, handler):
         resp = web.Response(status=204)
         _apply_cors_headers(req, resp)
         return resp
+
+
+@web.middleware
+async def nocache_middleware(req: web.Request, handler):
+    resp = await handler(req)
+    try:
+        p = req.path or ""
+        if p == "/app" or p == "/app/" or p.startswith("/app/"):
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return resp
+
     resp = await handler(req)
     _apply_cors_headers(req, resp)
     return resp
@@ -1837,29 +1852,45 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware, nocache_middleware, nocache_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
-    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
-    if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
-        static_dir = base_dir / "public"
+    # Всегда раздаём Mini App из ./public.
+    # Если main.py лежит внутри public/, то static_dir = сама папка public.
+    static_dir = base_dir if base_dir.name == "public" else (base_dir / "public")
+
+    # Лог размеров, чтобы по логам сразу видеть, что отдаются "правильные" файлы
+    try:
+        log.info("MiniApp static_dir=%s", static_dir)
+        for _fn in ("index.html", "main.js", "styles.css"):
+            _p = static_dir / _fn
+            if _p.exists():
+                log.info("MiniApp %s size=%s bytes", _fn, _p.stat().st_size)
+            else:
+                log.warning("MiniApp missing: %s", _p)
+    except Exception:
+        pass
 
     if static_dir.exists():
         async def app_redirect(req: web.Request):
             raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            return web.FileResponse(static_dir / "index.html")
+            resp = web.FileResponse(static_dir / "index.html")
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            return resp
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-# tg webhook
+    # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
     # API
