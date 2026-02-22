@@ -1849,7 +1849,7 @@ def make_app():
 
     # ВСЕГДА раздаём Mini App только из папки ./public (без подхвата файлов из корня)
     static_dir = base_dir / "public"
-if static_dir.exists():
+    if static_dir.exists():
         async def app_redirect(req: web.Request):
             raise web.HTTPFound("/app/")
 
@@ -1861,7 +1861,7 @@ if static_dir.exists():
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-# tg webhook
+    # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
     # API
