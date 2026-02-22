@@ -847,7 +847,27 @@ if (!list.length) {
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) a.href = link || "#";
+    if (a) {
+      a.href = link || "#";
+
+      // IMPORTANT: record "Перейти к выполнению" click (backend requires it for manual checks)
+      a.onclick = async (e) => {
+        try { if (e) e.preventDefault(); } catch (e2) {}
+
+        // best-effort: even if this fails, still open the link
+        try { await apiPost("/api/task/click", { task_id: String(task.id) }); } catch (e3) {}
+
+        try {
+          if (tg) {
+            // Telegram links open лучше через openTelegramLink
+            if (/^https?:\/\/t\.me\//i.test(link) && tg.openTelegramLink) return tg.openTelegramLink(link);
+            if (tg.openLink) return tg.openLink(link);
+          }
+        } catch (e4) {}
+
+        try { window.open(link, "_blank"); } catch (e5) { window.location.href = link; }
+      };
+    }
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -1883,3 +1903,4 @@ if (!list.length) {
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
 })();
+
