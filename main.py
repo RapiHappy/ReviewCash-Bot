@@ -13,7 +13,6 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
-    Update,
     Message,
     CallbackQuery,
     WebAppInfo,
@@ -1821,21 +1820,6 @@ async def cors_middleware(req: web.Request, handler):
         resp = web.Response(status=204)
         _apply_cors_headers(req, resp)
         return resp
-
-
-@web.middleware
-async def nocache_middleware(req: web.Request, handler):
-    resp = await handler(req)
-    try:
-        p = req.path or ""
-        if p == "/app" or p == "/app/" or p.startswith("/app/"):
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-    except Exception:
-        pass
-    return resp
-
     resp = await handler(req)
     _apply_cors_headers(req, resp)
     return resp
@@ -1847,71 +1831,38 @@ async def health(req: web.Request):
     return web.Response(text="OK")
 
 async def tg_webhook(req: web.Request):
-    # Telegram ждёт быстрый ответ. Обработку делаем в фоне, чтобы не было таймаутов.
-    payload = await safe_json(req)
-    try:
-        upd = Update.model_validate(payload)
-    except Exception:
-        log.exception("Bad webhook payload")
-        return web.Response(status=400, text="BAD_UPDATE")
-
-    log.info("Webhook hit: update_id=%s", getattr(upd, "update_id", None))
-
-    async def _process():
-        try:
-            await dp.feed_webhook_update(bot, upd)
-        except Exception:
-            log.exception("Webhook update processing failed")
-
-    asyncio.create_task(_process())
+    update = await safe_json(req)
+    await dp.feed_webhook_update(bot, update)
     return web.Response(text="OK")
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware, nocache_middleware, nocache_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
-    # Всегда раздаём Mini App из ./public.
-    # Если main.py лежит внутри public/, то static_dir = сама папка public.
-    static_dir = base_dir if base_dir.name == "public" else (base_dir / "public")
-
-    # Лог размеров, чтобы по логам сразу видеть, что отдаются "правильные" файлы
-    try:
-        log.info("MiniApp static_dir=%s", static_dir)
-        for _fn in ("index.html", "main.js", "styles.css"):
-            _p = static_dir / _fn
-            if _p.exists():
-                log.info("MiniApp %s size=%s bytes", _fn, _p.stat().st_size)
-            else:
-                log.warning("MiniApp missing: %s", _p)
-    except Exception:
-        pass
+    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
+    if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
+        static_dir = base_dir
+    else:
+        static_dir = base_dir / "public"
 
     if static_dir.exists():
         async def app_redirect(req: web.Request):
-            # 200 OK for Render health checks, but also forward users to /app/
-            html = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=/app/">'
-            html += '<title>ReviewCash</title><a href="/app/">Open Mini App</a>'
-            return web.Response(text=html, content_type='text/html')
+            raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            resp = web.FileResponse(static_dir / "index.html")
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-            return resp
+            return web.FileResponse(static_dir / "index.html")
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-    # tg webhook
+# tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
-    app.router.add_get(WEBHOOK_PATH, lambda r: web.Response(text="OK"))
 
     # API
     app.router.add_post("/api/sync", api_sync)
@@ -1951,21 +1902,14 @@ def make_app():
     return app
 
 async def on_startup(app: web.Application):
-    # IMPORTANT: do not block startup with network calls (Render port scan)
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
-        async def _set_wh():
-            try:
-                await bot.set_webhook(wh_url, drop_pending_updates=True, allowed_updates=["message","callback_query","pre_checkout_query"])
-                log.info("Webhook set to %s", wh_url)
-            except Exception:
-                log.exception("Failed to set webhook")
-        asyncio.create_task(_set_wh())
+        await bot.set_webhook(wh_url)
+        log.info("Webhook set to %s", wh_url)
     else:
         asyncio.create_task(dp.start_polling(bot))
         log.info("Polling started")
-
 
 async def on_cleanup(app: web.Application):
     if crypto:
@@ -1975,10 +1919,20 @@ async def on_cleanup(app: web.Application):
             pass
     await bot.session.close()
 
+# -------------------------
+# Entrypoint
+# -------------------------
+# For Render reliability, prefer running with Gunicorn:
+#   gunicorn main:app --bind 0.0.0.0:$PORT --worker-class aiohttp.worker.GunicornWebWorker
+#
+# Gunicorn binds the port early (so Render port-scan succeeds), then starts the aiohttp app.
 
-# ----
-# Server runner
-# ----
+app = make_app()
+app.on_startup.append(on_startup)
+app.on_cleanup.append(on_cleanup)
+
+def _run_local():
+    web.run_app(app, host="0.0.0.0", port=PORT)
 
 # -------------------------
 # ADMIN: tasks list + delete (delete only by main admin)
@@ -2005,49 +1959,4 @@ async def api_admin_task_delete(req: web.Request):
     return web.json_response({"ok": True})
 
 if __name__ == "__main__":
-    # IMPORTANT for Render:
-    # - bind to 0.0.0.0
-    # - bind to PORT env var (default 10000)
-    # - respond quickly on "/" so Render can detect the HTTP port
-    app = make_app()
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-
-    raw_port = os.getenv("PORT", "").strip()
-    log.info("Render PORT env raw=%r", raw_port)
-    log.info("Starting aiohttp (AppRunner) on 0.0.0.0:%s", PORT)
-
-    async def _run():
-        runner = web.AppRunner(app, access_log=logging.getLogger("aiohttp.access"))
-        await runner.setup()
-
-        # IPv4 (Render expects this)
-        site4 = web.TCPSite(runner, host="0.0.0.0", port=PORT)
-        await site4.start()
-
-        # Also try IPv6 (harmless if not supported)
-        try:
-            site6 = web.TCPSite(runner, host="::", port=PORT)
-            await site6.start()
-        except Exception as e:
-            log.info("IPv6 listen skipped: %s", e)
-
-        # Log actual sockets
-        try:
-            servers = [getattr(site4, "_server", None)]
-            for srv in servers:
-                if not srv or not getattr(srv, "sockets", None):
-                    continue
-                for s in srv.sockets:
-                    try:
-                        log.info("Listening socket: %s", s.getsockname())
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        # Keep process alive
-        log.info("HTTP server READY on port %s", PORT)
-        await asyncio.Event().wait()
-
-    asyncio.run(_run())
+    _run_local()
