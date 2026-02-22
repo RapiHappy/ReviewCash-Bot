@@ -13,6 +13,7 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
+    Update,
     Message,
     CallbackQuery,
     WebAppInfo,
@@ -1846,8 +1847,23 @@ async def health(req: web.Request):
     return web.Response(text="OK")
 
 async def tg_webhook(req: web.Request):
-    update = await safe_json(req)
-    await dp.feed_webhook_update(bot, update)
+    # Telegram ждёт быстрый ответ. Обработку делаем в фоне, чтобы не было таймаутов.
+    payload = await safe_json(req)
+    try:
+        upd = Update.model_validate(payload)
+    except Exception:
+        log.exception("Bad webhook payload")
+        return web.Response(status=400, text="BAD_UPDATE")
+
+    log.info("Webhook hit: update_id=%s", getattr(upd, "update_id", None))
+
+    async def _process():
+        try:
+            await dp.feed_webhook_update(bot, upd)
+        except Exception:
+            log.exception("Webhook update processing failed")
+
+    asyncio.create_task(_process())
     return web.Response(text="OK")
 
 def make_app():
@@ -1895,6 +1911,7 @@ def make_app():
         log.warning("Static dir not found: %s", static_dir)
     # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
+    app.router.add_get(WEBHOOK_PATH, lambda r: web.Response(text="OK"))
 
     # API
     app.router.add_post("/api/sync", api_sync)
@@ -1940,7 +1957,7 @@ async def on_startup(app: web.Application):
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
         async def _set_wh():
             try:
-                await bot.set_webhook(wh_url)
+                await bot.set_webhook(wh_url, drop_pending_updates=True, allowed_updates=["message","callback_query","pre_checkout_query"])
                 log.info("Webhook set to %s", wh_url)
             except Exception:
                 log.exception("Failed to set webhook")
@@ -2001,7 +2018,7 @@ if __name__ == "__main__":
     log.info("Starting aiohttp (AppRunner) on 0.0.0.0:%s", PORT)
 
     async def _run():
-        runner = web.AppRunner(app, access_log=log)
+        runner = web.AppRunner(app, access_log=logging.getLogger("aiohttp.access"))
         await runner.setup()
 
         # IPv4 (Render expects this)
