@@ -1948,11 +1948,28 @@ async def on_cleanup(app: web.Application):
             pass
     await bot.session.close()
 
-def main():
+
+async def serve() -> None:
+    # Start aiohttp on Render (bind to 0.0.0.0:$PORT) and keep process alive.
     app = make_app()
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
-    web.run_app(app, host="0.0.0.0", port=PORT)
+
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    await site.start()
+    log.info("HTTP server listening on 0.0.0.0:%s", PORT)
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        await runner.cleanup()
+
+
+def main():
+    asyncio.run(serve())
 
 
 
