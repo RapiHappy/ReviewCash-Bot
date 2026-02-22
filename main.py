@@ -1876,7 +1876,10 @@ def make_app():
 
     if static_dir.exists():
         async def app_redirect(req: web.Request):
-            raise web.HTTPFound("/app/")
+            # 200 OK for Render health checks, but also forward users to /app/
+            html = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=/app/">'
+            html += '<title>ReviewCash</title><a href="/app/">Open Mini App</a>'
+            return web.Response(text=html, content_type='text/html')
 
         async def app_index(req: web.Request):
             resp = web.FileResponse(static_dir / "index.html")
@@ -1931,14 +1934,21 @@ def make_app():
     return app
 
 async def on_startup(app: web.Application):
+    # IMPORTANT: do not block startup with network calls (Render port scan)
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
-        await bot.set_webhook(wh_url)
-        log.info("Webhook set to %s", wh_url)
+        async def _set_wh():
+            try:
+                await bot.set_webhook(wh_url)
+                log.info("Webhook set to %s", wh_url)
+            except Exception:
+                log.exception("Failed to set webhook")
+        asyncio.create_task(_set_wh())
     else:
         asyncio.create_task(dp.start_polling(bot))
         log.info("Polling started")
+
 
 async def on_cleanup(app: web.Application):
     if crypto:
@@ -1949,29 +1959,9 @@ async def on_cleanup(app: web.Application):
     await bot.session.close()
 
 
-async def serve() -> None:
-    # Start aiohttp on Render (bind to 0.0.0.0:$PORT) and keep process alive.
-    app = make_app()
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-
-    runner = web.AppRunner(app, access_log=None)
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
-    await site.start()
-    log.info("HTTP server listening on 0.0.0.0:%s", PORT)
-
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        await runner.cleanup()
-
-
-def main():
-    asyncio.run(serve())
-
-
+# ----
+# Server runner
+# ----
 
 # -------------------------
 # ADMIN: tasks list + delete (delete only by main admin)
@@ -1998,4 +1988,9 @@ async def api_admin_task_delete(req: web.Request):
     return web.json_response({"ok": True})
 
 if __name__ == "__main__":
-    main()
+    app = make_app()
+    # Attach bot lifecycle hooks
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    log.info("Starting aiohttp via web.run_app on 0.0.0.0:%s", PORT)
+    web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)
