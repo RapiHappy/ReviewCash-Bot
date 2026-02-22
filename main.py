@@ -1832,7 +1832,11 @@ async def health(req: web.Request):
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)
-    await dp.feed_webhook_update(bot, update)
+    # Быстрый ответ Telegram: обработку делаем в фоне, чтобы webhook не таймаутился
+    try:
+        asyncio.create_task(dp.feed_webhook_update(bot, update))
+    except Exception:
+        await dp.feed_webhook_update(bot, update)
     return web.Response(text="OK")
 
 def make_app():
@@ -1843,13 +1847,9 @@ def make_app():
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
-    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
-    if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
-        static_dir = base_dir
-    else:
-        static_dir = base_dir / "public"
-
-    if static_dir.exists():
+    # ВСЕГДА раздаём Mini App только из папки ./public (без подхвата файлов из корня)
+    static_dir = base_dir / "public"
+if static_dir.exists():
         async def app_redirect(req: web.Request):
             raise web.HTTPFound("/app/")
 
@@ -1919,20 +1919,8 @@ async def on_cleanup(app: web.Application):
             pass
     await bot.session.close()
 
-# -------------------------
-# Entrypoint
-# -------------------------
-# For Render reliability, prefer running with Gunicorn:
-#   gunicorn main:app --bind 0.0.0.0:$PORT --worker-class aiohttp.worker.GunicornWebWorker
-#
-# Gunicorn binds the port early (so Render port-scan succeeds), then starts the aiohttp app.
 
-app = make_app()
-app.on_startup.append(on_startup)
-app.on_cleanup.append(on_cleanup)
 
-def _run_local():
-    web.run_app(app, host="0.0.0.0", port=PORT)
 
 # -------------------------
 # ADMIN: tasks list + delete (delete only by main admin)
@@ -1957,6 +1945,12 @@ async def api_admin_task_delete(req: web.Request):
     except Exception:
         pass
     return web.json_response({"ok": True})
+# =========================================================
+# Gunicorn entrypoint: expose 'app'
+# =========================================================
+app = make_app()
+app.on_startup.append(on_startup)
+app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
-    _run_local()
+    web.run_app(app, host="0.0.0.0", port=PORT)
