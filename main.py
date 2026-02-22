@@ -1988,9 +1988,49 @@ async def api_admin_task_delete(req: web.Request):
     return web.json_response({"ok": True})
 
 if __name__ == "__main__":
+    # IMPORTANT for Render:
+    # - bind to 0.0.0.0
+    # - bind to PORT env var (default 10000)
+    # - respond quickly on "/" so Render can detect the HTTP port
     app = make_app()
-    # Attach bot lifecycle hooks
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
-    log.info("Starting aiohttp via web.run_app on 0.0.0.0:%s", PORT)
-    web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)
+
+    raw_port = os.getenv("PORT", "").strip()
+    log.info("Render PORT env raw=%r", raw_port)
+    log.info("Starting aiohttp (AppRunner) on 0.0.0.0:%s", PORT)
+
+    async def _run():
+        runner = web.AppRunner(app, access_log=log)
+        await runner.setup()
+
+        # IPv4 (Render expects this)
+        site4 = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+        await site4.start()
+
+        # Also try IPv6 (harmless if not supported)
+        try:
+            site6 = web.TCPSite(runner, host="::", port=PORT)
+            await site6.start()
+        except Exception as e:
+            log.info("IPv6 listen skipped: %s", e)
+
+        # Log actual sockets
+        try:
+            servers = [getattr(site4, "_server", None)]
+            for srv in servers:
+                if not srv or not getattr(srv, "sockets", None):
+                    continue
+                for s in srv.sockets:
+                    try:
+                        log.info("Listening socket: %s", s.getsockname())
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Keep process alive
+        log.info("HTTP server READY on port %s", PORT)
+        await asyncio.Event().wait()
+
+    asyncio.run(_run())
