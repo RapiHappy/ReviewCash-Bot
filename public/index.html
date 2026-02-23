@@ -53,8 +53,11 @@
   </script>
 
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <link rel="dns-prefetch" href="//t.me">
+  <link rel="preconnect" href="https://t.me" crossorigin>
+
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=auto_20260221_2">
+  <link rel="stylesheet" href="styles.css?v=auto_20260223_1">
 
   <style>
     /* Toasts (nice messages) */
@@ -236,6 +239,40 @@
     }
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
+    
+    /* Tiny refresh button (Tasks header) */
+    .mini-refresh{
+      width:34px; height:34px;
+      border-radius:14px;
+      border:1px solid var(--glass-border);
+      background: var(--glass);
+      color: var(--text);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform .12s ease, opacity .12s ease, background .12s ease;
+    }
+    .mini-refresh .ico{ display:block; font-size:16px; line-height:1; opacity:.9; }
+    .mini-refresh:active{ transform: scale(.96); }
+    .mini-refresh.rc-spin .ico{ animation: rcRotate .8s linear infinite; }
+    @keyframes rcRotate { to { transform: rotate(360deg); } }
+
+    /* Smoother section switches (fade-out before display:none) */
+    .anim-entry.rc-exit{ opacity:0; transform: translateY(-6px); }
+
+    /* Overlay modal open/close animation */
+    .overlay{ opacity:0; transition: opacity .18s ease; }
+    .overlay.rc-open{ opacity:1; }
+    .overlay .modal{ opacity:0; transform: translateY(10px); transition: transform .18s ease, opacity .18s ease; }
+    .overlay.rc-open .modal{ opacity:1; transform: translateY(0); }
+
+    @media (prefers-reduced-motion: reduce){
+      .mini-refresh, .anim-entry, .overlay, .overlay .modal{ transition:none !important; animation:none !important; }
+    }
+
     </style>
 
 </head>
@@ -263,7 +300,12 @@
             <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;" alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
-          <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
+            <button id="btn-tasks-refresh" class="mini-refresh" onclick="refreshTasks(true)" aria-label="Обновить задания" title="Обновить">
+              <span class="ico">↻</span>
+            </button>
+          </div>
         </div>
         <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
@@ -587,6 +629,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=auto_20260221_2" defer></script>
+  <script src="main.js?v=auto_20260223_1" defer></script>
 </body>
 </html>
