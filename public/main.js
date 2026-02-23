@@ -141,7 +141,6 @@
     try {
       imgEl.decoding = "async";
       imgEl.loading = "eager";
-      try { imgEl.setAttribute("fetchpriority", "high"); } catch (e2) {}
     } catch (e) {}
 
     imgEl.style.opacity = "0.96";
@@ -255,7 +254,82 @@
     currentSection: "tasks",
     _tasksSig: "",
     _tasksRefreshTimer: null,
+    perfMode: "normal",
+    _syncTasksInFlight: false,
+    _syncAllInFlight: false,
   };
+
+  // --------------------
+  // Performance mode (low / normal)
+  // --------------------
+  const PERF_KEY = "rc_perf_mode_v1"; // "low" | "normal" (if missing => auto-detect)
+
+  function detectPerfMode() {
+    try {
+      // Respect OS/user preference first
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "low";
+
+      // Heuristics (best-effort; not always available in Telegram WebView)
+      const mem = Number(navigator.deviceMemory || 0);
+      if (mem && mem <= 3) return "low";
+
+      const cores = Number(navigator.hardwareConcurrency || 0);
+      if (cores && cores <= 4) return "low";
+    } catch (e) {}
+    return "normal";
+  }
+
+  function getInitialPerfMode() {
+    const saved = (localStorage.getItem(PERF_KEY) || "").trim();
+    if (saved === "low" || saved === "normal") return saved;
+    return detectPerfMode();
+  }
+
+  function updatePerfModeLabel() {
+    const el = $("perf-mode-label");
+    if (!el) return;
+    el.textContent = (state.perfMode === "low") ? "Слабое устройство" : "Нормальный";
+  }
+
+  function applyPerfMode(mode) {
+    state.perfMode = (mode === "low") ? "low" : "normal";
+    try { localStorage.setItem(PERF_KEY, state.perfMode); } catch (e) {}
+
+    // CSS hooks
+    try {
+      document.documentElement.classList.toggle("perf-low", state.perfMode === "low");
+    } catch (e) {}
+
+    updatePerfModeLabel();
+
+    // Reconfigure auto-refresh with new interval
+    try { startTasksAutoRefresh(); } catch (e) {}
+  }
+
+  function togglePerfMode() {
+    const next = (state.perfMode === "low") ? "normal" : "low";
+    applyPerfMode(next);
+    tgHaptic("impact");
+    tgAlert("Режим: " + (state.perfMode === "low" ? "Слабое устройство" : "Нормальный"), "info", "Настройки");
+  }
+  window.togglePerfMode = togglePerfMode;
+
+  function tasksRefreshIntervalMs() {
+    // Low mode: refresh less often to save battery + CPU
+    return (state.perfMode === "low") ? 45000 : 15000;
+  }
+
+  function setTasksRefreshSpinning(on) {
+    const b = $("tasks-refresh-btn");
+    if (!b) return;
+    b.classList.toggle("spin", !!on);
+  }
+
+  async function refreshTasksBtn() {
+    tgHaptic("impact");
+    await syncTasksOnly(true);
+  }
+  window.refreshTasksBtn = refreshTasksBtn;
 
   // --------------------
   // API base + headers
@@ -362,56 +436,30 @@
   }
 
   function showSection(id) {
-    const next = $("view-" + id);
-    if (!next) return;
-
-    // If clicking the same tab again — just ensure it's visible
-    if (state.currentSection === id) {
-      next.classList.remove("hidden");
-      next.classList.remove("rc-exit");
-      requestAnimationFrame(() => next.classList.add("rc-active"));
-      try { setActiveTab(id); } catch (e) {}
-      return;
-    }
-
-    const prev = $("view-" + state.currentSection);
-
-    // Hide all other sections immediately (except prev/next)
+    state.currentSection = id;
+    // Smooth entry animation (no more "black blink")
     qsa(".app-container > section").forEach(sec => {
-      if (sec === next || sec === prev) return;
       sec.classList.add("hidden");
       sec.classList.remove("rc-active");
-      sec.classList.remove("rc-exit");
     });
 
-    // Animate previous section out before hiding it
-    if (prev && prev !== next) {
-      prev.classList.remove("rc-active");
-      prev.classList.add("rc-exit");
-      window.setTimeout(() => {
-        prev.classList.add("hidden");
-        prev.classList.remove("rc-exit");
-      }, 190);
+    const el = $("view-" + id);
+    if (el) {
+      el.classList.remove("hidden");
+      if (state.perfMode === "low") {
+        el.classList.add("rc-active");
+      } else {
+        // allow CSS transition to run
+        requestAnimationFrame(() => el.classList.add("rc-active"));
+      }
     }
-
-    // Show next section with smooth fade-in
-    state.currentSection = id;
-    next.classList.remove("hidden");
-    next.classList.remove("rc-exit");
-    next.classList.remove("rc-active");
-    requestAnimationFrame(() => next.classList.add("rc-active"));
-
     try { setActiveTab(id); } catch (e) {}
   }
 
   function openOverlay(id) {
     const el = $(id);
     if (!el) return;
-
     el.style.display = "flex";
-    el.classList.remove("rc-open");
-    requestAnimationFrame(() => el.classList.add("rc-open"));
-
     document.body.style.overflow = "hidden";
 
     // small UX hooks
@@ -428,14 +476,7 @@
   }
 
   function closeAllOverlays() {
-    qsa(".overlay").forEach(el => {
-      let disp = "";
-      try { disp = (el.style.display || window.getComputedStyle(el).display); } catch (e) {}
-      if (disp === "none") return;
-
-      el.classList.remove("rc-open");
-      window.setTimeout(() => { el.style.display = "none"; }, 180);
-    });
+    qsa(".overlay").forEach(el => { el.style.display = "none"; });
     document.body.style.overflow = "";
   }
 
@@ -499,6 +540,9 @@
   }
 
   async function syncTasksOnly(forceRender = false) {
+    if (state._syncTasksInFlight) return;
+    state._syncTasksInFlight = true;
+    setTasksRefreshSpinning(true);
     try {
       const payload = { device_hash: state.deviceHash, device_id: state.deviceHash };
       const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
@@ -530,6 +574,9 @@
       }
     } catch (e) {
       // silent
+    } finally {
+      state._syncTasksInFlight = false;
+      setTasksRefreshSpinning(false);
     }
   }
 
@@ -538,39 +585,22 @@
       if (state._tasksRefreshTimer) clearInterval(state._tasksRefreshTimer);
     } catch (e) {}
 
-    // refresh every 12s while app is visible
+    // Low devices: refresh less often; also refresh only when Tasks tab is opened
+    const ms = tasksRefreshIntervalMs();
     state._tasksRefreshTimer = setInterval(() => {
       if (document.hidden) return;
+      if (state.currentSection !== "tasks") return;
       syncTasksOnly(false);
-    }, 15000);
+    }, ms);
 
-    // also refresh when user returns to the app
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
-    });
-  }
-
-
-  // Manual refresh button on Tasks screen
-  async function refreshTasks(manual = false) {
-    const btn = $("btn-tasks-refresh");
-    if (btn) btn.classList.add("rc-spin");
-    try {
-      await syncTasksOnly(true);
-      if (manual) {
-        tgHaptic("success");
-        tgAlert("Задания обновлены ✅", "success", "Обновление");
-      }
-    } catch (e) {
-      if (manual) {
-        tgHaptic("error");
-        tgAlert("Не удалось обновить задания: " + String(e.message || e), "error", "Обновление");
-      }
-    } finally {
-      if (btn) btn.classList.remove("rc-spin");
+    // Also refresh when user returns to the app (bind once)
+    if (!state._tasksVisBound) {
+      state._tasksVisBound = true;
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && state.currentSection === "tasks") syncTasksOnly(true);
+      });
     }
   }
-  window.refreshTasks = refreshTasks;
 
 async function syncAll() {
     const payload = {
@@ -907,27 +937,7 @@ if (!list.length) {
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) {
-      a.href = link || "#";
-
-      // IMPORTANT: record "Перейти к выполнению" click (backend requires it for manual checks)
-      a.onclick = async (e) => {
-        try { if (e) e.preventDefault(); } catch (e2) {}
-
-        // best-effort: even if this fails, still open the link
-        try { await apiPost("/api/task/click", { task_id: String(task.id) }); } catch (e3) {}
-
-        try {
-          if (tg) {
-            // Telegram links open лучше через openTelegramLink
-            if (/^https?:\/\/t\.me\//i.test(link) && tg.openTelegramLink) return tg.openTelegramLink(link);
-            if (tg.openLink) return tg.openLink(link);
-          }
-        } catch (e4) {}
-
-        try { window.open(link, "_blank"); } catch (e5) { window.location.href = link; }
-      };
-    }
+    if (a) a.href = link || "#";
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -1409,7 +1419,9 @@ if (!list.length) {
     else if (tab === "profile") showSection("profile");
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
-    try { syncTasksOnly(true); } catch (e) {}
+    if (state.currentSection === "tasks") {
+      try { syncTasksOnly(true); } catch (e) {}
+    }
   }
   window.showTab = showTab;
 
@@ -1919,6 +1931,8 @@ if (!list.length) {
   async function bootstrap() {
     state.api = getApiBase();
     initDeviceHash();
+    // init performance mode ASAP (affects animations + refresh interval)
+    applyPerfMode(getInitialPerfMode());
     forceInitialView();
 
     if (tg) {
@@ -1928,23 +1942,22 @@ if (!list.length) {
       } catch (e) {}
       state.initData = tg.initData || "";
       try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
-    }
 
-    // Start loading avatar + name immediately (before /api/sync finishes)
-    try {
-      const tu = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
-      if (tu) {
-        state.user = {
-          user_id: tu.id,
-          username: tu.username || "",
-          first_name: tu.first_name || "",
-          last_name: tu.last_name || "",
-          photo_url: tu.photo_url || "",
-        };
-        renderHeader();
-        renderProfile();
-      }
-    } catch (e) {}
+      // Prefill user from Telegram (so avatar/name start loading immediately)
+      try {
+        const tu = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
+        if (tu) {
+          state.user = state.user || {};
+          state.user.username = tu.username;
+          state.user.first_name = tu.first_name;
+          state.user.last_name = tu.last_name;
+          state.user.photo_url = tu.photo_url;
+          if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
+          renderHeader();
+          renderProfile();
+        }
+      } catch (e) {}
+    }
 
     bindOverlayClose();
     initTgSubtypeSelect();
