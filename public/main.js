@@ -254,7 +254,82 @@
     currentSection: "tasks",
     _tasksSig: "",
     _tasksRefreshTimer: null,
+    perfMode: "normal",
+    _syncTasksInFlight: false,
+    _syncAllInFlight: false,
   };
+
+  // --------------------
+  // Performance mode (low / normal)
+  // --------------------
+  const PERF_KEY = "rc_perf_mode_v1"; // "low" | "normal" (if missing => auto-detect)
+
+  function detectPerfMode() {
+    try {
+      // Respect OS/user preference first
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "low";
+
+      // Heuristics (best-effort; not always available in Telegram WebView)
+      const mem = Number(navigator.deviceMemory || 0);
+      if (mem && mem <= 3) return "low";
+
+      const cores = Number(navigator.hardwareConcurrency || 0);
+      if (cores && cores <= 4) return "low";
+    } catch (e) {}
+    return "normal";
+  }
+
+  function getInitialPerfMode() {
+    const saved = (localStorage.getItem(PERF_KEY) || "").trim();
+    if (saved === "low" || saved === "normal") return saved;
+    return detectPerfMode();
+  }
+
+  function updatePerfModeLabel() {
+    const el = $("perf-mode-label");
+    if (!el) return;
+    el.textContent = (state.perfMode === "low") ? "Слабое устройство" : "Нормальный";
+  }
+
+  function applyPerfMode(mode) {
+    state.perfMode = (mode === "low") ? "low" : "normal";
+    try { localStorage.setItem(PERF_KEY, state.perfMode); } catch (e) {}
+
+    // CSS hooks
+    try {
+      document.documentElement.classList.toggle("perf-low", state.perfMode === "low");
+    } catch (e) {}
+
+    updatePerfModeLabel();
+
+    // Reconfigure auto-refresh with new interval
+    try { startTasksAutoRefresh(); } catch (e) {}
+  }
+
+  function togglePerfMode() {
+    const next = (state.perfMode === "low") ? "normal" : "low";
+    applyPerfMode(next);
+    tgHaptic("impact");
+    tgAlert("Режим: " + (state.perfMode === "low" ? "Слабое устройство" : "Нормальный"), "info", "Настройки");
+  }
+  window.togglePerfMode = togglePerfMode;
+
+  function tasksRefreshIntervalMs() {
+    // Low mode: refresh less often to save battery + CPU
+    return (state.perfMode === "low") ? 45000 : 15000;
+  }
+
+  function setTasksRefreshSpinning(on) {
+    const b = $("tasks-refresh-btn");
+    if (!b) return;
+    b.classList.toggle("spin", !!on);
+  }
+
+  async function refreshTasksBtn() {
+    tgHaptic("impact");
+    await syncTasksOnly(true);
+  }
+  window.refreshTasksBtn = refreshTasksBtn;
 
   // --------------------
   // API base + headers
@@ -371,8 +446,12 @@
     const el = $("view-" + id);
     if (el) {
       el.classList.remove("hidden");
-      // allow CSS transition to run
-      requestAnimationFrame(() => el.classList.add("rc-active"));
+      if (state.perfMode === "low") {
+        el.classList.add("rc-active");
+      } else {
+        // allow CSS transition to run
+        requestAnimationFrame(() => el.classList.add("rc-active"));
+      }
     }
     try { setActiveTab(id); } catch (e) {}
   }
@@ -461,6 +540,9 @@
   }
 
   async function syncTasksOnly(forceRender = false) {
+    if (state._syncTasksInFlight) return;
+    state._syncTasksInFlight = true;
+    setTasksRefreshSpinning(true);
     try {
       const payload = { device_hash: state.deviceHash, device_id: state.deviceHash };
       const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;
@@ -492,6 +574,9 @@
       }
     } catch (e) {
       // silent
+    } finally {
+      state._syncTasksInFlight = false;
+      setTasksRefreshSpinning(false);
     }
   }
 
@@ -500,16 +585,21 @@
       if (state._tasksRefreshTimer) clearInterval(state._tasksRefreshTimer);
     } catch (e) {}
 
-    // refresh every 12s while app is visible
+    // Low devices: refresh less often; also refresh only when Tasks tab is opened
+    const ms = tasksRefreshIntervalMs();
     state._tasksRefreshTimer = setInterval(() => {
       if (document.hidden) return;
+      if (state.currentSection !== "tasks") return;
       syncTasksOnly(false);
-    }, 12000);
+    }, ms);
 
-    // also refresh when user returns to the app
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
-    });
+    // Also refresh when user returns to the app (bind once)
+    if (!state._tasksVisBound) {
+      state._tasksVisBound = true;
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && state.currentSection === "tasks") syncTasksOnly(true);
+      });
+    }
   }
 
 async function syncAll() {
@@ -713,10 +803,14 @@ async function syncAll() {
   // --------------------
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
+  function assetUrl(p){
+    try { return new URL(String(p||""), window.location.href).toString(); }
+    catch(e){ return String(p||""); }
+  }
   const BRAND_ICON_URI = {
-    ya: "/icons/ya.png",
-    gm: "/icons/gm.png",
-    tg: "/icons/tg.png",
+    ya: assetUrl("icons/ya.png"),
+    gm: assetUrl("icons/gm.png"),
+    tg: assetUrl("icons/tg.png"),
   };
 
   function brandIconHtml(taskOrType, sizePx = 38) {
@@ -728,7 +822,7 @@ async function syncAll() {
     const alt = (key === "ya") ? "Яндекс" : (key === "gm") ? "Google" : "Telegram";
 
     // IMPORTANT: use rounded-square mask to avoid white edge artifacts on some devices
-    return `<img class="brand-img" src="${uri}" alt="${alt}" style="width:${s}px;height:${s}px;" />`;
+    return `<img class="brand-img" src="${uri}" alt="${alt}" style="width:${s}px;height:${s}px;" loading="lazy" decoding="async" />`;
   }
 
   function initPlatformFilterIcons() {
@@ -834,8 +928,18 @@ if (!list.length) {
     return s;
   }
 
+  function isTaskOwner(task) {
+    const uid = state.user ? state.user.user_id : null;
+    if (!uid || !task) return false;
+    if (task.is_owner === true) return true;
+    if (task.owner_id != null && Number(task.owner_id) === Number(uid)) return true;
+    return false;
+  }
+
   function openTaskDetails(task) {
     state.currentTask = task;
+
+    const isOwner = isTaskOwner(task);
 
     $("td-title").textContent = task.title || "Задание";
     $("td-reward").textContent = "+" + fmtRub(task.reward_rub || 0);
@@ -843,7 +947,7 @@ if (!list.length) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
+    $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + (task.instructions || "Выполните задание и отправьте отчёт.");
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
@@ -887,12 +991,20 @@ if (!list.length) {
     // action button
     const btn = $("td-action-btn");
     if (btn) {
-      if (isAuto) {
-        btn.textContent = "✅ Проверить и получить награду";
-        btn.onclick = () => submitTaskAuto(task);
+      if (isOwner) {
+        btn.textContent = "🚫 Нельзя выполнять своё задание";
+        btn.disabled = true;
+        btn.style.opacity = "0.65";
       } else {
-        btn.textContent = "📤 Отправить отчёт";
-        btn.onclick = () => submitTaskManual(task);
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        if (isAuto) {
+          btn.textContent = "✅ Проверить и получить награду";
+          btn.onclick = () => submitTaskAuto(task);
+        } else {
+          btn.textContent = "📤 Отправить отчёт";
+          btn.onclick = () => submitTaskManual(task);
+        }
       }
     }
 
@@ -933,6 +1045,10 @@ if (!list.length) {
   };
 
   async function submitTaskAuto(task) {
+    if (isTaskOwner(task)) {
+      tgHaptic("error");
+      return tgAlert("Нельзя выполнять своё задание");
+    }
     try {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
@@ -963,6 +1079,10 @@ if (!list.length) {
   }
 
   async function submitTaskManual(task) {
+    if (isTaskOwner(task)) {
+      tgHaptic("error");
+      return tgAlert("Нельзя выполнять своё задание");
+    }
     const nick = String(($("p-username") && $("p-username").value) || "").trim();
     const file = $("p-file") && $("p-file").files ? $("p-file").files[0] : null;
 
@@ -1329,7 +1449,9 @@ if (!list.length) {
     else if (tab === "profile") showSection("profile");
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
-    try { syncTasksOnly(true); } catch (e) {}
+    if (state.currentSection === "tasks") {
+      try { syncTasksOnly(true); } catch (e) {}
+    }
   }
   window.showTab = showTab;
 
@@ -1839,6 +1961,8 @@ if (!list.length) {
   async function bootstrap() {
     state.api = getApiBase();
     initDeviceHash();
+    // init performance mode ASAP (affects animations + refresh interval)
+    applyPerfMode(getInitialPerfMode());
     forceInitialView();
 
     if (tg) {
@@ -1848,6 +1972,21 @@ if (!list.length) {
       } catch (e) {}
       state.initData = tg.initData || "";
       try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
+
+      // Prefill user from Telegram (so avatar/name start loading immediately)
+      try {
+        const tu = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
+        if (tu) {
+          state.user = state.user || {};
+          state.user.username = tu.username;
+          state.user.first_name = tu.first_name;
+          state.user.last_name = tu.last_name;
+          state.user.photo_url = tu.photo_url;
+          if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
+          renderHeader();
+          renderProfile();
+        }
+      } catch (e) {}
     }
 
     bindOverlayClose();
