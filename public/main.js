@@ -141,6 +141,7 @@
     try {
       imgEl.decoding = "async";
       imgEl.loading = "eager";
+      try { imgEl.setAttribute("fetchpriority", "high"); } catch (e2) {}
     } catch (e) {}
 
     imgEl.style.opacity = "0.96";
@@ -361,26 +362,56 @@
   }
 
   function showSection(id) {
-    state.currentSection = id;
-    // Smooth entry animation (no more "black blink")
+    const next = $("view-" + id);
+    if (!next) return;
+
+    // If clicking the same tab again — just ensure it's visible
+    if (state.currentSection === id) {
+      next.classList.remove("hidden");
+      next.classList.remove("rc-exit");
+      requestAnimationFrame(() => next.classList.add("rc-active"));
+      try { setActiveTab(id); } catch (e) {}
+      return;
+    }
+
+    const prev = $("view-" + state.currentSection);
+
+    // Hide all other sections immediately (except prev/next)
     qsa(".app-container > section").forEach(sec => {
+      if (sec === next || sec === prev) return;
       sec.classList.add("hidden");
       sec.classList.remove("rc-active");
+      sec.classList.remove("rc-exit");
     });
 
-    const el = $("view-" + id);
-    if (el) {
-      el.classList.remove("hidden");
-      // allow CSS transition to run
-      requestAnimationFrame(() => el.classList.add("rc-active"));
+    // Animate previous section out before hiding it
+    if (prev && prev !== next) {
+      prev.classList.remove("rc-active");
+      prev.classList.add("rc-exit");
+      window.setTimeout(() => {
+        prev.classList.add("hidden");
+        prev.classList.remove("rc-exit");
+      }, 190);
     }
+
+    // Show next section with smooth fade-in
+    state.currentSection = id;
+    next.classList.remove("hidden");
+    next.classList.remove("rc-exit");
+    next.classList.remove("rc-active");
+    requestAnimationFrame(() => next.classList.add("rc-active"));
+
     try { setActiveTab(id); } catch (e) {}
   }
 
   function openOverlay(id) {
     const el = $(id);
     if (!el) return;
+
     el.style.display = "flex";
+    el.classList.remove("rc-open");
+    requestAnimationFrame(() => el.classList.add("rc-open"));
+
     document.body.style.overflow = "hidden";
 
     // small UX hooks
@@ -397,7 +428,14 @@
   }
 
   function closeAllOverlays() {
-    qsa(".overlay").forEach(el => { el.style.display = "none"; });
+    qsa(".overlay").forEach(el => {
+      let disp = "";
+      try { disp = (el.style.display || window.getComputedStyle(el).display); } catch (e) {}
+      if (disp === "none") return;
+
+      el.classList.remove("rc-open");
+      window.setTimeout(() => { el.style.display = "none"; }, 180);
+    });
     document.body.style.overflow = "";
   }
 
@@ -504,13 +542,35 @@
     state._tasksRefreshTimer = setInterval(() => {
       if (document.hidden) return;
       syncTasksOnly(false);
-    }, 12000);
+    }, 15000);
 
     // also refresh when user returns to the app
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) syncTasksOnly(state.currentSection === "tasks");
     });
   }
+
+
+  // Manual refresh button on Tasks screen
+  async function refreshTasks(manual = false) {
+    const btn = $("btn-tasks-refresh");
+    if (btn) btn.classList.add("rc-spin");
+    try {
+      await syncTasksOnly(true);
+      if (manual) {
+        tgHaptic("success");
+        tgAlert("Задания обновлены ✅", "success", "Обновление");
+      }
+    } catch (e) {
+      if (manual) {
+        tgHaptic("error");
+        tgAlert("Не удалось обновить задания: " + String(e.message || e), "error", "Обновление");
+      }
+    } finally {
+      if (btn) btn.classList.remove("rc-spin");
+    }
+  }
+  window.refreshTasks = refreshTasks;
 
 async function syncAll() {
     const payload = {
@@ -1870,6 +1930,22 @@ if (!list.length) {
       try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
     }
 
+    // Start loading avatar + name immediately (before /api/sync finishes)
+    try {
+      const tu = (tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user : null;
+      if (tu) {
+        state.user = {
+          user_id: tu.id,
+          username: tu.username || "",
+          first_name: tu.first_name || "",
+          last_name: tu.last_name || "",
+          photo_url: tu.photo_url || "",
+        };
+        renderHeader();
+        renderProfile();
+      }
+    } catch (e) {}
+
     bindOverlayClose();
     initTgSubtypeSelect();
     initTgTargetChecker();
@@ -1903,4 +1979,3 @@ if (!list.length) {
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
 })();
-
