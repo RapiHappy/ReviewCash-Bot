@@ -1017,7 +1017,17 @@ async def api_task_create(req: web.Request):
     task = (ins.data or [row])[0]
 
     await stats_add("revenue_rub", total_cost)
-    await notify_admin(f"🆕 Новое задание: {title}\nТип: {ttype}\nНаграда: {reward_rub}₽ x{qty_total}\nOwner: {uid}")
+    type_label = {"tg": "Telegram", "ya": "Яндекс Карты", "gm": "Google Карты"}.get(ttype, ttype.upper())
+    check_label = "Автопроверка" if (check_type == "auto" and ttype == "tg") else "Ручная проверка"
+    rdisp = int(reward_rub) if float(reward_rub).is_integer() else reward_rub
+    await notify_admin(
+        "🆕 Новое задание\n"
+        f"📌 {title}\n"
+        f"🧩 Тип: {type_label}\n"
+        f"💰 Оплата: {rdisp}₽\n"
+        f"📦 Кол-во: {qty_total}\n"
+        f"🛡️ Проверка: {check_label}"
+    )
 
     return web.json_response({"ok": True, "task": task})
 
@@ -1041,6 +1051,10 @@ async def api_task_click(req: web.Request):
     t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
+
+    task = t.data[0]
+    if int(task.get("owner_id") or 0) == uid:
+        return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
 
     await touch_task_click(uid, task_id)
     return web.json_response({"ok": True})
@@ -1070,6 +1084,9 @@ async def api_task_submit(req: web.Request):
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
     task = t.data[0]
+
+    if int(task.get("owner_id") or 0) == uid:
+        return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
 
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
