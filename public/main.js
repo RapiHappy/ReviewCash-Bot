@@ -924,8 +924,18 @@ if (!list.length) {
     return s;
   }
 
+  function isTaskOwner(task) {
+    const uid = state.user ? state.user.user_id : null;
+    if (!uid || !task) return false;
+    if (task.is_owner === true) return true;
+    if (task.owner_id != null && Number(task.owner_id) === Number(uid)) return true;
+    return false;
+  }
+
   function openTaskDetails(task) {
     state.currentTask = task;
+
+    const isOwner = isTaskOwner(task);
 
     $("td-title").textContent = task.title || "Задание";
     $("td-reward").textContent = "+" + fmtRub(task.reward_rub || 0);
@@ -933,7 +943,7 @@ if (!list.length) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = task.instructions || "Выполните задание и отправьте отчёт.";
+    $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + (task.instructions || "Выполните задание и отправьте отчёт.");
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
@@ -977,12 +987,20 @@ if (!list.length) {
     // action button
     const btn = $("td-action-btn");
     if (btn) {
-      if (isAuto) {
-        btn.textContent = "✅ Проверить и получить награду";
-        btn.onclick = () => submitTaskAuto(task);
+      if (isOwner) {
+        btn.textContent = "🚫 Нельзя выполнять своё задание";
+        btn.disabled = true;
+        btn.style.opacity = "0.65";
       } else {
-        btn.textContent = "📤 Отправить отчёт";
-        btn.onclick = () => submitTaskManual(task);
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        if (isAuto) {
+          btn.textContent = "✅ Проверить и получить награду";
+          btn.onclick = () => submitTaskAuto(task);
+        } else {
+          btn.textContent = "📤 Отправить отчёт";
+          btn.onclick = () => submitTaskManual(task);
+        }
       }
     }
 
@@ -1023,6 +1041,10 @@ if (!list.length) {
   };
 
   async function submitTaskAuto(task) {
+    if (isTaskOwner(task)) {
+      tgHaptic("error");
+      return tgAlert("Нельзя выполнять своё задание");
+    }
     try {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
@@ -1053,6 +1075,10 @@ if (!list.length) {
   }
 
   async function submitTaskManual(task) {
+    if (isTaskOwner(task)) {
+      tgHaptic("error");
+      return tgAlert("Нельзя выполнять своё задание");
+    }
     const nick = String(($("p-username") && $("p-username").value) || "").trim();
     const file = $("p-file") && $("p-file").files ? $("p-file").files[0] : null;
 
