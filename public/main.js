@@ -1036,8 +1036,7 @@ if (!list.length) {
 
         closeAllOverlays();
         tgHaptic("success");
-        tgAlert("Отчёт отправлен ✅ Ожидай проверки модератором." + (res.xp_expected ? ("
-После проверки будет +" + Number(res.xp_expected) + " XP") : ""));
+        tgAlert("Отчёт отправлен ✅ Ожидай проверки модератором." + (res.xp_expected ? ("\nПосле проверки будет +" + Number(res.xp_expected) + " XP") : ""));
         await syncAll();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка отправки");
