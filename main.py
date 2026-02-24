@@ -12,7 +12,6 @@ from pathlib import Path
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.enums import ParseMode
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -868,7 +867,8 @@ async def api_sync(req: web.Request):
     tasks = []
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
-        tasks = tsel.data or []
+        raw = tsel.data or []
+        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
 
     return web.json_response({
         "ok": True,
@@ -1017,17 +1017,7 @@ async def api_task_create(req: web.Request):
     task = (ins.data or [row])[0]
 
     await stats_add("revenue_rub", total_cost)
-    type_label = {"tg": "Telegram", "ya": "Яндекс Карты", "gm": "Google Карты"}.get(ttype, ttype.upper())
-    check_label = "Автопроверка" if (check_type == "auto" and ttype == "tg") else "Ручная проверка"
-    rdisp = int(reward_rub) if float(reward_rub).is_integer() else reward_rub
-    await notify_admin(
-        "🆕 Новое задание\n"
-        f"📌 {title}\n"
-        f"🧩 Тип: {type_label}\n"
-        f"💰 Оплата: {rdisp}₽\n"
-        f"📦 Кол-во: {qty_total}\n"
-        f"🛡️ Проверка: {check_label}"
-    )
+    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}")
 
     return web.json_response({"ok": True, "task": task})
 
@@ -1052,7 +1042,7 @@ async def api_task_click(req: web.Request):
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
 
-    task = t.data[0]
+    task = (t.data or [None])[0] or {}
     if int(task.get("owner_id") or 0) == uid:
         return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
 
@@ -1066,7 +1056,7 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=3, block_sec=600)
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=10, block_sec=600)
     body = await safe_json(req)
 
     banned_until = await get_task_ban_until(uid)
@@ -1133,7 +1123,11 @@ async def api_task_submit(req: web.Request):
         try:
             left = int(task.get("qty_left") or 0)
             if left > 0:
-                await sb_update(T_TASKS, {"id": task_id}, {"qty_left": left - 1})
+                new_left = max(0, left - 1)
+                upd = {"qty_left": new_left}
+                if new_left <= 0:
+                    upd["status"] = "closed"
+                await sb_update(T_TASKS, {"id": task_id}, upd)
         except Exception:
             pass
 
@@ -1442,6 +1436,7 @@ async def api_admin_summary(req: web.Request):
     tp = await sb_exec(_f)
 
     tasks = await sb_select(T_TASKS, {"status": "active"}, limit=2000)
+    tasks_active = [t for t in (tasks.data or []) if int(t.get("qty_left") or 0) > 0]
 
     return web.json_response({
         "ok": True,
@@ -1450,7 +1445,7 @@ async def api_admin_summary(req: web.Request):
             "proofs": len(proofs.data or []),
             "withdrawals": len(wds.data or []),
             "tbank": len(tp.data or []),
-            "tasks": len(tasks.data or []),
+            "tasks": len(tasks_active),
         }
     })
 
@@ -1546,7 +1541,11 @@ async def api_admin_proof_decision(req: web.Request):
         try:
             left = int(task.get("qty_left") or 0)
             if left > 0:
-                await sb_update(T_TASKS, {"id": task_id}, {"qty_left": left - 1})
+                new_left = max(0, left - 1)
+                upd = {"qty_left": new_left}
+                if new_left <= 0:
+                    upd["status"] = "closed"
+                await sb_update(T_TASKS, {"id": task_id}, upd)
         except Exception:
             pass
 
@@ -1707,47 +1706,12 @@ async def cmd_start(message: Message):
 async def cb_help(cq: CallbackQuery):
     await cq.answer()
     await cq.message.answer(
-        "📌 *Инструкция новичку — ReviewCash*\n\n"
-        "🚀 *Как зарабатывать:*\n"
-        "1️⃣ Нажми «🚀 Открыть приложение»\n"
-        "2️⃣ Выбери задание\n"
-        "3️⃣ Обязательно нажми «Перейти к выполнению»\n"
-        "4️⃣ Выполни задание\n"
-        "5️⃣ Вернись и нажми «Отправить отчёт»\n"
-        "6️⃣ Дождись проверки — получи ₽ на баланс\n\n"
-        "💰 *Начисление денег*\n"
-        "— Деньги приходят после проверки администратором  \n"
-        "— TG-задания могут проверяться автоматически\n\n"
-        "🏆 *Уровни (LVL)*\n"
-        "— За одобренные задания начисляется XP  \n"
-        "— 100 XP = +1 уровень  \n"
-        "Чем выше уровень — тем выше доверие\n\n"
-        "🎁 *Рефералка*\n"
-        "— 50₽ за каждого друга  \n"
-        "— Бонус начисляется, когда друг выполнит первое задание\n\n"
-        "⏳ *Лимиты*\n"
-        "Некоторые задания можно выполнять:\n"
-        "— 1 раз\n"
-        "— или с интервалом (1–3 дня)\n"
-        "Если задание не видно — лимит ещё не прошёл\n\n"
-        "⚡ *Режимы приложения*\n"
-        "В профиле есть переключатель «⚡ Режим»:\n"
-        "— *Слабое устройство* — меньше эффектов и реже авто-обновление заданий\n"
-        "— *Нормальное* — плавнее анимации и авто-обновление чаще\n\n"
-        "🚫 *Важно!*\n"
-        "Запрещено:\n"
-        "— фейковые скриншоты\n"
-        "— отзывы не со своего аккаунта\n"
-        "— поддельные доказательства\n\n"
-        "Если админ нажмёт «Фейк»:\n"
-        "— блокировка на 3 дня по этому заданию\n\n"
-        "❓ *Проблемы?*\n"
-        "Если не отправляется отчёт —\n"
-        "ты не нажал «Перейти к выполнению».\n\n"
-        "Работай честно — и выплаты будут без проблем 💎",
-        parse_mode=ParseMode.MARKDOWN,
+        "📌 Инструкция:\n\n"
+        "• Открой «Задания» и нажми «Выполнить»\n"
+        "• TG — подпишись/вступи и нажми «Проверить»\n"
+        "• Отзывы — прикрепи скрин и отправь на модерацию\n"
+        "• В профиле можно пополнить и вывести\n"
     )
-
 @dp.callback_query(F.data == "toggle_notify")
 async def cb_toggle_notify(cq: CallbackQuery):
     uid = cq.from_user.id
@@ -1980,9 +1944,9 @@ async def on_cleanup(app: web.Application):
 # -------------------------
 async def api_admin_task_list(req: web.Request):
     await require_admin(req)
-    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=50)
-    tasks = sel.data or []
-    # show minimal fields
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
+    raw = sel.data or []
+    tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
     return web.json_response({"ok": True, "tasks": tasks})
 
 async def api_admin_task_delete(req: web.Request):
