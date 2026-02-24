@@ -19,6 +19,7 @@ from aiogram.types import (
     PreCheckoutQuery,
     LabeledPrice,
 )
+from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -81,6 +82,92 @@ MAX_PROOF_MB = int(os.getenv("MAX_PROOF_MB", "8").strip())
 XP_PER_LEVEL = int(os.getenv("XP_PER_LEVEL", "100").strip())          # 100 xp = +1 lvl
 XP_PER_TASK_PAID = int(os.getenv("XP_PER_TASK_PAID", "10").strip())   # за оплаченный отзыв/задачу
 XP_PER_TOPUP_100 = int(os.getenv("XP_PER_TOPUP_100", "2").strip())    # за каждые 100₽ пополнения
+
+# XP by difficulty (can be tuned via env)
+XP_EASY = int(os.getenv("XP_EASY", "5").strip())
+XP_MEDIUM = int(os.getenv("XP_MEDIUM", "12").strip())
+XP_HARD = int(os.getenv("XP_HARD", "22").strip())
+XP_MANUAL_BONUS = int(os.getenv("XP_MANUAL_BONUS", "3").strip())      # extra XP for manual (with proof)
+XP_REVIEW_BONUS = int(os.getenv("XP_REVIEW_BONUS", "3").strip())      # extra XP for ya/gm reviews
+XP_MAX_PER_TASK = int(os.getenv("XP_MAX_PER_TASK", "60").strip())
+
+def _parse_task_xp_override(task: dict) -> tuple[int | None, str | None]:
+    """Return (xp_override, diff_override) from task instructions if present."""
+    ins = str((task or {}).get("instructions") or "")
+    # XP: 15
+    m = re.search(r"(?im)^\s*XP\s*:\s*(\d+)\s*$", ins)
+    if m:
+        try:
+            return int(m.group(1)), None
+        except Exception:
+            pass
+    # DIFF: easy|medium|hard
+    m = re.search(r"(?im)^\s*(DIFF|DIFFICULTY)\s*:\s*(easy|medium|hard)\s*$", ins)
+    if m:
+        return None, str(m.group(2)).lower()
+    # DIFF=hard (inline)
+    m = re.search(r"(?i)\bDIFF\s*=\s*(easy|medium|hard)\b", ins)
+    if m:
+        return None, str(m.group(1)).lower()
+    return None, None
+
+def task_xp(task: dict) -> int:
+    """Compute XP for a paid completion depending on task type/reward/difficulty."""
+    if not task:
+        return int(XP_PER_TASK_PAID)
+
+    xp_override, diff_override = _parse_task_xp_override(task)
+    if isinstance(xp_override, int) and xp_override > 0:
+        return max(1, min(int(xp_override), int(XP_MAX_PER_TASK)))
+
+    ttype = str(task.get("type") or "").strip().lower()
+    check_type = str(task.get("check_type") or "").strip().lower()
+    reward = float(task.get("reward_rub") or 0)
+
+    # determine difficulty if not overridden
+    diff = diff_override
+    if not diff:
+        if ttype in ("ya", "gm"):
+            diff = "hard" if reward >= 80 else "medium"
+        elif ttype == "tg":
+            if reward <= 5:
+                diff = "easy"
+            elif reward <= 20:
+                diff = "medium"
+            else:
+                diff = "hard"
+        else:
+            if reward <= 50:
+                diff = "easy"
+            elif reward <= 120:
+                diff = "medium"
+            else:
+                diff = "hard"
+
+    base = XP_EASY if diff == "easy" else (XP_HARD if diff == "hard" else XP_MEDIUM)
+
+    # bonuses
+    if check_type != "auto":
+        base += int(XP_MANUAL_BONUS)
+    if ttype in ("ya", "gm"):
+        base += int(XP_REVIEW_BONUS)
+
+    # small scaling by reward (keeps "harder = more")
+    base += int(min(15, max(0, round(reward * 0.05))))  # +0..+15
+
+    return max(1, min(int(base), int(XP_MAX_PER_TASK)))
+
+def strip_meta_tags(text: str) -> str:
+    """Hide internal tags like XP:/DIFF: from user-facing instructions."""
+    out = []
+    for line in str(text or "").splitlines():
+        if re.match(r"(?im)^\s*(XP\s*:|DIFF\s*:|DIFFICULTY\s*:|DIFF\s*=)", line):
+            continue
+        # old helper tag
+        if re.match(r"(?im)^\s*TG_SUBTYPE\s*:", line):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
 
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
@@ -229,6 +316,14 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
+        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
+        try:
+            for _t in (tasks or []):
+                if isinstance(_t, dict) and _t.get("instructions"):
+                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
+        except Exception:
+            pass
+
         return web.json_response({
             "ok": True,
             "valid": False,
@@ -1117,7 +1212,8 @@ async def api_task_submit(req: web.Request):
         await stats_add("payouts_rub", reward)
 
         # XP + maybe referral payout
-        await add_xp(uid, XP_PER_TASK_PAID)
+        xp_added = task_xp(task)
+        await add_xp(uid, xp_added)
         await maybe_pay_referral_bonus(uid)
 
         try:
@@ -1140,7 +1236,7 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        return web.json_response({"ok": True, "status": "paid", "earned": reward})
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
@@ -1162,7 +1258,8 @@ async def api_task_submit(req: web.Request):
         await touch_limit(uid, "gm_review")
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
-    return web.json_response({"ok": True, "status": "pending"})
+    xp_expected = task_xp(task)
+    return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
 
 # -------------------------
 # withdraw
@@ -1526,7 +1623,8 @@ async def api_admin_proof_decision(req: web.Request):
         # 2) статистика/XP/рефералка — best effort (не блокируем модерацию)
         await stats_add("payouts_rub", reward)
         try:
-            await add_xp(user_id, XP_PER_TASK_PAID)
+            xp_added = task_xp(task)
+            await add_xp(user_id, xp_added)
         except Exception as e:
             log.warning("add_xp skipped: %s", e)
 
@@ -1549,7 +1647,11 @@ async def api_admin_proof_decision(req: web.Request):
         except Exception:
             pass
 
-        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽")
+        try:
+            xp_txt = f" +{int(xp_added)} XP" if "xp_added" in locals() and int(xp_added) > 0 else ""
+        except Exception:
+            xp_txt = ""
+        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽{xp_txt}")
     else:
         # rejected / fake
         new_status = "fake" if fake else "rejected"
@@ -1563,14 +1665,18 @@ async def api_admin_proof_decision(req: web.Request):
                 until = await set_task_ban(user_id, days=3)
             except Exception:
                 until = None
-            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня."
+            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня.\n\n⚠️ Предупреждение: за фейки применяются штрафы — блокировки, заморозка выплат и возможное снятие бонусов."
             if until:
                 txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
             await notify_user(user_id, txt)
         else:
             await notify_user(user_id, "❌ Отчёт отклонён модератором.")
 
-    return web.json_response({"ok": True})
+    try:
+        resp_extra = {"xp_added": int(xp_added)} if "xp_added" in locals() else {}
+    except Exception:
+        resp_extra = {}
+    return web.json_response({"ok": True, **resp_extra})
 
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
@@ -1706,12 +1812,10 @@ async def cmd_start(message: Message):
 async def cb_help(cq: CallbackQuery):
     await cq.answer()
     await cq.message.answer(
-        "📌 Инструкция:\n\n"
-        "• Открой «Задания» и нажми «Выполнить»\n"
-        "• TG — подпишись/вступи и нажми «Проверить»\n"
-        "• Отзывы — прикрепи скрин и отправь на модерацию\n"
-        "• В профиле можно пополнить и вывести\n"
+        '📌 *Инструкция новичку — ReviewCash*\n\n🚀 *Как зарабатывать:*\n1️⃣ Нажми «🚀 Открыть приложение»\n2️⃣ Выбери задание\n3️⃣ Обязательно нажми «Перейти к выполнению»\n4️⃣ Выполни задание\n5️⃣ Вернись и нажми «Отправить отчёт»\n6️⃣ Дождись проверки — получи ₽ на баланс\n\n💰 *Начисление денег*\n— Деньги приходят после проверки администратором  \n— TG-задания могут проверяться автоматически\n\n🏆 *Уровни (LVL)*\n— За одобренные задания начисляется XP  \n— Кол-во XP зависит от сложности задания  \n— 100 XP = +1 уровень  \nЧем выше уровень — тем выше доверие\n\n🎁 *Рефералка*\n— 50₽ за каждого друга  \n— Бонус начисляется, когда друг выполнит первое задание\n\n⏳ *Лимиты*\nНекоторые задания можно выполнять:\n— 1 раз\n— или с интервалом (1–3 дня)\nЕсли задание не видно — лимит ещё не прошёл\n\n⚡ *Режимы приложения*\nВ профиле есть переключатель «⚡ Режим»:\n— *Слабое устройство* — меньше эффектов и реже авто-обновление\n— *Нормальное* — плавнее анимации и обновление чаще\n\n🚫 *Важно!*\nЗапрещено:\n— фейковые скриншоты\n— отзывы не со своего аккаунта\n— поддельные доказательства\n\nЕсли админ нажмёт «Фейк»:\n— блокировка на 3 дня по этому заданию\n— возможны штрафы (заморозка выплат/снятие бонусов) при повторных нарушениях\n\n❓ *Проблемы?*\nЕсли не отправляется отчёт —\nты не нажал «Перейти к выполнению».\n\nРаботай честно — и выплаты будут без проблем 💎',
+        parse_mode=ParseMode.MARKDOWN,
     )
+
 @dp.callback_query(F.data == "toggle_notify")
 async def cb_toggle_notify(cq: CallbackQuery):
     uid = cq.from_user.id
