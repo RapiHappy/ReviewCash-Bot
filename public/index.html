@@ -132,7 +132,22 @@
       transform: translateZ(0);
     }
 
-    /* Platform filters */
+        /* Small icon button (refresh) */
+    .icon-btn{
+      width:36px; height:36px;
+      border-radius:14px;
+      border:1px solid var(--glass-border);
+      background: var(--glass);
+      color: rgba(255,255,255,0.88);
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .icon-btn:active{ transform: scale(0.98); }
+    .icon-btn.spin{ animation: rcSpin 0.8s linear infinite; }
+
+/* Platform filters */
     .pf-bar{
       display:flex;
       gap:8px;
@@ -168,7 +183,7 @@
       align-items:center;
       justify-content:center;
     }
-    .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit: contain; }
+    .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit:cover; }
 
     /* Smooth section entry */
     .anim-entry{opacity:0; transform: translateY(8px); transition: opacity .22s ease, transform .22s ease;}
@@ -236,31 +251,7 @@
     }
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
-    
-    /* Tiny refresh button */
-    .rc-refresh{
-      width:34px; height:34px;
-      border-radius:12px;
-      border:1px solid var(--glass-border);
-      background: var(--glass);
-      color: rgba(255,255,255,0.9);
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      cursor:pointer;
-      user-select:none;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .rc-refresh:active{ transform: scale(0.98); }
-    .rc-refresh.is-loading{ animation: rcSpin 0.85s linear infinite; opacity:0.7; pointer-events:none; }
-
-    /* Low-performance mode: disable heavy effects */
-    body.rc-low .rc-toast{ backdrop-filter:none; }
-    body.rc-low .anim-entry{ transition:none; transform:none; opacity:1; }
-    body.rc-low .anim-entry.rc-active{ transform:none; opacity:1; }
-    body.rc-low #loader .loader-logo{ animation:none; }
-
-  </style>
+    </style>
 
 </head>
 
@@ -287,14 +278,15 @@
             <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;" alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
-            <button id="tasks-refresh-btn" class="rc-refresh" type="button" title="Обновить">↻</button>
-          </div>
+          <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
         </div>
-        <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
+        <div style="display:flex; gap:10px; align-self:flex-end; align-items:center;">
+          <button id="tasks-refresh-btn" class="icon-btn" onclick="refreshTasksBtn()" title="Обновить">⟳</button>
+          <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border);">
+
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
           <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
+        </div>
         </div>
       </div>
 
@@ -367,17 +359,7 @@
             <span>История операций</span>
           </div>
           <span style="opacity:0.3;">→</span>
-        
-      <div class="card" style="padding:0; overflow:hidden;">
-        <div class="menu-item" id="perf-mode-item" style="margin:0; border:none; background:transparent;">
-          <div style="display:flex; align-items:center; gap:12px;">
-            <span style="font-size:20px; background:rgba(255,213,74,0.12); width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:10px;">⚡</span>
-            <span>Режим для устройства</span>
-          </div>
-          <span id="perf-mode-label" style="opacity:0.7; font-weight:900;">Нормальное</span>
         </div>
-      </div>
-</div>
       </div>
 
       <div id="admin-panel-card" class="card" style="display:none; padding:15px; border:1px dashed var(--accent-gold); background:rgba(255,204,0,0.05);">
@@ -483,7 +465,6 @@
           <div id="td-type-badge" class="status-badge st-pending" style="margin-bottom:5px; display:inline-block;">TASK</div>
           <h2 id="td-title" style="margin:0; font-size:20px;">Задание</h2>
           <div id="td-reward" style="color:var(--accent-green); font-weight:900; font-size:24px; margin-top:5px;">+0 ₽</div>
-          <div id="own-task-hint" class="hidden" style="margin-top:8px; font-size:12px; color:#ff4d4f; font-weight:900;">🚫 Это ваше задание — выполнять нельзя</div>
         </div>
         <div id="td-icon" class="brand-box" style="width:60px; height:60px; font-size:30px;"></div>
       </div>
