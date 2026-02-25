@@ -24,6 +24,10 @@
 (function () {
   "use strict";
 
+  const RC_BUILD = "rc_20260225_181352";
+  try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
+
+
   // --------------------
   // DOM helpers
   // --------------------
@@ -1257,14 +1261,70 @@ if (!list.length) {
       return;
     }
 
+  
   function updateTgHint() {
-    const box = $("tg-check-hint-box");
-    if (!box) return;
+    const wrap = $("tg-options");
+    if (!wrap) return;
+
     const type = currentCreateType();
     if (type !== "tg") {
-      box.style.display = "none";
+      // hide when not tg
+      try { wrap.classList.add("hidden"); } catch(e) {}
       return;
     }
+    try { wrap.classList.remove("hidden"); } catch(e) {}
+
+    const sid = currentTgSubtype();
+    const raw = $("t-target") ? String($("t-target").value || "") : "";
+    const chat = normalizeTgChatInput(raw);
+    const kind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
+
+    let manual = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
+
+    try {
+      if (chat && state._tgCheck && state._tgCheck.chat === chat && state._tgCheck.forceManual) manual = true;
+    } catch (e) {}
+
+    // Find hint elements. Prefer ids, but fall back to first <b> and text inside tg-options.
+    let titleEl = $("tg-check-hint-title");
+    let textEl = $("tg-check-hint-text");
+    if (!titleEl || !textEl) {
+      const b = wrap.querySelector("b");
+      if (b) titleEl = b;
+      // text node after <br> can vary; use wrap inner div
+      const div = wrap.querySelector("div");
+      if (div) {
+        // ensure we have a span for text
+        let sp = div.querySelector("span");
+        if (!sp) {
+          sp = document.createElement("span");
+          // try to keep current content after <br>
+          div.appendChild(sp);
+        }
+        textEl = sp;
+      }
+    }
+
+    if (!titleEl || !textEl) return;
+
+    if (manual) {
+      titleEl.textContent = "🛡️ Ручная проверка:";
+      textEl.textContent = "Нужно отправить скрин/доказательства. Автоматически это не проверить.";
+      // make the box slightly reddish to avoid confusion
+      try {
+        wrap.style.background = "rgba(255, 60, 120, 0.08)";
+        wrap.style.borderColor = "rgba(255, 60, 120, 0.22)";
+      } catch(e) {}
+    } else {
+      titleEl.textContent = "⚡ Автоматическая проверка:";
+      textEl.textContent = "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
+      try {
+        wrap.style.background = "rgba(0,234,255,0.05)";
+        wrap.style.borderColor = "var(--glass-border)";
+      } catch(e) {}
+    }
+  }
+
     box.style.display = "";
 
     const sid = currentTgSubtype();
@@ -1367,6 +1427,7 @@ if (!list.length) {
   }
 
   function scheduleTgCheck() {
+    updateTgHint();
 () {
     const type = currentCreateType();
     const target = $("t-target") ? $("t-target").value : "";
@@ -1424,7 +1485,9 @@ if (!list.length) {
       total = reward * 2 * qty;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
-    }
+    
+    updateTgHint();
+  }
 
     // currency display only (backend charges RUB in this version)
     const totalEl = $("t-total");
