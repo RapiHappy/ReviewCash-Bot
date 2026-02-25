@@ -125,29 +125,14 @@
     .brand-img{
       width:100%;
       height:100%;
-      object-fit:cover;
+      object-fit:contain;
       border-radius:14px;
       display:block;
       -webkit-transform: translateZ(0);
       transform: translateZ(0);
     }
 
-        /* Small icon button (refresh) */
-    .icon-btn{
-      width:36px; height:36px;
-      border-radius:14px;
-      border:1px solid var(--glass-border);
-      background: var(--glass);
-      color: rgba(255,255,255,0.88);
-      display:flex; align-items:center; justify-content:center;
-      cursor:pointer;
-      user-select:none;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .icon-btn:active{ transform: scale(0.98); }
-    .icon-btn.spin{ animation: rcSpin 0.8s linear infinite; }
-
-/* Platform filters */
+    /* Platform filters */
     .pf-bar{
       display:flex;
       gap:8px;
@@ -183,7 +168,7 @@
       align-items:center;
       justify-content:center;
     }
-    .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit:cover; }
+    .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit:contain; }
 
     /* Smooth section entry */
     .anim-entry{opacity:0; transform: translateY(8px); transition: opacity .22s ease, transform .22s ease;}
@@ -251,7 +236,13 @@
     }
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
-    </style>
+    
+    .pf-refresh{ margin-left:auto; width:42px; justify-content:center; font-weight:900; opacity:0.9; user-select:none; }
+    #tasks-refresh-btn.spin{ animation: rcSpin .9s linear infinite; }
+    @keyframes rcSpin{ from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    html.perf-low .rc-toast{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+
+  </style>
 
 </head>
 
@@ -275,22 +266,19 @@
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
             <!-- FIX: src не должен быть пустым, иначе браузер пытается загрузить /app/ как картинку -->
-            <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:cover;" alt="Avatar">
+            <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:contain;" alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
           <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
         </div>
-        <div style="display:flex; gap:10px; align-self:flex-end; align-items:center;">
-          <button id="tasks-refresh-btn" class="icon-btn" onclick="refreshTasksBtn()" title="Обновить">⟳</button>
-          <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border);">
-
+        <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
           <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
-        </div>
         </div>
       </div>
 
       <div class="pf-bar">
+          <div class="pf-item pf-refresh" id="tasks-refresh-btn" onclick="refreshTasksBtn()" title="Обновить">↻</div>
           <div class="pf-item active" id="pf-all" onclick="setPlatformFilter('all')">Все</div>
           <div class="pf-item" id="pf-ya" onclick="setPlatformFilter('ya')"><span class="pf-ico" data-pf-ico="ya"></span>Яндекс</div>
           <div class="pf-item" id="pf-gm" onclick="setPlatformFilter('gm')"><span class="pf-ico" data-pf-ico="gm"></span>Google</div>
@@ -359,7 +347,15 @@
             <span>История операций</span>
           </div>
           <span style="opacity:0.3;">→</span>
+        
+      <div class="menu-item" onclick="togglePerfMode()">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span style="font-size:20px; background:rgba(0,234,255,0.1); width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:10px;">⚡</span>
+          <span>Режим: <b id="perf-mode-label">Нормальный</b></span>
         </div>
+        <span style="color:var(--text-dim); font-size:12px;">Сменить</span>
+      </div>
+</div>
       </div>
 
       <div id="admin-panel-card" class="card" style="display:none; padding:15px; border:1px dashed var(--accent-gold); background:rgba(255,204,0,0.05);">
@@ -606,6 +602,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=fix_20260224_4" defer></script>
+  <script src="main.js?v=rc_20260225_tg_audit_v2" defer></script>
 </body>
 </html>
