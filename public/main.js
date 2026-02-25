@@ -2204,4 +2204,3 @@ async function loadAdminTasks() {
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
 })();
-
