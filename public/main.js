@@ -1956,16 +1956,53 @@ if (!list.length) {
     });
   }
 
-  async function loadAdminTasks() {
+  
+  async function auditTgTasks() {
+    if (!state.isMainAdmin) {
+      tgAlert("Только главный админ может запускать проверку.", "error", "Админка");
+      return;
+    }
+    const ok = await tgConfirm("Проверить ВСЕ TG-задания и выставить авто/ручную проверку автоматически?");
+    if (!ok) return;
+    try {
+      tgHaptic("impact");
+      const res = await apiPost("/api/admin/task/tg_audit", {});
+      const total = Number(res.total_tg || 0);
+      const changed = Number(res.changed || 0);
+      const a = Number(res.set_auto || 0);
+      const m = Number(res.set_manual || 0);
+      const p = Number(res.problems || 0);
+      tgHaptic("success");
+      tgAlert(`Готово ✅\nTG задач: ${total}\nИзменено: ${changed}\nАвто: ${a}\nРучн.: ${m}${p ? `\nПроблем: ${p}` : ""}`, "success", "TG аудит");
+      await loadAdminTasks();
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e), "error", "TG аудит");
+    }
+  }
+
+async function loadAdminTasks() {
     const box = $("admin-task-list");
     if (!box) return;
     box.innerHTML = "";
+    // Tools (visible to all admins; action available only to main admin)
+    if (state.isAdmin) {
+      const tools = adminCard(`
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-main" data-tg-audit="1" style="flex:1;" ${state.isMainAdmin ? "" : "disabled"}>${state.isMainAdmin ? "🔄 Проверить TG задания" : "🔒 Проверить TG задания"}</button>
+        </div>
+        <div style="font-size:11px; opacity:0.65; margin-top:8px;">Авто/ручная проверка выставится по доступу бота и типу цели. (Запускать может только главный админ)</div>
+      `);
+      const b = tools.querySelector('[data-tg-audit="1"]');
+      if (b) b.onclick = auditTgTasks;
+      box.appendChild(tools);
+    }
 
     const res = await apiPost("/api/admin/task/list", {});
     const list = (res && res.tasks) ? res.tasks : [];
 
     if (!list.length) {
-      box.innerHTML = `<div class="card" style="opacity:0.7;">Нет активных заданий</div>`;
+      box.appendChild(adminCard(`<div style="opacity:0.7;">Нет активных заданий</div>`));
       return;
     }
 
@@ -1981,7 +2018,7 @@ if (!list.length) {
         <div style="display:flex; justify-content:space-between; gap:10px;">
           <div style="flex:1; min-width:0;">
             <div style="font-weight:900;">${safeText(t.title || "Задание")}</div>
-            <div style="font-size:12px; color:var(--text-dim);">Owner: ${safeText(owner)} • Награда: ${fmtRub(t.reward_rub || 0)} • Осталось: ${safeText(qty)}</div>
+            <div style="font-size:12px; color:var(--text-dim);">Награда: ${fmtRub(t.reward_rub || 0)} • Осталось: ${safeText(qty)}</div>
           </div>
           <div class="brand-box" style="width:46px; height:46px; font-size:22px;">${brandIconHtml(t, 38)}</div>
         </div>
