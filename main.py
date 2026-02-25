@@ -2175,7 +2175,7 @@ async def api_admin_task_list(req: web.Request):
     sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
     raw = sel.data or []
     tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
-    return web.json_response({"ok": True, "tasks": tasks})
+    return web.json_response({"ok": True, "tasks": tasks, "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"])})
 
 async def api_admin_task_delete(req: web.Request):
     await require_main_admin(req)
