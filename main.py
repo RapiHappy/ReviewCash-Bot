@@ -1,3 +1,18 @@
+
+@web.middleware
+async def no_cache_mw(request: web.Request, handler):
+    resp = await handler(request)
+    try:
+        if request.path.startswith("/app/") or request.path == "/app":
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+        if request.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+    except Exception:
+        pass
+    return resp
+
 import os
 import json
 import re
@@ -110,6 +125,8 @@ try:
 except Exception:
     AioCryptoPay = None
     Networks = None
+
+APP_BUILD = os.getenv("APP_BUILD", "rc_20260225_173250")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
@@ -2085,7 +2102,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
