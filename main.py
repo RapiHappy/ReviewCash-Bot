@@ -354,6 +354,24 @@ def normalize_tg_chat(s: str | None) -> str | None:
     # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
+def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
+    u = (tg_chat or "").lower().lstrip("@")
+    tu = (target_url or "").lower()
+    # bots are not auto-checkable (cannot know if user pressed Start in someone else's bot)
+    if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
+        return "bot"
+    return "chat"
+
+async def tg_calc_check_type(tg_chat: str, target_url: str) -> tuple[str, str, str]:
+    """Return (check_type, tg_kind, reason)."""
+    kind = tg_detect_kind(tg_chat, target_url)
+    if kind == "bot":
+        return "manual", kind, "BOT_TASK"
+    ok, msg = await ensure_bot_in_chat(tg_chat)
+    if ok:
+        return "auto", kind, ""
+    return "manual", kind, (msg or "NO_ACCESS")
+
 
 async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
     # cache for 5 minutes
@@ -1159,15 +1177,31 @@ async def api_task_create(req: web.Request):
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
-    # TG task: require bot in chat/channel
+    # TG task:
+    # - принимаем только @юзернейм или ссылку t.me/...
+    # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
-        tg_chat_n = normalize_tg_chat(tg_chat or target_url)
+        raw_tg = (tg_chat or target_url or "").strip()
+        raw_low = raw_tg.lower()
+
+        if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
+            return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
+
+        tg_chat_n = normalize_tg_chat(raw_tg)
         if not tg_chat_n:
-            return json_error(400, "Для TG задания укажи @группу или @канал (например @MyChannel)", code="TG_CHAT_REQUIRED")
+            return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
         tg_chat = tg_chat_n
-        ok_chat, msg = await ensure_bot_in_chat(tg_chat)
-        if not ok_chat:
-            return json_error(400, msg, code="TG_BOT_NOT_IN_CHAT")
+
+        # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
+        try:
+            await bot.get_chat(tg_chat)
+        except Exception:
+            return json_error(400, "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.", code="TG_BAD_TARGET")
+
+        desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+        tg_kind = desired_kind
+        check_type = desired_check_type
+
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
@@ -2108,6 +2142,7 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
+app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
@@ -2156,6 +2191,60 @@ async def api_admin_task_delete(req: web.Request):
         pass
     return web.json_response({"ok": True})
 # =========================================================
+
+async def api_admin_tg_audit(req: web.Request):
+    # This action modifies tasks, so only main admin.
+    await require_main_admin(req)
+
+    # fetch active tasks (up to 500), filter tg here
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=500)
+    raw = sel.data or []
+    tg_tasks = [t for t in raw if t.get("type") == "tg" and int(t.get("qty_left") or 0) > 0]
+
+    changed = 0
+    set_auto = 0
+    set_manual = 0
+    problems = 0
+
+    for t in tg_tasks:
+        task_id = t.get("id")
+        tg_chat = (t.get("tg_chat") or "").strip()
+        target_url = str(t.get("target_url") or "")
+        if not tg_chat:
+            continue
+
+        try:
+            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+        except Exception:
+            problems += 1
+            continue
+
+        upd = {}
+        if (t.get("check_type") or "manual") != desired_check_type:
+            upd["check_type"] = desired_check_type
+        if (t.get("tg_kind") or "") != desired_kind:
+            upd["tg_kind"] = desired_kind
+
+        if upd:
+            try:
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                changed += 1
+                if desired_check_type == "auto":
+                    set_auto += 1
+                else:
+                    set_manual += 1
+            except Exception:
+                problems += 1
+
+    return web.json_response({
+        "ok": True,
+        "total_tg": len(tg_tasks),
+        "changed": changed,
+        "set_auto": set_auto,
+        "set_manual": set_manual,
+        "problems": problems,
+    })
+
 # Gunicorn entrypoint: expose 'app'
 # =========================================================
 app = make_app()
