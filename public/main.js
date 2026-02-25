@@ -1207,7 +1207,7 @@ if (!list.length) {
   // --------------------
   let _tgCheckTimer = null;
   let _tgCheckSeq = 0;
-  state._tgCheck = { value: "", valid: false, chat: null, msg: "" };
+  state._tgCheck = { value: "", valid: false, chat: null, msg: "", forceManual: false };
 
   function normalizeTgChatInput(v) {
     const s = String(v || "").trim();
@@ -1221,6 +1221,31 @@ if (!list.length) {
     return null;
   }
 
+  const TG_MANUAL_ONLY = new Set(["bot_start", "bot_msg", "open_miniapp", "view_react", "poll"]);
+
+  function tgIsBotTarget(rawTarget, tgChat) {
+    const raw = String(rawTarget || "").toLowerCase();
+    const chat = String(tgChat || "").toLowerCase().replace(/^@/, "");
+    if (chat.endsWith("bot")) return true;
+    if (raw.includes("?start=") || raw.includes("&start=") || raw.includes("/start")) return true;
+    if (raw.includes("t.me/") && raw.match(/t\.me\/(?:s\/)?[a-z0-9_]+bot\b/i)) return true;
+    return false;
+  }
+
+  function tgTargetToUrl(rawTarget) {
+    const s = String(rawTarget || "").trim();
+    if (!s) return "";
+    if (/t\.me\//i.test(s)) return normalizeUrl(s);
+    const m = s.match(/^@([A-Za-z0-9_]{3,})$/);
+    if (m && m[1]) return "https://t.me/" + m[1];
+    return normalizeUrl(s);
+  }
+
+  function tgAutoPossible(subType, tgKind) {
+    if (tgKind !== "chat") return false;
+    return subType === "sub_channel" || subType === "join_group";
+  }
+
   function setTargetStatus(kind, title, desc) {
     const box = $("t-target-status");
     if (!box) return;
@@ -1232,6 +1257,42 @@ if (!list.length) {
       return;
     }
 
+  function updateTgHint() {
+    const box = $("tg-check-hint-box");
+    if (!box) return;
+    const type = currentCreateType();
+    if (type !== "tg") {
+      box.style.display = "none";
+      return;
+    }
+    box.style.display = "";
+
+    const sid = currentTgSubtype();
+    const raw = $("t-target") ? String($("t-target").value || "") : "";
+    const chat = normalizeTgChatInput(raw);
+    const kind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
+
+    let manual = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
+
+    try {
+      if (chat && state._tgCheck && state._tgCheck.chat === chat && state._tgCheck.forceManual) {
+        manual = true;
+      }
+    } catch (e) {}
+
+    const tEl = $("tg-check-hint-title");
+    const xEl = $("tg-check-hint-text");
+    if (!tEl || !xEl) return;
+
+    if (manual) {
+      tEl.textContent = "🛡️ Ручная проверка:";
+      xEl.textContent = "Нужно отправить скрин/доказательства. Автоматически это не проверить.";
+    } else {
+      tEl.textContent = "⚡ Автоматическая проверка:";
+      xEl.textContent = "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
+    }
+  }
+
     const spinner = k === "loading" ? '<span class="st-spin" aria-hidden="true"></span>' : "";
     const ico = k === "ok" ? "✅" : k === "err" ? "⚠️" : k === "loading" ? "" : "";
 
@@ -1241,26 +1302,34 @@ if (!list.length) {
     `;
   }
 
+  
   async function runTgCheckNow(rawValue) {
+    const type = currentCreateType();
     const value = String(rawValue || "").trim();
-    const chat = normalizeTgChatInput(value);
 
-    state._tgCheck.value = value;
-    state._tgCheck.valid = false;
-    state._tgCheck.chat = null;
-    state._tgCheck.msg = "";
-
-    if (!value) {
+    if (type !== "tg") {
       setTargetStatus("", "", "");
       return;
     }
 
+    const sid = currentTgSubtype();
+    const chat = normalizeTgChatInput(value);
+
     if (!chat) {
-      setTargetStatus(
-        "err",
-        "Нужен @юзернейм канала/группы",
-        "Пример: @MyChannel или https://t.me/MyChannel"
-      );
+      setTargetStatus("err", "Нужен @юзернейм или ссылка t.me", "Пример: @MyChannel или https://t.me/MyChannel");
+      return;
+    }
+
+    const kind = tgIsBotTarget(value, chat) ? "bot" : "chat";
+    const manualOnly = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
+
+    if (manualOnly) {
+      const label = kind === "bot" ? `Бот: ${chat}` : `TG: ${chat}`;
+      state._tgCheck.valid = true;
+      state._tgCheck.chat = chat;
+      state._tgCheck.forceManual = true;
+      setTargetStatus("ok", label, "Ручная проверка (скрин) ✅");
+      updateTgHint();
       return;
     }
 
@@ -1273,26 +1342,32 @@ if (!list.length) {
 
       if (res && res.ok && res.valid) {
         const name = res.title ? String(res.title) : chat;
-        const type = res.type ? (String(res.type) === "channel" ? "Канал" : "Группа") : "Чат";
+        const tp = res.type ? (String(res.type) === "channel" ? "Канал" : "Группа") : "Чат";
         state._tgCheck.valid = true;
         state._tgCheck.chat = res.chat || chat;
-        setTargetStatus("ok", `${type}: ${name}`, "Можно создавать задание ✅");
+        state._tgCheck.forceManual = false;
+        setTargetStatus("ok", `${tp}: ${name}`, "Авто-проверка доступна ✅");
+        updateTgHint();
       } else {
-        const msg = (res && (res.message || res.error)) ? String(res.message || res.error) : "Не удалось проверить";
-        state._tgCheck.valid = false;
-        state._tgCheck.chat = res && res.chat ? res.chat : chat;
-        state._tgCheck.msg = msg;
-        setTargetStatus("err", "Нельзя создать TG-задание", msg);
+        // fallback to manual
+        state._tgCheck.valid = true;
+        state._tgCheck.chat = chat;
+        state._tgCheck.forceManual = true;
+        setTargetStatus("ok", `TG: ${chat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+        updateTgHint();
       }
     } catch (e) {
       if (seq !== _tgCheckSeq) return;
-      state._tgCheck.valid = false;
-      const msg = prettifyErrText(String(e.message || e));
-      setTargetStatus("err", "Проверка не прошла", msg);
+      state._tgCheck.valid = true;
+      state._tgCheck.chat = chat;
+      state._tgCheck.forceManual = true;
+      setTargetStatus("ok", `TG: ${chat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+      updateTgHint();
     }
   }
 
   function scheduleTgCheck() {
+() {
     const type = currentCreateType();
     const target = $("t-target") ? $("t-target").value : "";
 
@@ -1421,8 +1496,9 @@ if (!list.length) {
       subType = conf.id;
 
       tgChat = normalizeTgChatInput(target);
-      checkType = tgChat ? "auto" : "manual";
-      tgKind = "member_check";
+      tgKind = tgIsBotTarget(target, tgChat) ? "bot" : "chat";
+      const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType);
+      checkType = manualOnly ? "manual" : (tgAutoPossible(subType, tgKind) ? "auto" : "manual");
     }
 
 
@@ -1433,36 +1509,50 @@ if (!list.length) {
         scheduleTgCheck();
         return;
       }
+      // If we checked and it failed, we will fallback to manual check (no hard block)
 
-      // If we already checked this chat and it failed — show the reason
-      try {
-        if (state._tgCheck && state._tgCheck.chat === tgChat && state._tgCheck.valid === false && state._tgCheck.msg) {
-          tgAlert(state._tgCheck.msg, "error", "Нельзя создать TG-задание");
-          return;
-        }
-      } catch (e) {}
+      // TG check:
+      // - For bots and manual-only subtypes: no membership check, manual proof.
+      // - For membership subtypes: try auto-check; if not possible, fallback to manual (no hard error).
+      const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind);
 
-      // Quick server check (shows nice animated status)
-      try {
-        setTargetStatus("loading", "Проверяем…", "Это занимает пару секунд");
-        const chk = await apiPost("/api/tg/check_chat", { target: tgChat });
-        if (!chk || !chk.valid) {
-          const msg = chk && (chk.message || chk.error) ? String(chk.message || chk.error) : "Добавь бота в чат/канал и попробуй снова";
-          setTargetStatus("err", "Нельзя создать TG-задание", msg);
-          tgAlert(msg, "error", "Проверка Telegram");
-          return;
-        }
-        // ok
-        const nm = chk.title ? String(chk.title) : tgChat;
-        const tp = chk.type ? (String(chk.type) === "channel" ? "Канал" : "Группа") : "Чат";
-        setTargetStatus("ok", `${tp}: ${nm}`, "ОК ✅");
+      if (manualOnly) {
+        const label = tgKind === "bot" ? `Бот: ${tgChat}` : `TG: ${tgChat}`;
+        setTargetStatus("ok", label, "Ручная проверка (нужен скрин) ✅");
         state._tgCheck.valid = true;
-        state._tgCheck.chat = chk.chat || tgChat;
-      } catch (e) {
-        const msg = prettifyErrText(String(e.message || e));
-        setTargetStatus("err", "Проверка не прошла", msg);
-        tgAlert(msg, "error", "Проверка Telegram");
-        return;
+        state._tgCheck.chat = tgChat;
+        state._tgCheck.forceManual = true;
+        checkType = "manual";
+        updateTgHint();
+      } else {
+        try {
+          setTargetStatus("loading", "Проверяем…", "Проверяем доступ бота для авто-проверки");
+          const chk = await apiPost("/api/tg/check_chat", { target: tgChat });
+          if (chk && chk.ok && chk.valid) {
+            const nm = chk.title ? String(chk.title) : tgChat;
+            const tp = chk.type ? (String(chk.type) === "channel" ? "Канал" : "Группа") : "Чат";
+            setTargetStatus("ok", `${tp}: ${nm}`, "Авто-проверка доступна ✅");
+            state._tgCheck.valid = true;
+            state._tgCheck.chat = chk.chat || tgChat;
+            state._tgCheck.forceManual = false;
+            checkType = "auto";
+            updateTgHint();
+          } else {
+            const msg = (chk && (chk.message || chk.error)) ? String(chk.message || chk.error) : "Авто-проверка недоступна";
+            checkType = "manual";
+            state._tgCheck.forceManual = true;
+            setTargetStatus("ok", `TG: ${tgChat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+            updateTgHint();
+            tgAlert(msg + "\nЗадание будет создано с ручной проверкой.", "info", "Проверка Telegram");
+          }
+        } catch (e) {
+          const msg = prettifyErrText(String(e.message || e));
+          checkType = "manual";
+          state._tgCheck.forceManual = true;
+          setTargetStatus("ok", `TG: ${tgChat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+          updateTgHint();
+          tgAlert(msg + "\nЗадание будет создано с ручной проверкой.", "info", "Проверка Telegram");
+        }
       }
     }
     try {
@@ -1470,7 +1560,7 @@ if (!list.length) {
       const res = await apiPost("/api/task/create", {
         type: type,
         title: title,
-        target_url: normalizeUrl(target),
+        target_url: (type === "tg") ? tgTargetToUrl(target) : normalizeUrl(target),
         instructions: txt,
         reward_rub: reward,
         cost_rub: cost,
