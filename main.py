@@ -1,20 +1,4 @@
 
-@web.middleware
-async def no_cache_mw(request: web.Request, handler):
-    resp = await handler(request)
-    try:
-        if request.path.startswith("/app/") or request.path == "/app":
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-        if request.path.startswith("/api/"):
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-    except Exception:
-        pass
-    return resp
-
-
-APP_BUILD = os.getenv("APP_BUILD", "rc_20260225_181352")
 import os
 import json
 import re
@@ -26,6 +10,39 @@ from datetime import datetime, timezone, date, timedelta
 from urllib.parse import parse_qsl
 
 from urllib.parse import urlparse
+
+# ---------------------------------------------------------
+# Build / cache-busting for Telegram WebView
+# ---------------------------------------------------------
+# Telegram sometimes caches MiniApp aggressively. We force a unique build id per deploy.
+# Priority:
+#  1) explicit APP_BUILD env
+#  2) Render commit hash (if available)
+#  3) startup timestamp
+APP_BUILD = (os.getenv("APP_BUILD") or "").strip()
+if not APP_BUILD:
+    commit = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or "").strip()
+    if commit:
+        APP_BUILD = f"rc_{commit[:12]}"
+    else:
+        APP_BUILD = "rc_" + datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+
+@web.middleware
+async def no_cache_mw(request: web.Request, handler):
+    resp = await handler(request)
+    try:
+        if request.path.startswith("/app/") or request.path == "/app":
+            resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        if request.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return resp
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
@@ -2102,7 +2119,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
@@ -2115,7 +2132,13 @@ def make_app():
             raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            return web.FileResponse(static_dir / "index.html")
+            # Telegram WebView can cache index.html; we stamp the build into asset URLs.
+            try:
+                html = (static_dir / "index.html").read_text("utf-8")
+                html = html.replace("__APP_BUILD__", APP_BUILD)
+                return web.Response(text=html, content_type="text/html")
+            except Exception:
+                return web.FileResponse(static_dir / "index.html")
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
