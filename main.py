@@ -1921,10 +1921,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
     if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1970,7 +1970,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2159,7 +2159,7 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
-app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
