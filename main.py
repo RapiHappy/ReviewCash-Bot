@@ -1,4 +1,3 @@
-
 import os
 import json
 import re
@@ -10,39 +9,6 @@ from datetime import datetime, timezone, date, timedelta
 from urllib.parse import parse_qsl
 
 from urllib.parse import urlparse
-
-# ---------------------------------------------------------
-# Build / cache-busting for Telegram WebView
-# ---------------------------------------------------------
-# Telegram sometimes caches MiniApp aggressively. We force a unique build id per deploy.
-# Priority:
-#  1) explicit APP_BUILD env
-#  2) Render commit hash (if available)
-#  3) startup timestamp
-APP_BUILD = (os.getenv("APP_BUILD") or "").strip()
-if not APP_BUILD:
-    commit = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or "").strip()
-    if commit:
-        APP_BUILD = f"rc_{commit[:12]}"
-    else:
-        APP_BUILD = "rc_" + datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-
-
-@web.middleware
-async def no_cache_mw(request: web.Request, handler):
-    resp = await handler(request)
-    try:
-        if request.path.startswith("/app/") or request.path == "/app":
-            resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-        if request.path.startswith("/api/"):
-            resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-    except Exception:
-        pass
-    return resp
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
@@ -123,6 +89,27 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
 from pathlib import Path
 
 from aiohttp import web
+
+# -------------------------
+# Build/version for cache-busting (Telegram WebView)
+# -------------------------
+APP_BUILD = os.getenv("APP_BUILD") or os.getenv("RENDER_GIT_COMMIT") or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
+
+@web.middleware
+async def no_cache_mw(request: web.Request, handler):
+    resp = await handler(request)
+    try:
+        if request.path.startswith("/app/") or request.path == "/app":
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+        if request.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+    except Exception:
+        pass
+    return resp
+
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -1938,10 +1925,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
 
     if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1987,7 +1974,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2119,7 +2106,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware, no_cache_mw], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
@@ -2132,13 +2119,22 @@ def make_app():
             raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            # Telegram WebView can cache index.html; we stamp the build into asset URLs.
+            # Отдаём index.html с подстановкой билда — чтобы Telegram WebView не залипал на старом кеше
+            html_path = static_dir / "index.html"
             try:
-                html = (static_dir / "index.html").read_text("utf-8")
-                html = html.replace("__APP_BUILD__", APP_BUILD)
-                return web.Response(text=html, content_type="text/html")
+                html = html_path.read_text(encoding="utf-8")
             except Exception:
-                return web.FileResponse(static_dir / "index.html")
+                return web.FileResponse(html_path)
+            html = html.replace("__APP_BUILD__", APP_BUILD)
+            return web.Response(
+                text=html,
+                content_type="text/html",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
@@ -2182,7 +2178,7 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
-    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
