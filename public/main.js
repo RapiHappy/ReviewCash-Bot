@@ -1364,6 +1364,16 @@ if (!list.length) {
 
   
   async function runTgCheckNow(rawValue) {
+    const sid = currentTgSubtype();
+    const raw = $("t-target") ? String($("t-target").value || "") : "";
+    const chat = normalizeTgChatInput(raw);
+    const kind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
+
+    if (kind === "bot" || sid === "bot_start") {
+      return; // НИКОГДА не проверяем чат для bot_start
+    }
+
+
     const type = currentCreateType();
     const value = String(rawValue || "").trim();
 
