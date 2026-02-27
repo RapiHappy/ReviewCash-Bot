@@ -1,4 +1,3 @@
-# ======= main.py (patched full) =======
 import os
 import json
 import re
@@ -87,8 +86,8 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
                     return False, f"HTTP {r.status}"
     except Exception:
         return False, "не удалось открыть ссылку"
-
 from pathlib import Path
+
 from aiohttp import web
 
 # -------------------------
@@ -110,6 +109,7 @@ async def no_cache_mw(request: web.Request, handler):
     except Exception:
         pass
     return resp
+
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -313,10 +313,16 @@ T_REF = "referral_events"
 
 # -------------------------
 # In-memory rate limiting (per process)
+#   - 1 minute between actions
+#   - if spamming, block for 10 minutes
 # -------------------------
 RATE_LIMIT_STATE: dict[tuple[int, str], dict] = {}
 TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
 
+
+# -------------------------
+# helpers: supabase safe exec in thread
+# -------------------------
 async def sb_exec(fn):
     return await asyncio.to_thread(fn)
 
@@ -361,21 +367,24 @@ def normalize_tg_chat(s: str | None) -> str | None:
     t = str(s).strip()
     if not t:
         return None
+    # accept https://t.me/name or @name or name
     t = re.sub(r"^https?://t\.me/", "", t)
     t = t.split("?")[0].split("/")[0]
     if not t.startswith("@"):
         t = "@" + t
+    # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
-
 def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     u = (tg_chat or "").lower().lstrip("@")
     tu = (target_url or "").lower()
+    # bots are not auto-checkable (cannot know if user pressed Start in someone else's bot)
     if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
         return "bot"
     return "chat"
 
 async def tg_calc_check_type(tg_chat: str, target_url: str) -> tuple[str, str, str]:
+    """Return (check_type, tg_kind, reason)."""
     kind = tg_detect_kind(tg_chat, target_url)
     if kind == "bot":
         return "manual", kind, "BOT_TASK"
@@ -384,7 +393,9 @@ async def tg_calc_check_type(tg_chat: str, target_url: str) -> tuple[str, str, s
         return "auto", kind, ""
     return "manual", kind, (msg or "NO_ACCESS")
 
+
 async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
+    # cache for 5 minutes
     key = str(chat_username).lower()
     now = _now().timestamp()
     if key in TG_CHAT_CACHE:
@@ -409,9 +420,13 @@ async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
         TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить чат. Добавь бота в группу/канал (и для канала — админом), затем попробуй снова.")
         return False, TG_CHAT_CACHE[key][2]
 
+# -------------------------
+# API: TG chat check (for UI animation)
+# -------------------------
 async def api_tg_check_chat(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    # Light rate limit: ~1 request per 2 seconds; spam -> 1 minute block
     rate_limit_enforce(uid, "tg_check", min_interval_sec=2, spam_strikes=8, block_sec=60)
 
     body = await safe_json(req)
@@ -419,6 +434,14 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
+        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
+        try:
+            for _t in (tasks or []):
+                if isinstance(_t, dict) and _t.get("instructions"):
+                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
+        except Exception:
+            pass
+
         return web.json_response({
             "ok": True,
             "valid": False,
@@ -452,6 +475,7 @@ async def api_tg_check_chat(req: web.Request):
         "type": ctype,
         "title": title,
     })
+
 
 async def sb_upsert(table: str, row: dict, on_conflict: str | None = None):
     def _f():
@@ -518,6 +542,9 @@ async def sb_select_in(
         return q.execute()
     return await sb_exec(_f)
 
+# -------------------------
+# Telegram initData verify (WebApp)
+# -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
     if not init_data:
         return None
@@ -544,6 +571,9 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
+# -------------------------
+# anti-fraud: device limits
+# -------------------------
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -592,6 +622,9 @@ async def anti_fraud_check_and_touch(
         return False, f"Слишком много аккаунтов на одном устройстве ({len(users)})."
     return True, None
 
+# -------------------------
+# levels / balances
+# -------------------------
 def calc_level(xp: int) -> int:
     if XP_PER_LEVEL <= 0:
         return 1
@@ -601,6 +634,7 @@ async def get_balance(uid: int):
     r = await sb_select(T_BAL, {"user_id": uid}, limit=1)
     if r.data:
         row = r.data[0] or {}
+        # normalize possible NULLs from DB
         xp = int(row.get("xp") or 0)
         lvl = row.get("level")
         try:
@@ -610,15 +644,18 @@ async def get_balance(uid: int):
         calc_lvl = calc_level(xp)
         if not lvl or lvl < 1:
             lvl = calc_lvl
+        # if DB stored wrong level - fix silently
         if lvl != calc_lvl:
             lvl = calc_lvl
         row["xp"] = xp
         row["level"] = lvl
+        # best-effort persist fixes
         try:
             await sb_update(T_BAL, {"user_id": uid}, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
         except Exception:
             pass
         return row
+    # ensure row exists
     try:
         await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "level": 1, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
     except Exception:
@@ -650,7 +687,13 @@ async def sub_rub(uid: int, amount: float) -> bool:
     await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
     return True
 
+# -------------------------
+# stats
+# -------------------------
 async def stats_add(field: str, amount: float):
+    """Best-effort daily stats.
+    Never blocks payouts/flows if stats table is missing or schema differs.
+    """
     try:
         day = _day().isoformat()
         r = await sb_select(T_STATS, {"day": day}, limit=1)
@@ -664,9 +707,13 @@ async def stats_add(field: str, amount: float):
     except Exception as e:
         log.warning("stats_add skipped (%s): %s", field, e)
 
+# -------------------------
+# referral system (bonus 1 time after first paid task)
+# -------------------------
 async def ensure_referral_event(referred_id: int, referrer_id: int):
     if referrer_id == referred_id:
         return
+    # если уже есть — не трогаем
     try:
         exist = await sb_select(T_REF, {"referred_id": referred_id}, limit=1)
         if exist.data:
@@ -693,6 +740,7 @@ async def maybe_pay_referral_bonus(referred_id: int):
         if not referrer_id:
             return
 
+        # проверим что реферер не забанен
         u = await sb_select(T_USERS, {"user_id": referrer_id}, limit=1)
         if u.data and u.data[0].get("is_banned"):
             await sb_update(T_REF, {"referred_id": referred_id}, {"status": "cancelled"})
@@ -702,7 +750,8 @@ async def maybe_pay_referral_bonus(referred_id: int):
 
         await add_rub(referrer_id, bonus)
         await stats_add("payouts_rub", bonus)
-        await add_xp(referrer_id, XP_PER_TASK_PAID)
+
+        await add_xp(referrer_id, XP_PER_TASK_PAID)  # небольшой бонус XP рефереру
 
         await sb_update(T_REF, {"referred_id": referred_id}, {
             "status": "paid",
@@ -714,6 +763,7 @@ async def maybe_pay_referral_bonus(referred_id: int):
         log.warning("maybe_pay_referral_bonus failed: %s", e)
 
 async def referrals_summary(uid: int):
+    # count
     try:
         c = await sb_select(T_REF, {"referrer_id": uid}, columns="referred_id,status,bonus_rub", limit=5000)
         rows = c.data or []
@@ -722,11 +772,17 @@ async def referrals_summary(uid: int):
         pending = sum(1 for x in rows if (x.get("status") == "pending"))
         return {"count": count, "earned_rub": earned, "pending": pending}
     except Exception:
+        # fallback via users.referrer_id
         u = await sb_select(T_USERS, {"referrer_id": uid}, columns="user_id", limit=5000)
         return {"count": len(u.data or []), "earned_rub": 0.0, "pending": 0}
 
+# -------------------------
+# users
+# -------------------------
 async def ensure_user(user: dict, referrer_id: int | None = None):
     uid = int(user["id"])
+
+    # узнаём новый ли пользователь
     existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
     is_new = not (existing.data or [])
 
@@ -739,18 +795,23 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         "last_seen_at": _now().isoformat(),
     }
 
+    # referrer записываем только при первом входе и если ещё не установлен
     if is_new and referrer_id and referrer_id != uid:
         upd["referrer_id"] = referrer_id
 
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
     await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
 
+    # создаём referral_event (pending) только если новый и referrer есть
     if is_new and referrer_id and referrer_id != uid:
         await ensure_referral_event(uid, referrer_id)
 
     u = await sb_select(T_USERS, {"user_id": uid}, limit=1)
     return (u.data or [upd])[0]
 
+# -------------------------
+# limits (ya/gm cooldown)
+# -------------------------
 async def check_limit(uid: int, key: str, cooldown_sec: int):
     r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
     last_at = None
@@ -774,6 +835,10 @@ async def touch_limit(uid: int, key: str):
         on_conflict="user_id,limit_key"
     )
 
+
+# -------------------------
+# user notifications (mute/unmute) via user_limits
+# -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
 
 async def is_notify_muted(uid: int) -> bool:
@@ -793,9 +858,13 @@ async def set_notify_muted(uid: int, muted: bool):
     else:
         await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY})
 
+
+# -------------------------
+# Task access bans + "must click link" tracking
+# -------------------------
 TASK_BAN_KEY = "task_ban_until"
 CLICK_PREFIX = "clicked_task:"
-CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())
+CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())  # must click within 6h
 
 def _parse_dt(v):
     try:
@@ -804,6 +873,7 @@ def _parse_dt(v):
         return None
 
 async def get_task_ban_until(uid: int):
+    """Returns datetime until user is blocked from submitting tasks, or None."""
     try:
         r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY}, limit=1)
         if not r.data:
@@ -811,6 +881,7 @@ async def get_task_ban_until(uid: int):
         until = _parse_dt(r.data[0].get("last_at"))
         if not until:
             return None
+        # expired -> cleanup
         if until <= _now():
             try:
                 await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY})
@@ -839,6 +910,7 @@ async def touch_task_click(uid: int, task_id: str):
     )
 
 async def require_recent_task_click(uid: int, task_id: str) -> bool:
+    """Returns True if user clicked task link recently."""
     key = CLICK_PREFIX + str(task_id)
     try:
         r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
@@ -858,6 +930,9 @@ async def clear_task_click(uid: int, task_id: str):
     except Exception:
         pass
 
+# -------------------------
+# Telegram auto-check: member status
+# -------------------------
 async def tg_is_member(chat: str, user_id: int) -> bool:
     try:
         cm = await bot.get_chat_member(chat_id=chat, user_id=user_id)
@@ -867,6 +942,9 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
         log.warning("get_chat_member failed: %s", e)
         return False
 
+# -------------------------
+# notify helpers
+# -------------------------
 async def notify_admin(text: str):
     for aid in ADMIN_IDS:
         try:
@@ -886,6 +964,9 @@ async def notify_user(uid: int, text: str, force: bool = False):
     except Exception:
         pass
 
+# =========================================================
+# WEB API (Mini App -> backend)
+# =========================================================
 def get_ip(req: web.Request) -> str:
     xff = req.headers.get("X-Forwarded-For", "")
     if xff:
@@ -956,12 +1037,18 @@ async def require_main_admin(req: web.Request) -> dict:
         raise web.HTTPForbidden(text="Not main admin")
     return user
 
+# -------------------------
+# API: referrals summary (for MiniApp)
+# -------------------------
 async def api_referrals(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
     s = await referrals_summary(uid)
     return web.json_response({"ok": True, **s})
 
+# -------------------------
+# API: sync
+# -------------------------
 async def api_sync(req: web.Request):
     _, user = await require_init(req)
     body = await safe_json(req)
@@ -1010,6 +1097,9 @@ async def api_sync(req: web.Request):
         "task_ban_until": banned_until.isoformat() if banned_until else None,
     })
 
+# -------------------------
+# Proof upload (Supabase Storage)
+# -------------------------
 def safe_filename(name: str) -> str:
     name = (name or "proof").strip()
     name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
@@ -1096,6 +1186,7 @@ async def api_task_create(req: web.Request):
     if not title or not target_url:
         raise web.HTTPBadRequest(text="Missing title/target_url")
 
+    # Only links/@usernames allowed. For YA/GM: validate + ensure URL is reachable.
     if ttype in ("ya", "gm"):
         ok_u, norm_u, err = validate_target_url(ttype, target_url)
         if not ok_u:
@@ -1104,10 +1195,12 @@ async def api_task_create(req: web.Request):
         if not ok_alive:
             return json_error(400, f"Ссылка не открывается или не подходит: {why}", code="LINK_DEAD")
         target_url = norm_u
-
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
+    # TG task:
+    # - принимаем только @юзернейм или ссылку t.me/...
+    # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
         raw_tg = (tg_chat or target_url or "").strip()
         raw_low = raw_tg.lower()
@@ -1120,6 +1213,7 @@ async def api_task_create(req: web.Request):
             return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
         tg_chat = tg_chat_n
 
+        # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
         try:
             await bot.get_chat(tg_chat)
         except Exception:
@@ -1129,10 +1223,12 @@ async def api_task_create(req: web.Request):
         tg_kind = desired_kind
         check_type = desired_check_type
 
+
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
 
     total_cost = cost_rub
+
     ok = await sub_rub(uid, total_cost)
     if not ok:
         return web.json_response({"ok": False, "error": f"Недостаточно RUB. Нужно {total_cost:.2f}"}, status=400)
@@ -1164,8 +1260,9 @@ async def api_task_create(req: web.Request):
 
     return web.json_response({"ok": True, "task": task})
 
+
 # -------------------------
-# API: task click
+# API: task click (must open link before submitting proof)
 # -------------------------
 async def api_task_click(req: web.Request):
     _, user = await require_init(req)
@@ -1190,6 +1287,7 @@ async def api_task_click(req: web.Request):
 
     await touch_task_click(uid, task_id)
     return web.json_response({"ok": True})
+
 
 # -------------------------
 # API: submit task
@@ -1222,6 +1320,7 @@ async def api_task_submit(req: web.Request):
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
 
+    # cooldown for reviews
     if task.get("type") == "ya":
         ok_lim, rem = await check_limit(uid, "ya_review", YA_COOLDOWN_SEC)
         if not ok_lim:
@@ -1231,17 +1330,18 @@ async def api_task_submit(req: web.Request):
         if not ok_lim:
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
+    # duplicate check
     dup = await sb_select(T_COMP, {"task_id": task_id, "user_id": uid}, limit=1)
     if dup.data:
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
 
+    # require that user opened the task link (anti-fake) for manual checks
     if not is_auto:
         ok_clicked = await require_recent_task_click(uid, task_id)
         if not ok_clicked:
             return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
-
     if is_auto:
         chat = task.get("tg_chat") or ""
         if not chat:
@@ -1255,6 +1355,7 @@ async def api_task_submit(req: web.Request):
         await add_rub(uid, reward)
         await stats_add("payouts_rub", reward)
 
+        # XP + maybe referral payout
         xp_added = task_xp(task)
         await add_xp(uid, xp_added)
         await maybe_pay_referral_bonus(uid)
@@ -1281,6 +1382,7 @@ async def api_task_submit(req: web.Request):
 
         return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
+    # manual proof: обязательно нужен proof_url
     if not proof_url:
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
@@ -1344,7 +1446,7 @@ async def api_withdraw_list(req: web.Request):
     return web.json_response({"ok": True, "withdrawals": r.data or []})
 
 # -------------------------
-# T-Bank claim
+# T-Bank claim (Mini App -> API)
 # -------------------------
 async def api_tbank_claim(req: web.Request):
     _, user = await require_init(req)
@@ -1379,7 +1481,7 @@ async def api_tbank_claim(req: web.Request):
     return web.json_response({"ok": True})
 
 # -------------------------
-# Telegram Stars
+# Telegram Stars (Mini App -> API): create invoice link
 # -------------------------
 async def api_stars_link(req: web.Request):
     _, user = await require_init(req)
@@ -1452,7 +1554,7 @@ async def api_stars_link(req: web.Request):
         return web.json_response({"ok": False, "error": "Не удалось создать инвойс Stars"}, status=500)
 
 # -------------------------
-# CryptoBot
+# CryptoBot create invoice (optional)
 # -------------------------
 async def api_cryptobot_create(req: web.Request):
     if not crypto:
@@ -1509,6 +1611,7 @@ async def cryptobot_webhook(req: web.Request):
             await add_rub(uid, amount)
             await stats_add("topups_rub", amount)
 
+            # XP за пополнение
             xp_add = int((amount // 100) * XP_PER_TOPUP_100)
             if xp_add > 0:
                 await add_xp(uid, xp_add)
@@ -1520,6 +1623,9 @@ async def cryptobot_webhook(req: web.Request):
         log.exception("cryptobot webhook error: %s", e)
         return web.Response(text="ok", status=200)
 
+# -------------------------
+# ops list
+# -------------------------
 def _dt_key(v: str):
     try:
         return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
@@ -1558,7 +1664,7 @@ async def api_ops_list(req: web.Request):
     return web.json_response({"ok": True, "operations": ops})
 
 # =========================================================
-# ADMIN
+# ADMIN API
 # =========================================================
 async def api_admin_summary(req: web.Request):
     user = await require_admin(req)
@@ -1584,7 +1690,221 @@ async def api_admin_summary(req: web.Request):
         }
     })
 
-# (остальной admin-код у тебя уже был — я его не менял логически)
+async def api_admin_proof_list(req: web.Request):
+    await require_admin(req)
+    r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=200)
+    comps = r.data or []
+
+    task_ids = list({c.get("task_id") for c in comps if c.get("task_id")})
+    tasks_map = {}
+    if task_ids:
+        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,target_url,type,owner_id", limit=500)
+        for t in (tr.data or []):
+            tasks_map[str(t["id"])] = t
+
+    out = []
+    for c in comps:
+        tid = str(c.get("task_id"))
+        t = tasks_map.get(tid)
+        out.append({
+            "id": c.get("id"),
+            "task_id": c.get("task_id"),
+            "user_id": c.get("user_id"),
+            "proof_text": c.get("proof_text"),
+            "proof_url": c.get("proof_url"),
+            "created_at": c.get("created_at"),
+            "task": t
+        })
+
+    return web.json_response({"ok": True, "proofs": out})
+
+async def api_admin_proof_decision(req: web.Request):
+    admin = await require_admin(req)
+    body = await safe_json(req)
+
+    proof_id = body.get("proof_id")
+    approved_raw = body.get("approved")
+    if isinstance(approved_raw, bool):
+        approved = approved_raw
+    elif isinstance(approved_raw, (int, float)):
+        approved = bool(approved_raw)
+    else:
+        approved = str(approved_raw).strip().lower() in ("1","true","yes","y","on")
+
+    fake = bool(body.get("fake"))
+
+    if proof_id is None:
+        raise web.HTTPBadRequest(text="Missing proof_id")
+
+    r = await sb_select(T_COMP, {"id": cast_id(proof_id)}, limit=1)
+    if not r.data:
+        return web.json_response({"ok": False, "error": "Proof not found"}, status=404)
+    proof = r.data[0]
+
+    if proof.get("status") != "pending":
+        return web.json_response({"ok": True, "status": proof.get("status")})
+
+    task_id = proof.get("task_id")
+    user_id = int(proof.get("user_id") or 0)
+
+    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    task = (t.data or [{}])[0]
+    reward = float(task.get("reward_rub") or 0)
+
+
+    if approved:
+        # 1) начисление — обязательное, иначе не принимаем
+        try:
+            await add_rub(user_id, reward)
+        except Exception as e:
+            log.exception("approve proof failed: add_rub uid=%s reward=%s err=%s", user_id, reward, e)
+            return web.json_response({
+                "ok": False,
+                "code": "PAYOUT_FAILED",
+                "message": "Не удалось принять отчёт: ошибка начисления. Проверь таблицу balances (rub_balance) и права Supabase."
+            }, status=200)
+
+        # 2) статистика/XP/рефералка — best effort (не блокируем модерацию)
+        await stats_add("payouts_rub", reward)
+        try:
+            xp_added = task_xp(task)
+            await add_xp(user_id, xp_added)
+        except Exception as e:
+            log.warning("add_xp skipped: %s", e)
+
+        await maybe_pay_referral_bonus(user_id)
+
+        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
+            "status": "paid",
+            "moderated_by": int(admin["id"]),
+            "moderated_at": _now().isoformat(),
+        })
+
+        try:
+            left = int(task.get("qty_left") or 0)
+            if left > 0:
+                new_left = max(0, left - 1)
+                upd = {"qty_left": new_left}
+                if new_left <= 0:
+                    upd["status"] = "closed"
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+        except Exception:
+            pass
+
+        try:
+            xp_txt = f" +{int(xp_added)} XP" if "xp_added" in locals() and int(xp_added) > 0 else ""
+        except Exception:
+            xp_txt = ""
+        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽{xp_txt}")
+    else:
+        # rejected / fake
+        new_status = "fake" if fake else "rejected"
+        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
+            "status": new_status,
+            "moderated_by": int(admin["id"]),
+            "moderated_at": _now().isoformat(),
+        })
+        if fake:
+            try:
+                until = await set_task_ban(user_id, days=3)
+            except Exception:
+                until = None
+            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня.\n\n⚠️ Предупреждение: за фейки применяются штрафы — блокировки, заморозка выплат и возможное снятие бонусов."
+            if until:
+                txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
+            await notify_user(user_id, txt)
+        else:
+            await notify_user(user_id, "❌ Отчёт отклонён модератором.")
+
+    try:
+        resp_extra = {"xp_added": int(xp_added)} if "xp_added" in locals() else {}
+    except Exception:
+        resp_extra = {}
+    return web.json_response({"ok": True, **resp_extra})
+
+async def api_admin_withdraw_list(req: web.Request):
+    await require_admin(req)
+    r = await sb_select(T_WD, {}, order="created_at", desc=True, limit=200)
+    return web.json_response({"ok": True, "withdrawals": r.data or []})
+
+async def api_admin_withdraw_decision(req: web.Request):
+    await require_admin(req)
+    body = await safe_json(req)
+
+    withdraw_id = body.get("withdraw_id")
+    approved = bool(body.get("approved"))
+
+    if withdraw_id is None:
+        raise web.HTTPBadRequest(text="Missing withdraw_id")
+
+    r = await sb_select(T_WD, {"id": withdraw_id}, limit=1)
+    if not r.data:
+        return web.json_response({"ok": False, "error": "Withdrawal not found"}, status=404)
+    wd = r.data[0]
+
+    if wd.get("status") != "pending":
+        return web.json_response({"ok": True, "status": wd.get("status")})
+
+    uid = int(wd.get("user_id") or 0)
+    amount = float(wd.get("amount_rub") or 0)
+
+    if approved:
+        await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
+        await stats_add("payouts_rub", amount)
+        await notify_user(uid, "✅ Заявка на вывод подтверждена. Ожидай перевод.")
+    else:
+        await add_rub(uid, amount)
+        await sb_update(T_WD, {"id": withdraw_id}, {"status": "rejected"})
+        await notify_user(uid, "❌ Заявка на вывод отклонена. Средства возвращены на баланс.")
+
+    return web.json_response({"ok": True})
+
+async def api_admin_tbank_list(req: web.Request):
+    await require_admin(req)
+
+    def _f():
+        return sb.table(T_PAY).select("*").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
+    r = await sb_exec(_f)
+    return web.json_response({"ok": True, "tbank": r.data or []})
+
+async def api_admin_tbank_decision(req: web.Request):
+    await require_admin(req)
+    body = await safe_json(req)
+
+    payment_id = body.get("payment_id")
+    approved = bool(body.get("approved"))
+
+    if payment_id is None:
+        raise web.HTTPBadRequest(text="Missing payment_id")
+
+    r = await sb_select(T_PAY, {"id": payment_id}, limit=1)
+    if not r.data:
+        return web.json_response({"ok": False, "error": "Payment not found"}, status=404)
+    pay = r.data[0]
+
+    if pay.get("provider") != "tbank":
+        return web.json_response({"ok": False, "error": "Not tbank payment"}, status=400)
+    if pay.get("status") != "pending":
+        return web.json_response({"ok": True, "status": pay.get("status")})
+
+    uid = int(pay.get("user_id") or 0)
+    amount = float(pay.get("amount_rub") or 0)
+
+    if approved:
+        await sb_update(T_PAY, {"id": payment_id}, {"status": "paid"})
+        await add_rub(uid, amount)
+        await stats_add("topups_rub", amount)
+
+        xp_add = int((amount // 100) * XP_PER_TOPUP_100)
+        if xp_add > 0:
+            await add_xp(uid, xp_add)
+
+        await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
+    else:
+        await sb_update(T_PAY, {"id": payment_id}, {"status": "rejected"})
+        await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
+
+    return web.json_response({"ok": True})
 
 # =========================================================
 # Telegram handlers
@@ -1601,17 +1921,20 @@ async def cmd_start(message: Message):
 
     kb = InlineKeyboardBuilder()
 
-    # ✅ FIX: никаких fix_20260219 — всегда текущий билд
     miniapp_url = MINIAPP_URL
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
             miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
+    if miniapp_url and "v=" not in miniapp_url:
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
+
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
 
     muted = await is_notify_muted(uid)
+
     kb.button(text=("🔕 Уведомления: ВЫКЛ" if muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
     kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
 
@@ -1629,7 +1952,142 @@ async def cmd_start(message: Message):
     kb.adjust(1)
     await message.answer(text, reply_markup=kb.as_markup())
 
-# ... (дальше твои хендлеры без изменений по логике)
+@dp.callback_query(F.data == "help_newbie")
+async def cb_help(cq: CallbackQuery):
+    await cq.answer()
+    await cq.message.answer(
+        '📌 *Инструкция новичку — ReviewCash*\n\n🚀 *Как зарабатывать:*\n1️⃣ Нажми «🚀 Открыть приложение»\n2️⃣ Выбери задание\n3️⃣ Обязательно нажми «Перейти к выполнению»\n4️⃣ Выполни задание\n5️⃣ Вернись и нажми «Отправить отчёт»\n6️⃣ Дождись проверки — получи ₽ на баланс\n\n💰 *Начисление денег*\n— Деньги приходят после проверки администратором  \n— TG-задания могут проверяться автоматически\n\n🏆 *Уровни (LVL)*\n— За одобренные задания начисляется XP  \n— Кол-во XP зависит от сложности задания  \n— 100 XP = +1 уровень  \nЧем выше уровень — тем выше доверие\n\n🎁 *Рефералка*\n— 50₽ за каждого друга  \n— Бонус начисляется, когда друг выполнит первое задание\n\n⏳ *Лимиты*\nНекоторые задания можно выполнять:\n— 1 раз\n— или с интервалом (1–3 дня)\nЕсли задание не видно — лимит ещё не прошёл\n\n⚡ *Режимы приложения*\nВ профиле есть переключатель «⚡ Режим»:\n— *Слабое устройство* — меньше эффектов и реже авто-обновление\n— *Нормальное* — плавнее анимации и обновление чаще\n\n🚫 *Важно!*\nЗапрещено:\n— фейковые скриншоты\n— отзывы не со своего аккаунта\n— поддельные доказательства\n\nЕсли админ нажмёт «Фейк»:\n— блокировка на 3 дня по этому заданию\n— возможны штрафы (заморозка выплат/снятие бонусов) при повторных нарушениях\n\n❓ *Проблемы?*\nЕсли не отправляется отчёт —\nты не нажал «Перейти к выполнению».\n\nРаботай честно — и выплаты будут без проблем 💎',
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+@dp.callback_query(F.data == "toggle_notify")
+async def cb_toggle_notify(cq: CallbackQuery):
+    uid = cq.from_user.id
+    muted = await is_notify_muted(uid)
+    new_muted = not muted
+    await set_notify_muted(uid, new_muted)
+
+    try:
+        kb = InlineKeyboardBuilder()
+
+        miniapp_url = MINIAPP_URL
+        if not miniapp_url:
+            base = SERVER_BASE_URL or BASE_URL
+            if base:
+                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+
+        if miniapp_url:
+            kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
+        kb.button(text=("🔕 Уведомления: ВЫКЛ" if new_muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
+        kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
+        kb.adjust(1)
+
+        await cq.message.edit_reply_markup(reply_markup=kb.as_markup())
+    except Exception:
+        pass
+
+    await cq.answer("Уведомления выключены 🔕" if new_muted else "Уведомления включены 🔔", show_alert=False)
+
+    # Confirm in chat (force=true so it always arrives)
+    await notify_user(uid, ("🔕 Уведомления отключены. Чтобы включить — нажми кнопку ещё раз." if new_muted
+                            else "🔔 Уведомления включены."), force=True)
+
+@dp.message(Command("notify"))
+async def cmd_notify(message: Message):
+    uid = message.from_user.id
+    muted = await is_notify_muted(uid)
+    new_muted = not muted
+    await set_notify_muted(uid, new_muted)
+    await message.answer("🔕 Уведомления отключены." if new_muted else "🔔 Уведомления включены.")
+
+
+@dp.message(Command("me"))
+async def cmd_me(message: Message):
+    uid = message.from_user.id
+    bal = await get_balance(uid)
+    ref = await referrals_summary(uid)
+    await message.answer(
+        "👤 Профиль\n"
+        f"Баланс: {float(bal.get('rub_balance') or 0):.0f} ₽\n"
+        f"XP: {int(bal.get('xp') or 0)} | LVL: {int(bal.get('level') or 1)}\n\n"
+        "👥 Рефералы\n"
+        f"Друзей: {ref['count']}\n"
+        f"Заработано: {ref['earned_rub']:.0f} ₽\n"
+        f"Ожидают бонуса: {ref.get('pending', 0)}"
+    )
+
+# Stars платежи: Telegram требует PreCheckout ok=True
+@dp.pre_checkout_query()
+async def on_pre_checkout_query(pre_checkout: PreCheckoutQuery):
+    try:
+        await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
+    except Exception as e:
+        log.warning("pre_checkout error: %s", e)
+
+@dp.message(F.successful_payment)
+async def on_successful_payment(message: Message):
+    sp = message.successful_payment
+    payload = sp.invoice_payload or ""
+    uid = message.from_user.id
+
+    if not payload.startswith("stars_topup:"):
+        return
+
+    try:
+        pay = await sb_select(T_PAY, {"provider": "stars", "provider_ref": payload}, limit=1)
+        if not pay.data:
+            await message.answer("✅ Платеж получен, но запись не найдена. Напишите в поддержку.")
+            return
+
+        prow = pay.data[0]
+        if prow.get("status") == "paid":
+            return
+
+        amount_rub = float(prow.get("amount_rub") or 0)
+        await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
+        await add_rub(uid, amount_rub)
+        await stats_add("topups_rub", amount_rub)
+
+        xp_add = int((amount_rub // 100) * XP_PER_TOPUP_100)
+        if xp_add > 0:
+            await add_xp(uid, xp_add)
+
+        await message.answer(f"✅ Пополнение Stars успешно: +{amount_rub:.2f}₽")
+    except Exception as e:
+        log.exception("successful_payment handle error: %s", e)
+
+# -------------------------
+# CORS middleware
+# -------------------------
+def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
+    origin = req.headers.get("Origin")
+    if not origin:
+        return
+
+    if not CORS_ORIGINS:
+        return
+
+    if "*" in CORS_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+    elif origin in CORS_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+    else:
+        return
+
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData"
+    resp.headers["Access-Control-Max-Age"] = "86400"
+
+@web.middleware
+async def cors_middleware(req: web.Request, handler):
+    if req.method == "OPTIONS":
+        resp = web.Response(status=204)
+        _apply_cors_headers(req, resp)
+        return resp
+    resp = await handler(req)
+    _apply_cors_headers(req, resp)
+    return resp
 
 # =========================================================
 # aiohttp app + webhook + static Mini App
@@ -1639,6 +2097,7 @@ async def health(req: web.Request):
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)
+    # Быстрый ответ Telegram: обработку делаем в фоне, чтобы webhook не таймаутился
     try:
         asyncio.create_task(dp.feed_webhook_update(bot, update))
     except Exception:
@@ -1646,18 +2105,21 @@ async def tg_webhook(req: web.Request):
     return web.Response(text="OK")
 
 def make_app():
+    # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
     app = web.Application(middlewares=[cors_middleware, no_cache_mw], client_max_size=10 * 1024 * 1024)
+
     app.router.add_get("/", health)
-
+    # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
-    static_dir = base_dir / "public"
 
+    # ВСЕГДА раздаём Mini App только из папки ./public (без подхвата файлов из корня)
+    static_dir = base_dir / "public"
     if static_dir.exists():
         async def app_redirect(req: web.Request):
-            # ✅ FIX: всегда новый URL -> Telegram не держит старый кеш
-            raise web.HTTPFound(f"/app/?v={APP_BUILD}")
+            raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
+            # Отдаём index.html с подстановкой билда — чтобы Telegram WebView не залипал на старом кеше
             html_path = static_dir / "index.html"
             try:
                 html = html_path.read_text(encoding="utf-8")
@@ -1679,30 +2141,44 @@ def make_app():
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-
+    # tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
-    # API routes (как у тебя)
+    # API
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/click", api_task_click)
     app.router.add_post("/api/task/submit", api_task_submit)
+
+    # proof upload
     app.router.add_post("/api/proof/upload", api_proof_upload)
+
+    # referrals
     app.router.add_post("/api/referrals", api_referrals)
+
     app.router.add_post("/api/withdraw/create", api_withdraw_create)
     app.router.add_post("/api/withdraw/list", api_withdraw_list)
+
     app.router.add_post("/api/tbank/claim", api_tbank_claim)
     app.router.add_post("/api/pay/stars/link", api_stars_link)
     app.router.add_post("/api/ops/list", api_ops_list)
+
+    # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
     app.router.add_post(CRYPTO_WEBHOOK_PATH, cryptobot_webhook)
 
-    # admin routes (как у тебя)
+    # admin
     app.router.add_post("/api/admin/summary", api_admin_summary)
-    # ... остальные admin routes ...
-    # ✅ FIX: tg_audit должен быть ВНУТРИ make_app()
-    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+    app.router.add_post("/api/admin/proof/list", api_admin_proof_list)
+    app.router.add_post("/api/admin/proof/decision", api_admin_proof_decision)
+    app.router.add_post("/api/admin/withdraw/list", api_admin_withdraw_list)
+    app.router.add_post("/api/admin/withdraw/decision", api_admin_withdraw_decision)
+    app.router.add_post("/api/admin/tbank/list", api_admin_tbank_list)
+    app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
+    app.router.add_post("/api/admin/task/list", api_admin_task_list)
+    app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
+app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
@@ -1724,7 +2200,89 @@ async def on_cleanup(app: web.Application):
             pass
     await bot.session.close()
 
-# Gunicorn entrypoint
+
+
+
+# -------------------------
+# ADMIN: tasks list + delete (delete only by main admin)
+# -------------------------
+async def api_admin_task_list(req: web.Request):
+    await require_admin(req)
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
+    raw = sel.data or []
+    tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
+    return web.json_response({"ok": True, "tasks": tasks, "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"])})
+
+async def api_admin_task_delete(req: web.Request):
+    await require_main_admin(req)
+    body = await safe_json(req)
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        return json_error(400, "task_id required", code="BAD_TASK_ID")
+    # delete task and related proofs (best effort)
+    await sb_delete(T_TASKS, {"id": cast_id(task_id)})
+    try:
+        await sb_delete(T_COMP, {"task_id": cast_id(task_id)})
+    except Exception:
+        pass
+    return web.json_response({"ok": True})
+# =========================================================
+
+async def api_admin_tg_audit(req: web.Request):
+    # This action modifies tasks, so only main admin.
+    await require_main_admin(req)
+
+    # fetch active tasks (up to 500), filter tg here
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=500)
+    raw = sel.data or []
+    tg_tasks = [t for t in raw if t.get("type") == "tg" and int(t.get("qty_left") or 0) > 0]
+
+    changed = 0
+    set_auto = 0
+    set_manual = 0
+    problems = 0
+
+    for t in tg_tasks:
+        task_id = t.get("id")
+        tg_chat = (t.get("tg_chat") or "").strip()
+        target_url = str(t.get("target_url") or "")
+        if not tg_chat:
+            continue
+
+        try:
+            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+        except Exception:
+            problems += 1
+            continue
+
+        upd = {}
+        if (t.get("check_type") or "manual") != desired_check_type:
+            upd["check_type"] = desired_check_type
+        if (t.get("tg_kind") or "") != desired_kind:
+            upd["tg_kind"] = desired_kind
+
+        if upd:
+            try:
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                changed += 1
+                if desired_check_type == "auto":
+                    set_auto += 1
+                else:
+                    set_manual += 1
+            except Exception:
+                problems += 1
+
+    return web.json_response({
+        "ok": True,
+        "total_tg": len(tg_tasks),
+        "changed": changed,
+        "set_auto": set_auto,
+        "set_manual": set_manual,
+        "problems": problems,
+    })
+
+# Gunicorn entrypoint: expose 'app'
+# =========================================================
 app = make_app()
 app.on_startup.append(on_startup)
 app.on_cleanup.append(on_cleanup)
