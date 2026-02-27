@@ -1427,8 +1427,9 @@ if (!list.length) {
   }
 
   function scheduleTgCheck() {
+    // Always refresh the hint first (manual vs auto)
     updateTgHint();
-() {
+
     const type = currentCreateType();
     const target = $("t-target") ? $("t-target").value : "";
 
@@ -1436,6 +1437,25 @@ if (!list.length) {
       setTargetStatus("", "", "");
       return;
     }
+
+    // If this TG subtype cannot be auto-checked (bots, /start, reactions, etc),
+    // do NOT call /api/tg/check_chat. Just mark as manual to avoid confusing red toasts.
+    try {
+      const sid = currentTgSubtype();
+      const chat = normalizeTgChatInput(target);
+      const kind = tgIsBotTarget(target, chat) ? "bot" : "chat";
+      const manualOnly = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
+
+      if (manualOnly && chat) {
+        if (_tgCheckTimer) window.clearTimeout(_tgCheckTimer);
+        state._tgCheck.valid = true;
+        state._tgCheck.chat = chat;
+        state._tgCheck.forceManual = true;
+        const label = (kind === "bot") ? `Бот: ${chat}` : `TG: ${chat}`;
+        setTargetStatus("ok", label, "Ручная проверка (нужен скрин) ✅");
+        return;
+      }
+    } catch (e) { /* ignore */ }
 
     if (_tgCheckTimer) window.clearTimeout(_tgCheckTimer);
     _tgCheckTimer = window.setTimeout(() => runTgCheckNow(target), 450);
