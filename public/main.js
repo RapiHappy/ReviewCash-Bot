@@ -1270,25 +1270,34 @@ if (!list.length) {
       return;
     }
 
-  
+    box.style.display = "";
+
+    const spinner = k === "loading" ? '<span class="st-spin" aria-hidden="true"></span>' : "";
+    const ico = k === "ok" ? "✅" : k === "err" ? "⚠️" : k === "loading" ? "" : "";
+
+    box.innerHTML = `
+      <div class="st-row">${spinner}<span class="st-ico">${ico}</span><span class="st-title">${escapeHtml(title)}</span></div>
+      ${desc ? `<div class="st-desc">${escapeHtml(desc)}</div>` : ""}
+    `;
+  }
+
   function updateTgHint() {
     const wrap = $("tg-options");
     if (!wrap) return;
 
     const type = currentCreateType();
     if (type !== "tg") {
-      // hide when not tg
-      try { wrap.classList.add("hidden"); } catch(e) {}
+      try { wrap.classList.add("hidden"); } catch (e) {}
       return;
     }
-    try { wrap.classList.remove("hidden"); } catch(e) {}
+    try { wrap.classList.remove("hidden"); } catch (e) {}
 
     const sid = currentTgSubtype();
     const raw = $("t-target") ? String($("t-target").value || "") : "";
     const chat = normalizeTgChatInput(raw);
-    const kind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
+    const tgKind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
 
-    let manual = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
+    let manual = (tgKind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, tgKind);
 
     try {
       if (chat && state._tgCheck && state._tgCheck.chat === chat && state._tgCheck.forceManual) manual = true;
@@ -1300,14 +1309,11 @@ if (!list.length) {
     if (!titleEl || !textEl) {
       const b = wrap.querySelector("b");
       if (b) titleEl = b;
-      // text node after <br> can vary; use wrap inner div
       const div = wrap.querySelector("div");
       if (div) {
-        // ensure we have a span for text
         let sp = div.querySelector("span");
         if (!sp) {
           sp = document.createElement("span");
-          // try to keep current content after <br>
           div.appendChild(sp);
         }
         textEl = sp;
@@ -1319,59 +1325,20 @@ if (!list.length) {
     if (manual) {
       titleEl.textContent = "🛡️ Ручная проверка:";
       textEl.textContent = "Нужно отправить скрин/доказательства. Автоматически это не проверить.";
-      // make the box slightly reddish to avoid confusion
       try {
         wrap.style.background = "rgba(255, 60, 120, 0.08)";
         wrap.style.borderColor = "rgba(255, 60, 120, 0.22)";
-      } catch(e) {}
+      } catch (e) {}
     } else {
       titleEl.textContent = "⚡ Автоматическая проверка:";
       textEl.textContent = "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
-      } catch(e) {}
+      } catch (e) {}
     }
   }
 
-    box.style.display = "";
-
-    const sid = currentTgSubtype();
-    const raw = $("t-target") ? String($("t-target").value || "") : "";
-    const chat = normalizeTgChatInput(raw);
-    const kind = tgIsBotTarget(raw, chat) ? "bot" : "chat";
-
-    let manual = (kind === "bot") || TG_MANUAL_ONLY.has(sid) || !tgAutoPossible(sid, kind);
-
-    try {
-      if (chat && state._tgCheck && state._tgCheck.chat === chat && state._tgCheck.forceManual) {
-        manual = true;
-      }
-    } catch (e) {}
-
-    const tEl = $("tg-check-hint-title");
-    const xEl = $("tg-check-hint-text");
-    if (!tEl || !xEl) return;
-
-    if (manual) {
-      tEl.textContent = "🛡️ Ручная проверка:";
-      xEl.textContent = "Нужно отправить скрин/доказательства. Автоматически это не проверить.";
-    } else {
-      tEl.textContent = "⚡ Автоматическая проверка:";
-      xEl.textContent = "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
-    }
-  }
-
-    const spinner = k === "loading" ? '<span class="st-spin" aria-hidden="true"></span>' : "";
-    const ico = k === "ok" ? "✅" : k === "err" ? "⚠️" : k === "loading" ? "" : "";
-
-    box.innerHTML = `
-      <div class="st-row">${spinner}<span class="st-ico">${ico}</span><span class="st-title">${escapeHtml(title)}</span></div>
-      ${desc ? `<div class="st-desc">${escapeHtml(desc)}</div>` : ""}
-    `;
-  }
-
-  
   async function runTgCheckNow(rawValue) {
     const type = currentCreateType();
     const value = String(rawValue || "").trim();
@@ -1437,7 +1404,6 @@ if (!list.length) {
 
   function scheduleTgCheck() {
     updateTgHint();
-() {
     const type = currentCreateType();
     const target = $("t-target") ? $("t-target").value : "";
 
@@ -1494,9 +1460,9 @@ if (!list.length) {
       total = reward * 2 * qty;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
-    
+    }
+
     updateTgHint();
-  }
 
     // currency display only (backend charges RUB in this version)
     const totalEl = $("t-total");
