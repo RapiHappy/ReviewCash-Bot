@@ -292,8 +292,17 @@
 
   function updatePerfModeLabel() {
     const el = $("perf-mode-label");
-    if (!el) return;
-    el.textContent = (state.perfMode === "low") ? "Слабое устройство" : "Нормальный";
+    const hint = $("perf-mode-hint");
+    const chip = $("perf-mode-chip");
+
+    if (state.perfMode === "low") {
+      if (el) el.textContent = "Слабое устройство";
+      if (hint) hint.textContent = "для слабых устройств";
+    } else {
+      if (el) el.textContent = "Нормальный";
+      if (hint) hint.textContent = "для хороших устройств";
+    }
+    if (chip) chip.textContent = "Сменить";
   }
 
   function applyPerfMode(mode) {
