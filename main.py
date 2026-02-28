@@ -435,12 +435,6 @@ async def api_tg_check_chat(req: web.Request):
     chat = normalize_tg_chat(target)
     if not chat:
         # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
-        try:
-            for _t in (tasks or []):
-                if isinstance(_t, dict) and _t.get("instructions"):
-                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
-        except Exception:
-            pass
 
         return web.json_response({
             "ok": True,
@@ -2178,7 +2172,7 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
-app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
@@ -2207,7 +2201,7 @@ async def on_cleanup(app: web.Application):
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
 async def api_admin_task_list(req: web.Request):
-    await require_admin(req)
+    user = await require_admin(req)
     sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
     raw = sel.data or []
     tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
