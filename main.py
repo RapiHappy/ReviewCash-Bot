@@ -2131,7 +2131,8 @@ def make_app():
     if static_dir.exists():
         async def app_redirect(req: web.Request):
             raise web.HTTPFound(f"/app/?v={APP_BUILD}")
-async def app_index(req: web.Request):
+
+        async def app_index(req: web.Request):
             # Serve index.html with build placeholder replaced to bust Telegram WebView cache.
             try:
                 html = (static_dir / "index.html").read_text(encoding="utf-8")
@@ -2143,7 +2144,8 @@ async def app_index(req: web.Request):
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
             return resp
-app.router.add_get("/app", app_redirect)
+
+        app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
