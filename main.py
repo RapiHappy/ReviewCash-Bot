@@ -550,6 +550,10 @@ async def sb_select_in(
 # Telegram initData verify (WebApp)
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
+    """Verify Telegram WebApp initData signature.
+
+    Returns parsed key/value pairs (with 'user' parsed as JSON) on success, else None.
+    """
     if not init_data:
         return None
 
@@ -561,7 +565,8 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
     data_check_string = "\n".join(data_check_arr)
 
-    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+    # ✅ Telegram WebApp secret key is sha256(bot_token)
+    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calc_hash, received_hash):
