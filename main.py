@@ -1,3 +1,4 @@
+APP_BUILD = os.getenv("APP_BUILD", "rc_20260225_181352")
 import os
 import json
 import re
@@ -6,6 +7,14 @@ import hashlib
 import asyncio
 import logging
 from datetime import datetime, timezone, date, timedelta
+
+# Build/version string used for cache-busting in Telegram WebView
+APP_BUILD = (
+    os.getenv("APP_BUILD")
+    or os.getenv("RENDER_GIT_COMMIT")
+    or os.getenv("GIT_COMMIT")
+    or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
+)
 from urllib.parse import parse_qsl
 
 from urllib.parse import urlparse
@@ -90,26 +99,22 @@ from pathlib import Path
 
 from aiohttp import web
 
-# -------------------------
-# Build/version for cache-busting (Telegram WebView)
-# -------------------------
-APP_BUILD = os.getenv("APP_BUILD") or os.getenv("RENDER_GIT_COMMIT") or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
 
 @web.middleware
 async def no_cache_mw(request: web.Request, handler):
     resp = await handler(request)
     try:
         if request.path.startswith("/app/") or request.path == "/app":
-            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
         if request.path.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store, max-age=0"
             resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
     except Exception:
         pass
     return resp
-
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -435,6 +440,12 @@ async def api_tg_check_chat(req: web.Request):
     chat = normalize_tg_chat(target)
     if not chat:
         # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
+        try:
+            for _t in (tasks or []):
+                if isinstance(_t, dict) and _t.get("instructions"):
+                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
+        except Exception:
+            pass
 
         return web.json_response({
             "ok": True,
@@ -1207,11 +1218,20 @@ async def api_task_create(req: web.Request):
             return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
         tg_chat = tg_chat_n
 
-        # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
-        try:
-            await bot.get_chat(tg_chat)
-        except Exception:
-            return json_error(400, "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.", code="TG_BAD_TARGET")
+        # Определяем тип TG-цели.
+        # Для bot задач (например /start) Telegram Bot API часто НЕ даёт getChat,
+        # поэтому не блокируем создание, а делаем ручную проверку.
+        kind_guess = tg_detect_kind(tg_chat, target_url)
+        if kind_guess == "chat":
+            # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
+            try:
+                await bot.get_chat(tg_chat)
+            except Exception:
+                return json_error(
+                    400,
+                    "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
+                    code="TG_BAD_TARGET",
+                )
 
         desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
         tg_kind = desired_kind
@@ -1919,10 +1939,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
 
     if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -1968,7 +1988,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2100,7 +2120,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware, no_cache_mw], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     # static miniapp at /app/
@@ -2110,27 +2130,20 @@ def make_app():
     static_dir = base_dir / "public"
     if static_dir.exists():
         async def app_redirect(req: web.Request):
-            raise web.HTTPFound("/app/")
-
-        async def app_index(req: web.Request):
-            # Отдаём index.html с подстановкой билда — чтобы Telegram WebView не залипал на старом кеше
-            html_path = static_dir / "index.html"
+            raise web.HTTPFound(f"/app/?v={APP_BUILD}")
+async def app_index(req: web.Request):
+            # Serve index.html with build placeholder replaced to bust Telegram WebView cache.
             try:
-                html = html_path.read_text(encoding="utf-8")
+                html = (static_dir / "index.html").read_text(encoding="utf-8")
             except Exception:
-                return web.FileResponse(html_path)
+                return web.FileResponse(static_dir / "index.html")
             html = html.replace("__APP_BUILD__", APP_BUILD)
-            return web.Response(
-                text=html,
-                content_type="text/html",
-                headers={
-                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                    "Pragma": "no-cache",
-                    "Expires": "0",
-                },
-            )
-
-        app.router.add_get("/app", app_redirect)
+            resp = web.Response(text=html, content_type="text/html")
+            resp.headers["Cache-Control"] = "no-store, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            return resp
+app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
@@ -2172,7 +2185,7 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
-    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
@@ -2201,7 +2214,7 @@ async def on_cleanup(app: web.Application):
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
 async def api_admin_task_list(req: web.Request):
-    user = await require_admin(req)
+    await require_admin(req)
     sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
     raw = sel.data or []
     tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
