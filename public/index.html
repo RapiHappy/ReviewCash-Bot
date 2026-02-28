@@ -344,22 +344,40 @@
         </div>
       </div>
 
-      <div class="card" style="padding:0; overflow:hidden;">
-        <div class="menu-item" onclick="showHistory()" style="margin:0; border:none; background:transparent;">
-          <div style="display:flex; align-items:center; gap:12px;">
-            <span style="font-size:20px; background:rgba(0,234,255,0.1); width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:10px;">📜</span>
-            <span>История операций</span>
+      <div class="card rc-actions-card">
+        <div class="quick-actions">
+          <!-- HISTORY -->
+          <div class="qa-card qa-history" onclick="showHistory()">
+            <div class="qa-left">
+              <div class="qa-ico qa-ico-history">📜</div>
+              <div class="qa-txt">
+                <div class="qa-title">История операций</div>
+                <div class="qa-sub">Пополнения, выводы, начисления</div>
+              </div>
+            </div>
+            <div class="qa-right">
+              <span class="qa-arrow">›</span>
+            </div>
           </div>
-          <span style="opacity:0.3;">→</span>
-        
-      <div class="menu-item" onclick="togglePerfMode()">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <span style="font-size:20px; background:rgba(0,234,255,0.1); width:36px; height:36px; display:flex; align-items:center; justify-content:center; border-radius:10px;">⚡</span>
-          <span>Режим: <b id="perf-mode-label">Нормальный</b></span>
+
+          <!-- PERF MODE -->
+          <div class="qa-card qa-perf" onclick="togglePerfMode()">
+            <div class="qa-left">
+              <div class="qa-ico qa-ico-perf">⚡</div>
+              <div class="qa-txt">
+                <div class="qa-title">Режим производительности</div>
+                <div class="qa-sub">
+                  <b id="perf-mode-label">Нормальный</b>
+                  <span class="qa-subhint" id="perf-mode-hint">для хороших устройств</span>
+                </div>
+              </div>
+            </div>
+            <div class="qa-right">
+              <span class="qa-chip" id="perf-mode-chip">Сменить</span>
+              <span class="qa-arrow">›</span>
+            </div>
+          </div>
         </div>
-        <span style="color:var(--text-dim); font-size:12px;">Сменить</span>
-      </div>
-</div>
       </div>
 
       <div id="admin-panel-card" class="card" style="display:none; padding:15px; border:1px dashed var(--accent-gold); background:rgba(255,204,0,0.05);">
@@ -607,6 +625,6 @@
     </div>
   </div>
 
-  <script src="main.js?v=__APP_BUILD__" defer></script>
+  <script src="main_updated.js?v=__APP_BUILD__" defer></script>
 </body>
 </html>
