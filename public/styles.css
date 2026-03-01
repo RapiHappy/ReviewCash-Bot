@@ -448,3 +448,18 @@ html.perf-low .qa-perf:hover{
 @media (max-width: 420px){
   .quick-actions{ grid-template-columns: 1fr; }
 }
+
+/* --- FIX: smaller "Сменить" button inside Quick Actions / Perf card --- */
+.qa-right .btn,
+.quick-actions .btn{
+  padding: 8px 12px;
+  font-size: 11px;
+  border-radius: 12px;
+  min-height: 0;
+}
+.qa-right .btn-sm,
+.quick-actions .btn-sm{
+  padding: 7px 10px;
+  font-size: 11px;
+  border-radius: 12px;
+}
