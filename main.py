@@ -5,87 +5,8 @@ import hmac
 import hashlib
 import asyncio
 import logging
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, date
 from urllib.parse import parse_qsl
-
-from urllib.parse import urlparse
-
-YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
-GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
-
-def _norm_url(raw: str) -> str:
-    s = (raw or "").strip()
-    if not s:
-        return ""
-    if not s.lower().startswith(("http://", "https://")):
-        s = "https://" + s
-    return s
-
-def _host_allowed(host: str, allowed: tuple[str, ...]) -> bool:
-    h = (host or "").lower()
-    return any(h == a or h.endswith("." + a) for a in allowed)
-
-def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
-    """Return (ok, normalized_url, error_message)."""
-    url = _norm_url(raw)
-    if not url:
-        return False, "", "Нужна ссылка"
-    try:
-        u = urlparse(url)
-        if u.scheme not in ("http", "https") or not u.netloc:
-            return False, "", "Некорректная ссылка"
-        if any(ch.isspace() for ch in url):
-            return False, "", "Ссылка не должна содержать пробелы"
-        host = (u.hostname or "").lower()
-        path = (u.path or "").lower()
-
-        if ttype == "ya":
-            if "yandex" not in host:
-                return False, "", "Ссылка не похожа на Яндекс. Нужна ссылка на Яндекс Карты"
-            if not _host_allowed(host, YA_ALLOWED_HOST):
-                return False, "", "Разрешены только ссылки Яндекс (yandex.*)"
-            if ("/maps" not in path) and ("/profile" not in path) and ("maps" not in host):
-                return False, "", "Нужна ссылка именно на Яндекс Карты (место/организация)"
-        elif ttype == "gm":
-            if host in ("maps.app.goo.gl", "goo.gl"):
-                return True, url, ""
-            if "google" not in host:
-                return False, "", "Ссылка не похожа на Google. Нужна ссылка на Google Maps"
-            if not _host_allowed(host, GM_ALLOWED_HOST):
-                return False, "", "Разрешены только ссылки Google Maps"
-            if ("/maps" not in path) and (not host.startswith("maps.")):
-                return False, "", "Нужна ссылка именно на Google Maps (место/организация)"
-        return True, url, ""
-    except Exception:
-        return False, "", "Некорректная ссылка"
-
-def cast_id(v):
-    s = str(v or "").strip()
-    if s.isdigit():
-        try:
-            return int(s)
-        except Exception:
-            return s
-    return s
-
-async def check_url_alive(url: str) -> tuple[bool, str]:
-    """Best-effort check that URL responds (<400)."""
-    try:
-        import aiohttp
-        timeout = aiohttp.ClientTimeout(total=8)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            try:
-                async with session.head(url, allow_redirects=True) as r:
-                    if r.status < 400:
-                        return True, ""
-                    return False, f"HTTP {r.status}"
-            except Exception:
-                async with session.get(url, allow_redirects=True) as r:
-                    if r.status < 400:
-                        return True, ""
-                    return False, f"HTTP {r.status}"
-    except Exception:
-        return False, "не удалось открыть ссылку"
 from pathlib import Path
 
 from aiohttp import web
@@ -98,7 +19,6 @@ from aiogram.types import (
     PreCheckoutQuery,
     LabeledPrice,
 )
-from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -161,92 +81,6 @@ MAX_PROOF_MB = int(os.getenv("MAX_PROOF_MB", "8").strip())
 XP_PER_LEVEL = int(os.getenv("XP_PER_LEVEL", "100").strip())          # 100 xp = +1 lvl
 XP_PER_TASK_PAID = int(os.getenv("XP_PER_TASK_PAID", "10").strip())   # за оплаченный отзыв/задачу
 XP_PER_TOPUP_100 = int(os.getenv("XP_PER_TOPUP_100", "2").strip())    # за каждые 100₽ пополнения
-
-# XP by difficulty (can be tuned via env)
-XP_EASY = int(os.getenv("XP_EASY", "5").strip())
-XP_MEDIUM = int(os.getenv("XP_MEDIUM", "12").strip())
-XP_HARD = int(os.getenv("XP_HARD", "22").strip())
-XP_MANUAL_BONUS = int(os.getenv("XP_MANUAL_BONUS", "3").strip())      # extra XP for manual (with proof)
-XP_REVIEW_BONUS = int(os.getenv("XP_REVIEW_BONUS", "3").strip())      # extra XP for ya/gm reviews
-XP_MAX_PER_TASK = int(os.getenv("XP_MAX_PER_TASK", "60").strip())
-
-def _parse_task_xp_override(task: dict) -> tuple[int | None, str | None]:
-    """Return (xp_override, diff_override) from task instructions if present."""
-    ins = str((task or {}).get("instructions") or "")
-    # XP: 15
-    m = re.search(r"(?im)^\s*XP\s*:\s*(\d+)\s*$", ins)
-    if m:
-        try:
-            return int(m.group(1)), None
-        except Exception:
-            pass
-    # DIFF: easy|medium|hard
-    m = re.search(r"(?im)^\s*(DIFF|DIFFICULTY)\s*:\s*(easy|medium|hard)\s*$", ins)
-    if m:
-        return None, str(m.group(2)).lower()
-    # DIFF=hard (inline)
-    m = re.search(r"(?i)\bDIFF\s*=\s*(easy|medium|hard)\b", ins)
-    if m:
-        return None, str(m.group(1)).lower()
-    return None, None
-
-def task_xp(task: dict) -> int:
-    """Compute XP for a paid completion depending on task type/reward/difficulty."""
-    if not task:
-        return int(XP_PER_TASK_PAID)
-
-    xp_override, diff_override = _parse_task_xp_override(task)
-    if isinstance(xp_override, int) and xp_override > 0:
-        return max(1, min(int(xp_override), int(XP_MAX_PER_TASK)))
-
-    ttype = str(task.get("type") or "").strip().lower()
-    check_type = str(task.get("check_type") or "").strip().lower()
-    reward = float(task.get("reward_rub") or 0)
-
-    # determine difficulty if not overridden
-    diff = diff_override
-    if not diff:
-        if ttype in ("ya", "gm"):
-            diff = "hard" if reward >= 80 else "medium"
-        elif ttype == "tg":
-            if reward <= 5:
-                diff = "easy"
-            elif reward <= 20:
-                diff = "medium"
-            else:
-                diff = "hard"
-        else:
-            if reward <= 50:
-                diff = "easy"
-            elif reward <= 120:
-                diff = "medium"
-            else:
-                diff = "hard"
-
-    base = XP_EASY if diff == "easy" else (XP_HARD if diff == "hard" else XP_MEDIUM)
-
-    # bonuses
-    if check_type != "auto":
-        base += int(XP_MANUAL_BONUS)
-    if ttype in ("ya", "gm"):
-        base += int(XP_REVIEW_BONUS)
-
-    # small scaling by reward (keeps "harder = more")
-    base += int(min(15, max(0, round(reward * 0.05))))  # +0..+15
-
-    return max(1, min(int(base), int(XP_MAX_PER_TASK)))
-
-def strip_meta_tags(text: str) -> str:
-    """Hide internal tags like XP:/DIFF: from user-facing instructions."""
-    out = []
-    for line in str(text or "").splitlines():
-        if re.match(r"(?im)^\s*(XP\s*:|DIFF\s*:|DIFFICULTY\s*:|DIFF\s*=)", line):
-            continue
-        # old helper tag
-        if re.match(r"(?im)^\s*TG_SUBTYPE\s*:", line):
-            continue
-        out.append(line)
-    return "\n".join(out).strip()
 
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
@@ -395,14 +229,6 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
-        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
-        try:
-            for _t in (tasks or []):
-                if isinstance(_t, dict) and _t.get("instructions"):
-                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
-        except Exception:
-            pass
-
         return web.json_response({
             "ok": True,
             "valid": False,
@@ -594,33 +420,7 @@ def calc_level(xp: int) -> int:
 async def get_balance(uid: int):
     r = await sb_select(T_BAL, {"user_id": uid}, limit=1)
     if r.data:
-        row = r.data[0] or {}
-        # normalize possible NULLs from DB
-        xp = int(row.get("xp") or 0)
-        lvl = row.get("level")
-        try:
-            lvl = int(lvl) if lvl is not None else None
-        except Exception:
-            lvl = None
-        calc_lvl = calc_level(xp)
-        if not lvl or lvl < 1:
-            lvl = calc_lvl
-        # if DB stored wrong level - fix silently
-        if lvl != calc_lvl:
-            lvl = calc_lvl
-        row["xp"] = xp
-        row["level"] = lvl
-        # best-effort persist fixes
-        try:
-            await sb_update(T_BAL, {"user_id": uid}, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
-        except Exception:
-            pass
-        return row
-    # ensure row exists
-    try:
-        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "level": 1, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
-    except Exception:
-        pass
+        return r.data[0]
     return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
 
 async def set_xp_level(uid: int, xp: int):
@@ -821,77 +621,6 @@ async def set_notify_muted(uid: int, muted: bool):
 
 
 # -------------------------
-# Task access bans + "must click link" tracking
-# -------------------------
-TASK_BAN_KEY = "task_ban_until"
-CLICK_PREFIX = "clicked_task:"
-CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())  # must click within 6h
-
-def _parse_dt(v):
-    try:
-        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
-        return None
-
-async def get_task_ban_until(uid: int):
-    """Returns datetime until user is blocked from submitting tasks, or None."""
-    try:
-        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY}, limit=1)
-        if not r.data:
-            return None
-        until = _parse_dt(r.data[0].get("last_at"))
-        if not until:
-            return None
-        # expired -> cleanup
-        if until <= _now():
-            try:
-                await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": TASK_BAN_KEY})
-            except Exception:
-                pass
-            return None
-        return until
-    except Exception:
-        return None
-
-async def set_task_ban(uid: int, days: int = 3):
-    until = _now() + timedelta(days=int(days))
-    await sb_upsert(
-        T_LIMITS,
-        {"user_id": uid, "limit_key": TASK_BAN_KEY, "last_at": until.isoformat()},
-        on_conflict="user_id,limit_key"
-    )
-    return until
-
-async def touch_task_click(uid: int, task_id: str):
-    key = CLICK_PREFIX + str(task_id)
-    await sb_upsert(
-        T_LIMITS,
-        {"user_id": uid, "limit_key": key, "last_at": _now().isoformat()},
-        on_conflict="user_id,limit_key"
-    )
-
-async def require_recent_task_click(uid: int, task_id: str) -> bool:
-    """Returns True if user clicked task link recently."""
-    key = CLICK_PREFIX + str(task_id)
-    try:
-        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
-        if not r.data:
-            return False
-        dt = _parse_dt(r.data[0].get("last_at"))
-        if not dt:
-            return False
-        return (_now() - dt).total_seconds() <= CLICK_WINDOW_SEC
-    except Exception:
-        return False
-
-async def clear_task_click(uid: int, task_id: str):
-    key = CLICK_PREFIX + str(task_id)
-    try:
-        await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": key})
-    except Exception:
-        pass
-
-# -------------------------
 # Telegram auto-check: member status
 # -------------------------
 async def tg_is_member(chat: str, user_id: int) -> bool:
@@ -1037,12 +766,7 @@ async def api_sync(req: web.Request):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
     bal = await get_balance(uid)
-    banned_until = await get_task_ban_until(uid)
-    tasks = []
-    if not banned_until:
-        tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
-        raw = tsel.data or []
-        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
+    tasks = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
 
     return web.json_response({
         "ok": True,
@@ -1054,8 +778,7 @@ async def api_sync(req: web.Request):
             "photo_url": user.get("photo_url"),
         },
         "balance": bal,
-        "tasks": tasks,
-        "task_ban_until": banned_until.isoformat() if banned_until else None,
+        "tasks": tasks.data or [],
     })
 
 # -------------------------
@@ -1146,16 +869,6 @@ async def api_task_create(req: web.Request):
         raise web.HTTPBadRequest(text="Bad type")
     if not title or not target_url:
         raise web.HTTPBadRequest(text="Missing title/target_url")
-
-    # Only links/@usernames allowed. For YA/GM: validate + ensure URL is reachable.
-    if ttype in ("ya", "gm"):
-        ok_u, norm_u, err = validate_target_url(ttype, target_url)
-        if not ok_u:
-            return json_error(400, err, code="BAD_LINK")
-        ok_alive, why = await check_url_alive(norm_u)
-        if not ok_alive:
-            return json_error(400, f"Ссылка не открывается или не подходит: {why}", code="LINK_DEAD")
-        target_url = norm_u
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
@@ -1201,38 +914,9 @@ async def api_task_create(req: web.Request):
     task = (ins.data or [row])[0]
 
     await stats_add("revenue_rub", total_cost)
-    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}")
+    await notify_admin(f"🆕 Новое задание: {title}\nТип: {ttype}\nНаграда: {reward_rub}₽ x{qty_total}\nOwner: {uid}")
 
     return web.json_response({"ok": True, "task": task})
-
-
-# -------------------------
-# API: task click (must open link before submitting proof)
-# -------------------------
-async def api_task_click(req: web.Request):
-    _, user = await require_init(req)
-    uid = int(user["id"])
-    body = await safe_json(req)
-
-    banned_until = await get_task_ban_until(uid)
-    if banned_until:
-        return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
-
-    task_id = str(body.get("task_id") or "").strip()
-    if not task_id:
-        raise web.HTTPBadRequest(text="Missing task_id")
-
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
-    if not t.data:
-        return web.json_response({"ok": False, "error": "Task not found"}, status=404)
-
-    task = (t.data or [None])[0] or {}
-    if int(task.get("owner_id") or 0) == uid:
-        return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
-
-    await touch_task_click(uid, task_id)
-    return web.json_response({"ok": True})
-
 
 # -------------------------
 # API: submit task
@@ -1240,12 +924,8 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=10, block_sec=600)
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
-
-    banned_until = await get_task_ban_until(uid)
-    if banned_until:
-        return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
 
     task_id = str(body.get("task_id") or "").strip()
     proof_text = str(body.get("proof_text") or "").strip()
@@ -1254,13 +934,10 @@ async def api_task_submit(req: web.Request):
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
     task = t.data[0]
-
-    if int(task.get("owner_id") or 0) == uid:
-        return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
 
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
@@ -1281,12 +958,6 @@ async def api_task_submit(req: web.Request):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
-
-    # require that user opened the task link (anti-fake) for manual checks
-    if not is_auto:
-        ok_clicked = await require_recent_task_click(uid, task_id)
-        if not ok_clicked:
-            return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
     if is_auto:
         chat = task.get("tg_chat") or ""
         if not chat:
@@ -1301,18 +972,13 @@ async def api_task_submit(req: web.Request):
         await stats_add("payouts_rub", reward)
 
         # XP + maybe referral payout
-        xp_added = task_xp(task)
-        await add_xp(uid, xp_added)
+        await add_xp(uid, XP_PER_TASK_PAID)
         await maybe_pay_referral_bonus(uid)
 
         try:
             left = int(task.get("qty_left") or 0)
             if left > 0:
-                new_left = max(0, left - 1)
-                upd = {"qty_left": new_left}
-                if new_left <= 0:
-                    upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                await sb_update(T_TASKS, {"id": task_id}, {"qty_left": left - 1})
         except Exception:
             pass
 
@@ -1325,7 +991,7 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
+        return web.json_response({"ok": True, "status": "paid", "earned": reward})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
@@ -1339,16 +1005,13 @@ async def api_task_submit(req: web.Request):
         "proof_url": proof_url
     })
 
-    await clear_task_click(uid, task_id)
-
     if task.get("type") == "ya":
         await touch_limit(uid, "ya_review")
     if task.get("type") == "gm":
         await touch_limit(uid, "gm_review")
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
-    xp_expected = task_xp(task)
-    return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
+    return web.json_response({"ok": True, "status": "pending"})
 
 # -------------------------
 # withdraw
@@ -1622,7 +1285,6 @@ async def api_admin_summary(req: web.Request):
     tp = await sb_exec(_f)
 
     tasks = await sb_select(T_TASKS, {"status": "active"}, limit=2000)
-    tasks_active = [t for t in (tasks.data or []) if int(t.get("qty_left") or 0) > 0]
 
     return web.json_response({
         "ok": True,
@@ -1631,7 +1293,7 @@ async def api_admin_summary(req: web.Request):
             "proofs": len(proofs.data or []),
             "withdrawals": len(wds.data or []),
             "tbank": len(tp.data or []),
-            "tasks": len(tasks_active),
+            "tasks": len(tasks.data or []),
         }
     })
 
@@ -1676,12 +1338,10 @@ async def api_admin_proof_decision(req: web.Request):
     else:
         approved = str(approved_raw).strip().lower() in ("1","true","yes","y","on")
 
-    fake = bool(body.get("fake"))
-
     if proof_id is None:
         raise web.HTTPBadRequest(text="Missing proof_id")
 
-    r = await sb_select(T_COMP, {"id": cast_id(proof_id)}, limit=1)
+    r = await sb_select(T_COMP, {"id": proof_id}, limit=1)
     if not r.data:
         return web.json_response({"ok": False, "error": "Proof not found"}, status=404)
     proof = r.data[0]
@@ -1692,7 +1352,7 @@ async def api_admin_proof_decision(req: web.Request):
     task_id = proof.get("task_id")
     user_id = int(proof.get("user_id") or 0)
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id}, limit=1)
     task = (t.data or [{}])[0]
     reward = float(task.get("reward_rub") or 0)
 
@@ -1712,14 +1372,13 @@ async def api_admin_proof_decision(req: web.Request):
         # 2) статистика/XP/рефералка — best effort (не блокируем модерацию)
         await stats_add("payouts_rub", reward)
         try:
-            xp_added = task_xp(task)
-            await add_xp(user_id, xp_added)
+            await add_xp(user_id, XP_PER_TASK_PAID)
         except Exception as e:
             log.warning("add_xp skipped: %s", e)
 
         await maybe_pay_referral_bonus(user_id)
 
-        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
+        await sb_update(T_COMP, {"id": proof_id}, {
             "status": "paid",
             "moderated_by": int(admin["id"]),
             "moderated_at": _now().isoformat(),
@@ -1728,44 +1387,20 @@ async def api_admin_proof_decision(req: web.Request):
         try:
             left = int(task.get("qty_left") or 0)
             if left > 0:
-                new_left = max(0, left - 1)
-                upd = {"qty_left": new_left}
-                if new_left <= 0:
-                    upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                await sb_update(T_TASKS, {"id": task_id}, {"qty_left": left - 1})
         except Exception:
             pass
 
-        try:
-            xp_txt = f" +{int(xp_added)} XP" if "xp_added" in locals() and int(xp_added) > 0 else ""
-        except Exception:
-            xp_txt = ""
-        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽{xp_txt}")
+        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽")
     else:
-        # rejected / fake
-        new_status = "fake" if fake else "rejected"
-        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
-            "status": new_status,
+        await sb_update(T_COMP, {"id": proof_id}, {
+            "status": "rejected",
             "moderated_by": int(admin["id"]),
             "moderated_at": _now().isoformat(),
         })
-        if fake:
-            try:
-                until = await set_task_ban(user_id, days=3)
-            except Exception:
-                until = None
-            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня.\n\n⚠️ Предупреждение: за фейки применяются штрафы — блокировки, заморозка выплат и возможное снятие бонусов."
-            if until:
-                txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
-            await notify_user(user_id, txt)
-        else:
-            await notify_user(user_id, "❌ Отчёт отклонён модератором.")
+        await notify_user(user_id, "❌ Отчёт отклонён модератором.")
 
-    try:
-        resp_extra = {"xp_added": int(xp_added)} if "xp_added" in locals() else {}
-    except Exception:
-        resp_extra = {}
-    return web.json_response({"ok": True, **resp_extra})
+    return web.json_response({"ok": True})
 
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
@@ -1901,10 +1536,12 @@ async def cmd_start(message: Message):
 async def cb_help(cq: CallbackQuery):
     await cq.answer()
     await cq.message.answer(
-        '📌 *Инструкция новичку — ReviewCash*\n\n🚀 *Как зарабатывать:*\n1️⃣ Нажми «🚀 Открыть приложение»\n2️⃣ Выбери задание\n3️⃣ Обязательно нажми «Перейти к выполнению»\n4️⃣ Выполни задание\n5️⃣ Вернись и нажми «Отправить отчёт»\n6️⃣ Дождись проверки — получи ₽ на баланс\n\n💰 *Начисление денег*\n— Деньги приходят после проверки администратором  \n— TG-задания могут проверяться автоматически\n\n🏆 *Уровни (LVL)*\n— За одобренные задания начисляется XP  \n— Кол-во XP зависит от сложности задания  \n— 100 XP = +1 уровень  \nЧем выше уровень — тем выше доверие\n\n🎁 *Рефералка*\n— 50₽ за каждого друга  \n— Бонус начисляется, когда друг выполнит первое задание\n\n⏳ *Лимиты*\nНекоторые задания можно выполнять:\n— 1 раз\n— или с интервалом (1–3 дня)\nЕсли задание не видно — лимит ещё не прошёл\n\n⚡ *Режимы приложения*\nВ профиле есть переключатель «⚡ Режим»:\n— *Слабое устройство* — меньше эффектов и реже авто-обновление\n— *Нормальное* — плавнее анимации и обновление чаще\n\n🚫 *Важно!*\nЗапрещено:\n— фейковые скриншоты\n— отзывы не со своего аккаунта\n— поддельные доказательства\n\nЕсли админ нажмёт «Фейк»:\n— блокировка на 3 дня по этому заданию\n— возможны штрафы (заморозка выплат/снятие бонусов) при повторных нарушениях\n\n❓ *Проблемы?*\nЕсли не отправляется отчёт —\nты не нажал «Перейти к выполнению».\n\nРаботай честно — и выплаты будут без проблем 💎',
-        parse_mode=ParseMode.MARKDOWN,
+        "📌 Инструкция:\n\n"
+        "• Открой «Задания» и нажми «Выполнить»\n"
+        "• TG — подпишись/вступи и нажми «Проверить»\n"
+        "• Отзывы — прикрепи скрин и отправь на модерацию\n"
+        "• В профиле можно пополнить и вывести\n"
     )
-
 @dp.callback_query(F.data == "toggle_notify")
 async def cb_toggle_notify(cq: CallbackQuery):
     uid = cq.from_user.id
@@ -2042,11 +1679,7 @@ async def health(req: web.Request):
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)
-    # Быстрый ответ Telegram: обработку делаем в фоне, чтобы webhook не таймаутился
-    try:
-        asyncio.create_task(dp.feed_webhook_update(bot, update))
-    except Exception:
-        await dp.feed_webhook_update(bot, update)
+    await dp.feed_webhook_update(bot, update)
     return web.Response(text="OK")
 
 def make_app():
@@ -2057,8 +1690,12 @@ def make_app():
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
-    # ВСЕГДА раздаём Mini App только из папки ./public (без подхвата файлов из корня)
-    static_dir = base_dir / "public"
+    # Если main.py случайно лежит внутри public/, то раздаём текущую папку.
+    if (base_dir / "index.html").exists() and (base_dir / "main.js").exists():
+        static_dir = base_dir
+    else:
+        static_dir = base_dir / "public"
+
     if static_dir.exists():
         async def app_redirect(req: web.Request):
             raise web.HTTPFound("/app/")
@@ -2071,14 +1708,13 @@ def make_app():
         app.router.add_static("/app/", path=str(static_dir), show_index=False)
     else:
         log.warning("Static dir not found: %s", static_dir)
-    # tg webhook
+# tg webhook
     app.router.add_post(WEBHOOK_PATH, tg_webhook)
 
     # API
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
-    app.router.add_post("/api/task/click", api_task_click)
     app.router.add_post("/api/task/submit", api_task_submit)
 
     # proof upload
@@ -2129,6 +1765,11 @@ async def on_cleanup(app: web.Application):
             pass
     await bot.session.close()
 
+def main():
+    app = make_app()
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    web.run_app(app, host="0.0.0.0", port=PORT)
 
 
 
@@ -2137,9 +1778,9 @@ async def on_cleanup(app: web.Application):
 # -------------------------
 async def api_admin_task_list(req: web.Request):
     await require_admin(req)
-    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
-    raw = sel.data or []
-    tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
+    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=50)
+    tasks = sel.data or []
+    # show minimal fields
     return web.json_response({"ok": True, "tasks": tasks})
 
 async def api_admin_task_delete(req: web.Request):
@@ -2149,18 +1790,12 @@ async def api_admin_task_delete(req: web.Request):
     if not task_id:
         return json_error(400, "task_id required", code="BAD_TASK_ID")
     # delete task and related proofs (best effort)
-    await sb_delete(T_TASKS, {"id": cast_id(task_id)})
+    await sb_delete(T_TASKS, {"id": task_id})
     try:
-        await sb_delete(T_COMP, {"task_id": cast_id(task_id)})
+        await sb_delete(T_PROOFS, {"task_id": task_id})
     except Exception:
         pass
     return web.json_response({"ok": True})
-# =========================================================
-# Gunicorn entrypoint: expose 'app'
-# =========================================================
-app = make_app()
-app.on_startup.append(on_startup)
-app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    main()
