@@ -39,12 +39,6 @@
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-
-  // Detect whether we are really opened as Telegram MiniApp (initData must be present).
-  function isTelegramMiniApp() {
-    try { return !!(tg && typeof tg.initData === "string" && tg.initData.length > 0); } catch (e) { return false; }
-  }
-
   function tgAlert(msg, kind = "info", title = "") {
     // Pretty in-app toast (preferred). Falls back to Telegram alert only if toast UI missing.
     const text = String(msg ?? "");
@@ -465,6 +459,12 @@
       }
     }
     try { setActiveTab(id); } catch (e) {}
+
+    // Show FAB (+) only on Tasks tab to avoid covering buttons on other screens
+    try {
+      const fab = document.querySelector(".fab-wrap");
+      if (fab) fab.style.display = (id === "tasks") ? "flex" : "none";
+    } catch (e) {}
   }
 
   function openOverlay(id) {
@@ -2208,6 +2208,9 @@ async function loadAdminTasks() {
           state.user.first_name = tu.first_name;
           state.user.last_name = tu.last_name;
           state.user.photo_url = tu.photo_url;
+          // keep id to avoid "anonymous" state while sync is pending
+          if (tu.id) state.user.user_id = tu.id;
+          if (typeof tu.is_premium !== "undefined") state.user.is_premium = tu.is_premium;
           if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
           renderHeader();
           renderProfile();
@@ -2229,24 +2232,23 @@ async function loadAdminTasks() {
     setFilter("all");
     setPlatformFilter(state.platformFilter);
     recalc();
-  // If opened outside Telegram (browser / uptime monitor), initData is empty.
-  // Do NOT show "token" errors — just skip sync or show a clear hint only inside Telegram UI.
-  if (!state.initData) {
-    if (tg) {
-      tgAlert("Открой MiniApp через кнопку в Telegram (не через браузер/ссылку).", "error", "Подключение");
-    } else {
-      // Browser / monitor: keep silent
-      console.log("Skip sync: not in Telegram WebApp (no initData).");
-    }
-    hideLoader();
-    return;
-  }
 
-  try {
+      try {
     await syncAll();
     startTasksAutoRefresh();
   } catch (e) {
-    tgAlert(String(e.message || e), "error", "Подключение");
+    // If opened outside Telegram, initData will be empty -> don't scare user with "token" error
+    const notInTg = !(tg && tg.initData && String(tg.initData).length > 0);
+    if (notInTg) {
+      console.warn("Sync skipped/failed outside Telegram:", e);
+      // optional: show a gentle hint only once
+      if (!state._shownOutsideTgHint) {
+        state._shownOutsideTgHint = true;
+        tgAlert("Открой MiniApp внутри Telegram, чтобы загрузить профиль и данные.", "info", "Подключение");
+      }
+    } else {
+      tgAlert(String(e.message || e), "error", "Подключение");
+    }
   } finally {
     hideLoader();
   }
