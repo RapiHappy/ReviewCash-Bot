@@ -306,7 +306,7 @@ async def setup_menu_button(bot: Bot):
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="ReviewCash",
-                web_app=WebAppInfo(url=MINIAPP_URL),
+                web_app=WebAppInfo(url=MINIAPP_URL + "?s=" + _make_session_token(m.from_user.id)),
             )
         )
         log.info("[WEBAPP] MenuButton WebApp set.")
@@ -618,6 +618,27 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
             pass
 
     return pairs
+
+def _make_session_token(user_id: int) -> str:
+    """Fallback auth token for Telegram Desktop when initData is empty."""
+    secret = (WEBAPP_SESSION_SECRET or "").strip()
+    if not secret:
+        raise RuntimeError("WEBAPP_SESSION_SECRET not set")
+    now = int(datetime.now(timezone.utc).timestamp())
+    payload = {"uid": int(user_id), "iat": now, "exp": now + 10 * 60}
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+def _verify_session_token(token: str) -> int | None:
+    secret = (WEBAPP_SESSION_SECRET or "").strip()
+    if not secret or not token:
+        return None
+    try:
+        data = jwt.decode(token, secret, algorithms=["HS256"])
+        uid = int(data.get("uid"))
+        return uid
+    except Exception:
+        return None
+
 
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -1094,10 +1115,30 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
     except Exception:
         pass
 
+# Fallback for Telegram Desktop when initData is missing:
+# Accept a short-lived signed session token passed as ?s=... or X-Session header.
+if not init_data:
+    session_token = (req.headers.get("X-Session", "") or req.query.get("s", ""))
+    if not session_token:
+        try:
+            if req.can_read_body:
+                data = await req.json()
+                if isinstance(data, dict):
+                    session_token = str(data.get("session") or "")
+        except Exception:
+            pass
+
+    uid = _verify_session_token(session_token.strip())
+    if uid:
+        user = {"id": uid}
+        parsed = {"user": user, "auth_date": str(int(_now().timestamp())), "fallback": "session"}
+        log.warning(f"[AUTH] fallback session ok uid={uid}")
+        return parsed, user
+
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
-            text="Bad initData signature (hash mismatch). Проверь BOT_TOKEN и что MiniApp открыт внутри Telegram."
+            text="Нет initData/сессии. Открой MiniApp кнопкой /app (WebApp) внутри Telegram. На Telegram Desktop иногда initData не приходит — /app кнопка решает."
         )
 
     user = parsed.get("user") or {}
