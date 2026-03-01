@@ -39,6 +39,12 @@
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+  // Detect whether we are really opened as Telegram MiniApp (initData must be present).
+  function isTelegramMiniApp() {
+    try { return !!(tg && typeof tg.initData === "string" && tg.initData.length > 0); } catch (e) { return false; }
+  }
+
   function tgAlert(msg, kind = "info", title = "") {
     // Pretty in-app toast (preferred). Falls back to Telegram alert only if toast UI missing.
     const text = String(msg ?? "");
@@ -2223,8 +2229,20 @@ async function loadAdminTasks() {
     setFilter("all");
     setPlatformFilter(state.platformFilter);
     recalc();
+  // If opened outside Telegram (browser / uptime monitor), initData is empty.
+  // Do NOT show "token" errors — just skip sync or show a clear hint only inside Telegram UI.
+  if (!state.initData) {
+    if (tg) {
+      tgAlert("Открой MiniApp через кнопку в Telegram (не через браузер/ссылку).", "error", "Подключение");
+    } else {
+      // Browser / monitor: keep silent
+      console.log("Skip sync: not in Telegram WebApp (no initData).");
+    }
+    hideLoader();
+    return;
+  }
 
-      try {
+  try {
     await syncAll();
     startTasksAutoRefresh();
   } catch (e) {
