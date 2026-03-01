@@ -122,6 +122,12 @@ from aiogram.types import (
     WebAppInfo,
     PreCheckoutQuery,
     LabeledPrice,
+
+    MenuButtonWebApp,
+
+    InlineKeyboardMarkup,
+
+    InlineKeyboardButton,
 )
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -292,6 +298,29 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
+
+
+async def setup_menu_button(bot: Bot):
+    """Force Telegram to open Mini App in real WebApp mode (stable initData)."""
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="ReviewCash",
+                web_app=WebAppInfo(url=MINIAPP_URL),
+            )
+        )
+        log.info("[WEBAPP] MenuButton WebApp set.")
+    except Exception as e:
+        log.warning(f"[WEBAPP] MenuButton setup failed: {e}")
+
+
+@dp.message(F.text == "/app")
+async def open_app_cmd(m: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+    ]])
+    await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
+
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 crypto = None
@@ -550,56 +579,34 @@ async def sb_select_in(
 # Telegram initData verify (WebApp)
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
-    """Verify Telegram WebApp initData signature (core.telegram.org/bots/webapps).
-
-    Returns parsed key/value pairs (with 'user' parsed as JSON) on success, else None.
     """
-    if not init_data:
+    Проверка подписи Telegram WebApp initData (стабильно для Desktop/Android/iOS)
+    Алгоритм согласно документации Telegram.
+    """
+    if not init_data or not token:
         return None
 
-    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        return None
+
     received_hash = pairs.pop("hash", None)
     if not received_hash:
         return None
 
-    data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
-    data_check_string = "
-".join(data_check_arr)
+    data_check_string = "\n".join(
+        f"{k}={pairs[k]}" for k in sorted(pairs.keys())
+    )
 
-    # ✅ Telegram: secret_key = HMAC_SHA256(bot_token, key='WebAppData')
-    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    if not hmac.compare_digest(calc_hash, received_hash):
-        return None
-
-    if "user" in pairs:
-        try:
-            pairs["user"] = json.loads(pairs["user"])
-        except Exception:
-            pass
-
-    return pairs
-
-
-    Returns parsed key/value pairs (with 'user' parsed as JSON) on success, else None.
-    """
-    if not init_data:
-        return None
-
-    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
-    received_hash = pairs.pop("hash", None)
-    if not received_hash:
-        return None
-
-    data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
-    data_check_string = "\n".join(data_check_arr)
-
-    # ✅ Telegram WebApp secret key is sha256(bot_token)
     secret_key = hashlib.sha256(token.encode("utf-8")).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    calculated_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
-    if not hmac.compare_digest(calc_hash, received_hash):
+    if not hmac.compare_digest(calculated_hash, received_hash):
         return None
 
     if "user" in pairs:
@@ -610,9 +617,6 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
-# -------------------------
-# anti-fraud: device limits
-# -------------------------
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -1052,7 +1056,42 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
         mock_user = {"id": 123456, "username": "dev", "first_name": "Dev", "last_name": "Mode", "photo_url": None}
         return {"user": mock_user, "auth_date": str(int(_now().timestamp()))}, mock_user
 
-    init_data = req.headers.get("X-Tg-InitData", "")
+        # initData can arrive in different places depending on client/WebView.
+    # Prefer headers (fast path), but also accept JSON body field for clients that strip custom headers.
+    init_data = (
+        req.headers.get("X-Tg-InitData", "")
+        or req.headers.get("X-Telegram-InitData", "")
+        or req.headers.get("X-Tg-WebApp-Data", "")
+    )
+
+    if not init_data:
+        # Try Authorization: Bearer <initData>
+        auth = req.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            init_data = auth.split(" ", 1)[1].strip()
+
+    if not init_data:
+        # Try JSON body: {"__initData": "..."} (we keep it private with double underscore)
+        try:
+            if req.can_read_body:
+                data = await req.json()
+                if isinstance(data, dict):
+                    init_data = str(data.get("__initData") or data.get("initData") or "")
+        except Exception:
+            pass
+
+    # diagnostics for initData issues
+    try:
+        ua = req.headers.get("User-Agent", "")
+        ref = req.headers.get("Referer", "")
+        log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
+        if ref:
+            log.warning(f"[SYNC_DIAG] referer={ref[:120]}")
+        if init_data:
+            log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
+    except Exception:
+        pass
+
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
@@ -2157,6 +2196,7 @@ def make_app():
     app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
+    app.router.add_get("/api/health", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
@@ -2226,6 +2266,13 @@ def make_app():
     return app
 
 async def on_startup(app: web.Application):
+    await setup_menu_button(bot)
+    # diagnostics: confirm which bot token is running
+    try:
+        me = await bot.get_me()
+        log.warning(f"[SYNC_DIAG] Bot identity: @{me.username} id={me.id}")
+    except Exception as e:
+        log.error(f"[SYNC_DIAG] Bot identity check failed: {e}")
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
@@ -2334,4 +2381,3 @@ app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
-
