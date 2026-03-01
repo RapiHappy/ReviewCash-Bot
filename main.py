@@ -292,6 +292,13 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
+
+async def _log_bot_identity():
+    try:
+        me = await bot.get_me()
+        log.info(f"Bot identity: @{me.username} id={me.id}")
+    except Exception as e:
+        log.warning(f"Bot identity fetch failed: {e}")
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 crypto = None
