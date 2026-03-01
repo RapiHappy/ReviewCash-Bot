@@ -1061,11 +1061,6 @@ async def api_referrals(req: web.Request):
 # -------------------------
 # API: sync
 # -------------------------
-
-async def api_health(request: web.Request) -> web.Response:
-    # Lightweight healthcheck endpoint for uptime monitors.
-    return web.json_response({"ok": True, "service": "reviewcash", "ts": datetime.utcnow().isoformat() + "Z"})
-
 async def api_sync(req: web.Request):
     _, user = await require_init(req)
     body = await safe_json(req)
@@ -2135,6 +2130,7 @@ def make_app():
     app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
+    app.router.add_get("/api/health", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
@@ -2167,9 +2163,6 @@ def make_app():
 
     # API
     app.router.add_post("/api/sync", api_sync)
-    app.router.add_get("/api/health", api_health)
-    app.router.add_head("/api/health", api_health)
-
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/click", api_task_click)
