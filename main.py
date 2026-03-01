@@ -1159,7 +1159,7 @@ async def api_sync(req: web.Request):
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
-        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
+        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
 
     return web.json_response({
         "ok": True,
@@ -1309,6 +1309,10 @@ async def api_task_create(req: web.Request):
         desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
         tg_kind = desired_kind
         check_type = desired_check_type
+
+        # Telegram tasks: only automatic checks are allowed
+        if check_type != "auto":
+            return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
 
 
     if cost_rub <= 0:
@@ -1789,10 +1793,26 @@ async def api_admin_proof_list(req: web.Request):
         for t in (tr.data or []):
             tasks_map[str(t["id"])] = t
 
+    visible_after_ya = _now() - timedelta(days=3)
+
     out = []
     for c in comps:
         tid = str(c.get("task_id"))
         t = tasks_map.get(tid)
+
+        # Delay Yandex review proofs: show to admins only after 3 days
+        if t and t.get("type") == "ya":
+            ca = c.get("created_at")
+            dt = None
+            try:
+                if isinstance(ca, str) and ca:
+                    s = ca.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+            except Exception:
+                dt = None
+            if dt and dt > visible_after_ya:
+                continue
+
         out.append({
             "id": c.get("id"),
             "task_id": c.get("task_id"),
