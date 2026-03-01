@@ -292,13 +292,6 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
-
-async def _log_bot_identity():
-    try:
-        me = await bot.get_me()
-        log.info(f"Bot identity: @{me.username} id={me.id}")
-    except Exception as e:
-        log.warning(f"Bot identity fetch failed: {e}")
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 crypto = None
@@ -1025,6 +1018,14 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
         return {"user": mock_user, "auth_date": str(int(_now().timestamp()))}, mock_user
 
     init_data = req.headers.get("X-Tg-InitData", "")
+    # diagnostics for initData issues
+    try:
+        ua = req.headers.get("User-Agent", "")
+        log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
+        if init_data:
+            log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
+    except Exception:
+        pass
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
@@ -2198,6 +2199,12 @@ def make_app():
     return app
 
 async def on_startup(app: web.Application):
+    # diagnostics: confirm which bot token is running
+    try:
+        me = await bot.get_me()
+        log.warning(f"[SYNC_DIAG] Bot identity: @{me.username} id={me.id}")
+    except Exception as e:
+        log.error(f"[SYNC_DIAG] Bot identity check failed: {e}")
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
