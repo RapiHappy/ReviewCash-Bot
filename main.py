@@ -1115,25 +1115,25 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
     except Exception:
         pass
 
-# Fallback for Telegram Desktop when initData is missing:
-# Accept a short-lived signed session token passed as ?s=... or X-Session header.
-if not init_data:
-    session_token = (req.headers.get("X-Session", "") or req.query.get("s", ""))
-    if not session_token:
-        try:
-            if req.can_read_body:
-                data = await req.json()
-                if isinstance(data, dict):
-                    session_token = str(data.get("session") or "")
-        except Exception:
-            pass
+    # Fallback for Telegram Desktop when initData is missing:
+    # Accept a short-lived signed session token passed as ?s=... or X-Session header.
+    if not init_data:
+        session_token = (req.headers.get("X-Session", "") or req.query.get("s", ""))
+        if not session_token:
+            try:
+                if req.can_read_body:
+                    data = await req.json()
+                    if isinstance(data, dict):
+                        session_token = str(data.get("session") or "")
+            except Exception:
+                pass
 
-    uid = _verify_session_token(session_token.strip())
-    if uid:
-        user = {"id": uid}
-        parsed = {"user": user, "auth_date": str(int(_now().timestamp())), "fallback": "session"}
-        log.warning(f"[AUTH] fallback session ok uid={uid}")
-        return parsed, user
+        uid = _verify_session_token(session_token.strip())
+        if uid:
+            user = {"id": uid}
+            parsed = {"user": user, "auth_date": str(int(_now().timestamp())), "fallback": "session"}
+            log.warning(f"[AUTH] fallback session ok uid={uid}")
+            return parsed, user
 
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
