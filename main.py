@@ -550,18 +550,25 @@ async def sb_select_in(
 # Telegram initData verify (WebApp)
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
-    if not init_data:
+    """Telegram WebApp initData verification (stable for Desktop/Android/iOS)."""
+    if not init_data or not token:
         return None
 
-    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    except Exception:
+        return None
+
     received_hash = pairs.pop("hash", None)
     if not received_hash:
         return None
 
-    data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
-    data_check_string = "\n".join(data_check_arr)
+    data_check_string = "\n".join(
+        f"{k}={pairs[k]}" for k in sorted(pairs.keys())
+    )
 
-    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+    # ✅ Correct secret key per Telegram docs: sha256(bot_token)
+    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calc_hash, received_hash):
@@ -575,9 +582,7 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
-# -------------------------
-# anti-fraud: device limits
-# -------------------------
+
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -2154,7 +2159,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
