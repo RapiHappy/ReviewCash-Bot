@@ -1017,44 +1017,43 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
         mock_user = {"id": 123456, "username": "dev", "first_name": "Dev", "last_name": "Mode", "photo_url": None}
         return {"user": mock_user, "auth_date": str(int(_now().timestamp()))}, mock_user
 
-    # initData can arrive in different places depending on client/WebView.
-# Prefer headers (fast path), but also accept JSON body field for clients that strip custom headers.
-init_data = (
-    req.headers.get("X-Tg-InitData", "")
-    or req.headers.get("X-Telegram-InitData", "")
-    or req.headers.get("X-Tg-WebApp-Data", "")
-)
+        # initData can arrive in different places depending on client/WebView.
+    # Prefer headers (fast path), but also accept JSON body field for clients that strip custom headers.
+    init_data = (
+        req.headers.get("X-Tg-InitData", "")
+        or req.headers.get("X-Telegram-InitData", "")
+        or req.headers.get("X-Tg-WebApp-Data", "")
+    )
 
-if not init_data:
-    # Try Authorization: Bearer <initData>
-    auth = req.headers.get("Authorization", "")
-    if auth.lower().startswith("bearer "):
-        init_data = auth.split(" ", 1)[1].strip()
+    if not init_data:
+        # Try Authorization: Bearer <initData>
+        auth = req.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            init_data = auth.split(" ", 1)[1].strip()
 
-if not init_data:
-    # Try JSON body: {"__initData": "..."} (we keep it private with double underscore)
+    if not init_data:
+        # Try JSON body: {"__initData": "..."} (we keep it private with double underscore)
+        try:
+            if req.can_read_body:
+                data = await req.json()
+                if isinstance(data, dict):
+                    init_data = str(data.get("__initData") or data.get("initData") or "")
+        except Exception:
+            pass
+
+    # diagnostics for initData issues
     try:
-        if req.can_read_body:
-            data = await req.json()
-            if isinstance(data, dict):
-                init_data = str(data.get("__initData") or data.get("initData") or "")
+        ua = req.headers.get("User-Agent", "")
+        ref = req.headers.get("Referer", "")
+        log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
+        if ref:
+            log.warning(f"[SYNC_DIAG] referer={ref[:120]}")
+        if init_data:
+            log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
     except Exception:
         pass
 
-# diagnostics for initData issues
-try:
-    ua = req.headers.get("User-Agent", "")
-    ref = req.headers.get("Referer", "")
-    log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
-    if ref:
-        log.warning(f"[SYNC_DIAG] referer={ref[:120]}")
-    if init_data:
-        log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
-except Exception:
-    pass
-
-parsed = verify_init_data(init_data, BOT_TOKEN)
-
+    parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
             text="Bad initData signature (hash mismatch). Проверь BOT_TOKEN и что MiniApp открыт внутри Telegram."
