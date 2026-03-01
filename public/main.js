@@ -357,6 +357,56 @@
     return h;
   }
 
+// Ensure we have Telegram initData. Some clients populate it only after tg.ready().
+async function ensureInitData(tg) {
+  // 1) already have
+  if (state.initData) return state.initData;
+
+  // 2) restore from session (survives reloads inside same WebView)
+  try {
+    const saved = sessionStorage.getItem("rc_initData") || "";
+    if (saved) {
+      state.initData = saved;
+      return state.initData;
+    }
+  } catch (e) {}
+
+  const deadline = Date.now() + 3000; // up to 3s
+  while (Date.now() < deadline) {
+    try {
+      if (tg) {
+        try { if (typeof tg.ready === "function") tg.ready(); } catch (e) {}
+        try { if (typeof tg.expand === "function") tg.expand(); } catch (e) {}
+      }
+    } catch (e) {}
+
+    // give Telegram a tick
+    await new Promise(r => setTimeout(r, 50));
+
+    // try Telegram WebApp initData
+    try {
+      const d = tg && tg.initData ? String(tg.initData) : "";
+      if (d) {
+        state.initData = d;
+        break;
+      }
+    } catch (e) {}
+
+    // URL fallback
+    const fb = extractTgWebAppDataFromUrl();
+    if (fb) {
+      state.initData = fb;
+      break;
+    }
+  }
+
+  if (state.initData) {
+    try { sessionStorage.setItem("rc_initData", state.initData); } catch (e) {}
+  }
+  return state.initData;
+}
+
+
   async function apiPost(path, body) {
 if (!state.initData) {
   const err = new Error("Открой мини‑приложение внутри Telegram (нет initData).");
@@ -372,7 +422,7 @@ if (!state.initData) {
     res = await fetch(url, {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify(body || {}),
+      body: JSON.stringify(Object.assign({}, body || {}, {__initData: state.initData})),
       signal: ctrl.signal,
     });
   } catch (e) {
