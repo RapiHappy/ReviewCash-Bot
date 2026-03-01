@@ -311,7 +311,8 @@ option { background-color: var(--card-bg); color: var(--text-main); }
   border-radius: 22px;
   padding: 16px 14px;
   display:flex;
-  align-items:center;
+  align-items:flex-start;
+  flex-wrap:wrap;
   justify-content:space-between;
   gap:12px;
   box-shadow: 0 10px 28px var(--shadow);
@@ -324,7 +325,8 @@ option { background-color: var(--card-bg); color: var(--text-main); }
 
 .qa-left{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
+  flex-wrap:wrap;
   gap:12px;
   min-width:0;
 }
@@ -334,11 +336,13 @@ option { background-color: var(--card-bg); color: var(--text-main); }
   height:42px;
   border-radius: 16px;
   display:flex;
-  align-items:center;
+  align-items:flex-start;
+  flex-wrap:wrap;
   justify-content:center;
   font-size:18px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10);
   flex: 0 0 auto;
+  margin-left:auto;
 }
 
 .qa-txt{
@@ -352,17 +356,19 @@ option { background-color: var(--card-bg); color: var(--text-main); }
   font-size:13px;
   font-weight: 900;
   letter-spacing: -0.2px;
-  white-space:nowrap;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient: vertical;
   overflow:hidden;
-  text-overflow:ellipsis;
 }
 
 .qa-sub{
   font-size:11px;
   color: var(--text-dim);
-  white-space:nowrap;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient: vertical;
   overflow:hidden;
-  text-overflow:ellipsis;
   display:flex;
   align-items:baseline;
   gap:6px;
@@ -375,9 +381,11 @@ option { background-color: var(--card-bg); color: var(--text-main); }
 
 .qa-right{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
+  flex-wrap:wrap;
   gap:8px;
   flex: 0 0 auto;
+  margin-left:auto;
 }
 
 .qa-chip{
@@ -396,7 +404,8 @@ option { background-color: var(--card-bg); color: var(--text-main); }
   height:26px;
   border-radius: 10px;
   display:flex;
-  align-items:center;
+  align-items:flex-start;
+  flex-wrap:wrap;
   justify-content:center;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.10);
@@ -438,35 +447,4 @@ html.perf-low .qa-perf:hover{
 /* On small screens stack */
 @media (max-width: 420px){
   .quick-actions{ grid-template-columns: 1fr; }
-}
-
-
-/* --- FIX: Perf mode row wrap + chip fits --- */
-.qa-perf .qa-sub{
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  flex-wrap: wrap;
-  line-height: 1.25;
-}
-.qa-perf .qa-subhint{
-  white-space: normal;
-}
-@media (max-width: 380px){
-  .qa-right{
-    gap:6px;
-  }
-  .qa-chip{
-    padding:5px 8px;
-    font-size:9px;
-  }
-}
-@media (max-width: 340px){
-  .qa-card{
-    align-items:flex-start;
-  }
-  .qa-right{
-    flex-direction: column;
-    align-items: flex-end;
-  }
 }
