@@ -24,7 +24,96 @@
 (function () {
   "use strict";
 
-  const RC_BUILD = "rc_20260225_181352";
+  
+// --- TG DIAG (Desktop initData debug) ---
+(function(){
+  function ensureDiag(){
+    if (document.getElementById("tg-diag")) return;
+    var box = document.createElement("div");
+    box.id = "tg-diag";
+    box.style.position = "fixed";
+    box.style.left = "12px";
+    box.style.right = "12px";
+    box.style.bottom = "88px";
+    box.style.zIndex = "99999";
+    box.style.padding = "10px 12px";
+    box.style.borderRadius = "12px";
+    box.style.fontSize = "12px";
+    box.style.lineHeight = "1.35";
+    box.style.background = "rgba(0,0,0,0.65)";
+    box.style.backdropFilter = "blur(8px)";
+    box.style.webkitBackdropFilter = "blur(8px)";
+    box.style.color = "#fff";
+    box.style.border = "1px solid rgba(255,255,255,0.18)";
+    box.style.display = "none";
+
+    var close = document.createElement("button");
+    close.textContent = "×";
+    close.style.position = "absolute";
+    close.style.top = "6px";
+    close.style.right = "10px";
+    close.style.width = "28px";
+    close.style.height = "28px";
+    close.style.borderRadius = "10px";
+    close.style.border = "0";
+    close.style.cursor = "pointer";
+    close.style.background = "rgba(255,255,255,0.12)";
+    close.style.color = "#fff";
+    close.onclick = function(){ box.style.display = "none"; };
+    box.appendChild(close);
+
+    var pre = document.createElement("pre");
+    pre.id = "tg-diag-pre";
+    pre.style.margin = "0";
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.wordBreak = "break-word";
+    box.appendChild(pre);
+
+    document.body.appendChild(box);
+  }
+
+  function diagText(){
+    var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    var hasTg = !!tg;
+    var initData = hasTg ? (tg.initData || "") : "";
+    var initUnsafe = hasTg ? (tg.initDataUnsafe || {}) : {};
+    var userId = initUnsafe && initUnsafe.user ? initUnsafe.user.id : null;
+
+    return [
+      "TG WebApp: " + (hasTg ? "YES" : "NO"),
+      hasTg ? ("platform: " + (tg.platform || "") + " | version: " + (tg.version || "")) : "",
+      "initData length: " + String(initData.length),
+      "userId (unsafe): " + (userId ? String(userId) : "—"),
+      "href: " + location.href,
+      "UA: " + navigator.userAgent
+    ].filter(Boolean).join("\n");
+  }
+
+  function update(){
+    try{
+      ensureDiag();
+      var box = document.getElementById("tg-diag");
+      var pre = document.getElementById("tg-diag-pre");
+      if (!box || !pre) return;
+      pre.textContent = diagText();
+      var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+      var len = tg ? ((tg.initData || "").length) : 0;
+      if (len === 0) box.style.display = "block";
+    }catch(_){}
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function(){
+      update();
+      setInterval(update, 1500);
+    });
+  } else {
+    update();
+    setInterval(update, 1500);
+  }
+})();
+
+const RC_BUILD = "rc_20260225_181352";
   try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
 
 
