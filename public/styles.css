@@ -439,3 +439,34 @@ html.perf-low .qa-perf:hover{
 @media (max-width: 420px){
   .quick-actions{ grid-template-columns: 1fr; }
 }
+
+
+/* --- FIX: Perf mode row wrap + chip fits --- */
+.qa-perf .qa-sub{
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  flex-wrap: wrap;
+  line-height: 1.25;
+}
+.qa-perf .qa-subhint{
+  white-space: normal;
+}
+@media (max-width: 380px){
+  .qa-right{
+    gap:6px;
+  }
+  .qa-chip{
+    padding:5px 8px;
+    font-size:9px;
+  }
+}
+@media (max-width: 340px){
+  .qa-card{
+    align-items:flex-start;
+  }
+  .qa-right{
+    flex-direction: column;
+    align-items: flex-end;
+  }
+}
