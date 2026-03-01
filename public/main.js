@@ -366,7 +366,7 @@
     res = await fetch(url, {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify(Object.assign({}, body || {}, state.initData ? { __initData: state.initData } : {})),
+      body: JSON.stringify(body || {}),
       signal: ctrl.signal,
     });
   } catch (e) {
@@ -1178,7 +1178,7 @@ if (!list.length) {
     const sel = $("t-tg-subtype");
     if (!sel) return;
     sel.innerHTML = "";
-    TG_TASK_TYPES.forEach(t => {
+    TG_TASK_TYPES.filter(t => !TG_MANUAL_ONLY.has(t.id)).forEach(t => {
       const opt = document.createElement("option");
       opt.value = t.id;
       opt.textContent = `${t.title} — ${t.reward}₽`;
@@ -2192,20 +2192,6 @@ function extractTgWebAppDataFromUrl() {
   }
 }
 
-// Wait initData (Telegram Desktop/WebView sometimes delays it)
-async function waitInitData(tg, timeoutMs = 3000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try { tg.ready(); } catch (e) {}
-    try { tg.expand(); } catch (e) {}
-    const d = (tg && typeof tg.initData === "string") ? tg.initData : "";
-    if (d) return d;
-    await new Promise(r => setTimeout(r, 50));
-  }
-  return "";
-}
-
-
 
   // Bootstrap
   // --------------------
@@ -2221,12 +2207,16 @@ async function waitInitData(tg, timeoutMs = 3000) {
         tg.ready();
         tg.expand();
       } catch (e) {}
-      state.initData = await waitInitData(tg, 3000);
+      state.initData = (tg && typeof tg.initData === 'string' && tg.initData) ? tg.initData : '';
 
       if (!state.initData) {
+
         const fb = extractTgWebAppDataFromUrl();
+
         if (fb) state.initData = fb;
+
       }
+
       try { console.log('[RC] initData len=', (state.initData||'').length, 'platform=', tg && tg.platform); } catch(e) {}
 try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
 
