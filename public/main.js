@@ -2178,15 +2178,26 @@ async function loadAdminTasks() {
   }
 
 // --- Telegram initData fallback (when tg.initData is empty) ---
+// --- Telegram initData fallback (when tg.initData is empty) ---
 function extractTgWebAppDataFromUrl() {
   try {
     // Telegram may pass tgWebAppData in URL hash or query string depending on platform.
     const h = String(location.hash || "");
     const s = String(location.search || "");
+
     const all = (h.startsWith("#") ? h.slice(1) : h) + (s ? ("&" + s.slice(1)) : "");
     const params = new URLSearchParams(all);
-    const v = params.get("tgWebAppData") || params.get("tgWebAppDataRaw") || "";
-    return v ? decodeURIComponent(v) : "";
+
+    // IMPORTANT:
+    // URLSearchParams already decodes percent-encoding and may convert "+" to spaces.
+    // We must NOT decode again; and we must restore "+" if it became spaces.
+    let v = params.get("tgWebAppData") || params.get("tgWebAppDataRaw") || "";
+    if (!v) return "";
+
+    // restore '+' that may become spaces
+    v = v.replace(/ /g, "+");
+
+    return v;
   } catch (e) {
     return "";
   }
