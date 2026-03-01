@@ -580,11 +580,13 @@ async def sb_select_in(
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
     """
-    Проверка подписи Telegram WebApp initData (стабильно для Desktop/Android/iOS)
-    Алгоритм согласно документации Telegram.
+    Telegram Mini App (WebApp) initData verification.
+    IMPORTANT: For WebApp initData, secret key is HMAC_SHA256("WebAppData", bot_token).
     """
+    if not init_data:
+        return None
     token = (token or "").strip()
-    if not init_data or not token:
+    if not token:
         return None
 
     try:
@@ -596,20 +598,15 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     if not received_hash:
         return None
 
-    data_check_string = "\n".join(
-        f"{k}={pairs[k]}" for k in sorted(pairs.keys())
-    )
+    data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs.keys()))
 
-    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
-    calculated_hash = hmac.new(
-        secret_key,
-        data_check_string.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    # ✅ Correct WebApp algorithm
+    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+    calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calculated_hash, received_hash):
         try:
-            log.warning(f"[AUTH] hash mismatch recv={received_hash[:12]} calc={calculated_hash[:12]} keys={list(pairs.keys())[:6]}")
+            log.warning(f"[AUTH] hash mismatch recv={received_hash[:12]} calc={calculated_hash[:12]} keys={list(pairs.keys())}")
         except Exception:
             pass
         return None
