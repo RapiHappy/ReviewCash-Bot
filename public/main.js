@@ -357,63 +357,7 @@
     return h;
   }
 
-// Ensure we have Telegram initData. Some clients populate it only after tg.ready().
-async function ensureInitData(tg) {
-  // 1) already have
-  if (state.initData) return state.initData;
-
-  // 2) restore from session (survives reloads inside same WebView)
-  try {
-    const saved = sessionStorage.getItem("rc_initData") || "";
-    if (saved) {
-      state.initData = saved;
-      return state.initData;
-    }
-  } catch (e) {}
-
-  const deadline = Date.now() + 3000; // up to 3s
-  while (Date.now() < deadline) {
-    try {
-      if (tg) {
-        try { if (typeof tg.ready === "function") tg.ready(); } catch (e) {}
-        try { if (typeof tg.expand === "function") tg.expand(); } catch (e) {}
-      }
-    } catch (e) {}
-
-    // give Telegram a tick
-    await new Promise(r => setTimeout(r, 50));
-
-    // try Telegram WebApp initData
-    try {
-      const d = tg && tg.initData ? String(tg.initData) : "";
-      if (d) {
-        state.initData = d;
-        break;
-      }
-    } catch (e) {}
-
-    // URL fallback
-    const fb = extractTgWebAppDataFromUrl();
-    if (fb) {
-      state.initData = fb;
-      break;
-    }
-  }
-
-  if (state.initData) {
-    try { sessionStorage.setItem("rc_initData", state.initData); } catch (e) {}
-  }
-  return state.initData;
-}
-
-
   async function apiPost(path, body) {
-if (!state.initData) {
-  const err = new Error("Открой мини‑приложение внутри Telegram (нет initData).");
-  err.status = 401; err.path = path;
-  throw err;
-}
-
   const url = state.api + path;
   const ctrl = new AbortController();
   const t = window.setTimeout(() => ctrl.abort(), 20000);
@@ -422,7 +366,7 @@ if (!state.initData) {
     res = await fetch(url, {
       method: "POST",
       headers: apiHeaders(true),
-      body: JSON.stringify(Object.assign({}, body || {}, {__initData: state.initData})),
+      body: JSON.stringify(Object.assign({}, body || {}, state.initData ? { __initData: state.initData } : {})),
       signal: ctrl.signal,
     });
   } catch (e) {
@@ -2234,30 +2178,33 @@ async function loadAdminTasks() {
   }
 
 // --- Telegram initData fallback (when tg.initData is empty) ---
-// --- Telegram initData fallback (when tg.initData is empty) ---
 function extractTgWebAppDataFromUrl() {
   try {
     // Telegram may pass tgWebAppData in URL hash or query string depending on platform.
     const h = String(location.hash || "");
     const s = String(location.search || "");
-
     const all = (h.startsWith("#") ? h.slice(1) : h) + (s ? ("&" + s.slice(1)) : "");
     const params = new URLSearchParams(all);
-
-    // IMPORTANT:
-    // URLSearchParams already decodes percent-encoding and may convert "+" to spaces.
-    // We must NOT decode again; and we must restore "+" if it became spaces.
-    let v = params.get("tgWebAppData") || params.get("tgWebAppDataRaw") || "";
-    if (!v) return "";
-
-    // restore '+' that may become spaces
-    v = v.replace(/ /g, "+");
-
-    return v;
+    const v = params.get("tgWebAppData") || params.get("tgWebAppDataRaw") || "";
+    return v ? decodeURIComponent(v) : "";
   } catch (e) {
     return "";
   }
 }
+
+// Wait initData (Telegram Desktop/WebView sometimes delays it)
+async function waitInitData(tg, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { tg.ready(); } catch (e) {}
+    try { tg.expand(); } catch (e) {}
+    const d = (tg && typeof tg.initData === "string") ? tg.initData : "";
+    if (d) return d;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return "";
+}
+
 
 
   // Bootstrap
@@ -2269,27 +2216,17 @@ function extractTgWebAppDataFromUrl() {
     applyPerfMode(getInitialPerfMode());
     forceInitialView();
 
-    
-// initData is required for backend auth. Try Telegram WebApp first, then URL fallback.
-state.initData = "";
-if (tg) {
-try { if (typeof tg.ready === "function") tg.ready(); } catch (e) {}
-// Desktop/WebView clients sometimes populate initData only after ready()
-await new Promise(r => setTimeout(r, 0));
+    if (tg) {
       try {
         tg.ready();
         tg.expand();
       } catch (e) {}
-      state.initData = (tg && typeof tg.initData === 'string' && tg.initData) ? tg.initData : '';
+      state.initData = await waitInitData(tg, 3000);
 
       if (!state.initData) {
-
         const fb = extractTgWebAppDataFromUrl();
-
         if (fb) state.initData = fb;
-
       }
-
       try { console.log('[RC] initData len=', (state.initData||'').length, 'platform=', tg && tg.platform); } catch(e) {}
 try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
 
@@ -2307,13 +2244,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           renderProfile();
         }
       } catch (e) {}
-    
-// URL fallback even outside Telegram (e.g., if opened via t.me link in browser)
-if (!state.initData) {
-  const fb = extractTgWebAppDataFromUrl();
-  if (fb) state.initData = fb;
-}
-}
+    }
 
     bindOverlayClose();
     initTgSubtypeSelect();
