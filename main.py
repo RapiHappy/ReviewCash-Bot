@@ -6,14 +6,6 @@ import hashlib
 import asyncio
 import logging
 from datetime import datetime, timezone, date, timedelta
-
-# Build/version string used for cache-busting in Telegram WebView
-APP_BUILD = (
-    os.getenv("APP_BUILD")
-    or os.getenv("RENDER_GIT_COMMIT")
-    or os.getenv("GIT_COMMIT")
-    or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
-)
 from urllib.parse import parse_qsl
 
 from urllib.parse import urlparse
@@ -97,23 +89,6 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
 from pathlib import Path
 
 from aiohttp import web
-
-
-@web.middleware
-async def no_cache_mw(request: web.Request, handler):
-    resp = await handler(request)
-    try:
-        if request.path.startswith("/app/") or request.path == "/app":
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-        if request.path.startswith("/api/"):
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-    except Exception:
-        pass
-    return resp
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -379,24 +354,6 @@ def normalize_tg_chat(s: str | None) -> str | None:
     # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
-def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
-    u = (tg_chat or "").lower().lstrip("@")
-    tu = (target_url or "").lower()
-    # bots are not auto-checkable (cannot know if user pressed Start in someone else's bot)
-    if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
-        return "bot"
-    return "chat"
-
-async def tg_calc_check_type(tg_chat: str, target_url: str) -> tuple[str, str, str]:
-    """Return (check_type, tg_kind, reason)."""
-    kind = tg_detect_kind(tg_chat, target_url)
-    if kind == "bot":
-        return "manual", kind, "BOT_TASK"
-    ok, msg = await ensure_bot_in_chat(tg_chat)
-    if ok:
-        return "auto", kind, ""
-    return "manual", kind, (msg or "NO_ACCESS")
-
 
 async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
     # cache for 5 minutes
@@ -550,25 +507,18 @@ async def sb_select_in(
 # Telegram initData verify (WebApp)
 # -------------------------
 def verify_init_data(init_data: str, token: str) -> dict | None:
-    """Telegram WebApp initData verification (stable for Desktop/Android/iOS)."""
-    if not init_data or not token:
+    if not init_data:
         return None
 
-    try:
-        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
-    except Exception:
-        return None
-
+    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
     received_hash = pairs.pop("hash", None)
     if not received_hash:
         return None
 
-    data_check_string = "\n".join(
-        f"{k}={pairs[k]}" for k in sorted(pairs.keys())
-    )
+    data_check_arr = [f"{k}={pairs[k]}" for k in sorted(pairs.keys())]
+    data_check_string = "\n".join(data_check_arr)
 
-    # ✅ Correct secret key per Telegram docs: sha256(bot_token)
-    secret_key = hashlib.sha256(token.encode("utf-8")).digest()
+    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calc_hash, received_hash):
@@ -582,7 +532,9 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
-
+# -------------------------
+# anti-fraud: device limits
+# -------------------------
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -1022,42 +974,7 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
         mock_user = {"id": 123456, "username": "dev", "first_name": "Dev", "last_name": "Mode", "photo_url": None}
         return {"user": mock_user, "auth_date": str(int(_now().timestamp()))}, mock_user
 
-        # initData can arrive in different places depending on client/WebView.
-    # Prefer headers (fast path), but also accept JSON body field for clients that strip custom headers.
-    init_data = (
-        req.headers.get("X-Tg-InitData", "")
-        or req.headers.get("X-Telegram-InitData", "")
-        or req.headers.get("X-Tg-WebApp-Data", "")
-    )
-
-    if not init_data:
-        # Try Authorization: Bearer <initData>
-        auth = req.headers.get("Authorization", "")
-        if auth.lower().startswith("bearer "):
-            init_data = auth.split(" ", 1)[1].strip()
-
-    if not init_data:
-        # Try JSON body: {"__initData": "..."} (we keep it private with double underscore)
-        try:
-            if req.can_read_body:
-                data = await req.json()
-                if isinstance(data, dict):
-                    init_data = str(data.get("__initData") or data.get("initData") or "")
-        except Exception:
-            pass
-
-    # diagnostics for initData issues
-    try:
-        ua = req.headers.get("User-Agent", "")
-        ref = req.headers.get("Referer", "")
-        log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
-        if ref:
-            log.warning(f"[SYNC_DIAG] referer={ref[:120]}")
-        if init_data:
-            log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
-    except Exception:
-        pass
-
+    init_data = req.headers.get("X-Tg-InitData", "")
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
@@ -1242,40 +1159,15 @@ async def api_task_create(req: web.Request):
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
-    # TG task:
-    # - принимаем только @юзернейм или ссылку t.me/...
-    # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
+    # TG task: require bot in chat/channel
     if ttype == "tg":
-        raw_tg = (tg_chat or target_url or "").strip()
-        raw_low = raw_tg.lower()
-
-        if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
-            return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
-
-        tg_chat_n = normalize_tg_chat(raw_tg)
+        tg_chat_n = normalize_tg_chat(tg_chat or target_url)
         if not tg_chat_n:
-            return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
+            return json_error(400, "Для TG задания укажи @группу или @канал (например @MyChannel)", code="TG_CHAT_REQUIRED")
         tg_chat = tg_chat_n
-
-        # Определяем тип TG-цели.
-        # Для bot задач (например /start) Telegram Bot API часто НЕ даёт getChat,
-        # поэтому не блокируем создание, а делаем ручную проверку.
-        kind_guess = tg_detect_kind(tg_chat, target_url)
-        if kind_guess == "chat":
-            # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
-            try:
-                await bot.get_chat(tg_chat)
-            except Exception:
-                return json_error(
-                    400,
-                    "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
-                    code="TG_BAD_TARGET",
-                )
-
-        desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
-        tg_kind = desired_kind
-        check_type = desired_check_type
-
+        ok_chat, msg = await ensure_bot_in_chat(tg_chat)
+        if not ok_chat:
+            return json_error(400, msg, code="TG_BOT_NOT_IN_CHAT")
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
@@ -2159,10 +2051,9 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
-    app.router.add_get("/api/health", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
@@ -2170,20 +2061,10 @@ def make_app():
     static_dir = base_dir / "public"
     if static_dir.exists():
         async def app_redirect(req: web.Request):
-            raise web.HTTPFound(f"/app/?v={APP_BUILD}")
+            raise web.HTTPFound("/app/")
 
         async def app_index(req: web.Request):
-            # Serve index.html with build placeholder replaced to bust Telegram WebView cache.
-            try:
-                html = (static_dir / "index.html").read_text(encoding="utf-8")
-            except Exception:
-                return web.FileResponse(static_dir / "index.html")
-            html = html.replace("__APP_BUILD__", APP_BUILD)
-            resp = web.Response(text=html, content_type="text/html")
-            resp.headers["Cache-Control"] = "no-store, max-age=0"
-            resp.headers["Pragma"] = "no-cache"
-            resp.headers["Expires"] = "0"
-            return resp
+            return web.FileResponse(static_dir / "index.html")
 
         app.router.add_get("/app", app_redirect)
         app.router.add_get("/app/", app_index)
@@ -2227,17 +2108,10 @@ def make_app():
     app.router.add_post("/api/admin/tbank/decision", api_admin_tbank_decision)
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
-    app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
 
     return app
 
 async def on_startup(app: web.Application):
-    # diagnostics: confirm which bot token is running
-    try:
-        me = await bot.get_me()
-        log.warning(f"[SYNC_DIAG] Bot identity: @{me.username} id={me.id}")
-    except Exception as e:
-        log.error(f"[SYNC_DIAG] Bot identity check failed: {e}")
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
@@ -2263,12 +2137,10 @@ async def on_cleanup(app: web.Application):
 # -------------------------
 async def api_admin_task_list(req: web.Request):
     await require_admin(req)
-    user = await require_admin(req)
-
     sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
     raw = sel.data or []
     tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
-    return web.json_response({"ok": True, "tasks": tasks, "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"])})
+    return web.json_response({"ok": True, "tasks": tasks})
 
 async def api_admin_task_delete(req: web.Request):
     await require_main_admin(req)
@@ -2284,60 +2156,6 @@ async def api_admin_task_delete(req: web.Request):
         pass
     return web.json_response({"ok": True})
 # =========================================================
-
-async def api_admin_tg_audit(req: web.Request):
-    # This action modifies tasks, so only main admin.
-    await require_main_admin(req)
-
-    # fetch active tasks (up to 500), filter tg here
-    sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=500)
-    raw = sel.data or []
-    tg_tasks = [t for t in raw if t.get("type") == "tg" and int(t.get("qty_left") or 0) > 0]
-
-    changed = 0
-    set_auto = 0
-    set_manual = 0
-    problems = 0
-
-    for t in tg_tasks:
-        task_id = t.get("id")
-        tg_chat = (t.get("tg_chat") or "").strip()
-        target_url = str(t.get("target_url") or "")
-        if not tg_chat:
-            continue
-
-        try:
-            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
-        except Exception:
-            problems += 1
-            continue
-
-        upd = {}
-        if (t.get("check_type") or "manual") != desired_check_type:
-            upd["check_type"] = desired_check_type
-        if (t.get("tg_kind") or "") != desired_kind:
-            upd["tg_kind"] = desired_kind
-
-        if upd:
-            try:
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
-                changed += 1
-                if desired_check_type == "auto":
-                    set_auto += 1
-                else:
-                    set_manual += 1
-            except Exception:
-                problems += 1
-
-    return web.json_response({
-        "ok": True,
-        "total_tg": len(tg_tasks),
-        "changed": changed,
-        "set_auto": set_auto,
-        "set_manual": set_manual,
-        "problems": problems,
-    })
-
 # Gunicorn entrypoint: expose 'app'
 # =========================================================
 app = make_app()
