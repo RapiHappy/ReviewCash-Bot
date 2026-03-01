@@ -2223,6 +2223,9 @@ function extractTgWebAppDataFromUrl() {
 // initData is required for backend auth. Try Telegram WebApp first, then URL fallback.
 state.initData = "";
 if (tg) {
+try { if (typeof tg.ready === "function") tg.ready(); } catch (e) {}
+// Desktop/WebView clients sometimes populate initData only after ready()
+await new Promise(r => setTimeout(r, 0));
       try {
         tg.ready();
         tg.expand();
