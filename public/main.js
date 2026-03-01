@@ -459,12 +459,6 @@
       }
     }
     try { setActiveTab(id); } catch (e) {}
-
-    // Show FAB (+) only on Tasks tab to avoid covering buttons on other screens
-    try {
-      const fab = document.querySelector(".fab-wrap");
-      if (fab) fab.style.display = (id === "tasks") ? "flex" : "none";
-    } catch (e) {}
   }
 
   function openOverlay(id) {
@@ -2182,6 +2176,23 @@ async function loadAdminTasks() {
       box.appendChild(c);
     });
   }
+
+// --- Telegram initData fallback (when tg.initData is empty) ---
+function extractTgWebAppDataFromUrl() {
+  try {
+    // Telegram may pass tgWebAppData in URL hash or query string depending on platform.
+    const h = String(location.hash || "");
+    const s = String(location.search || "");
+    const all = (h.startsWith("#") ? h.slice(1) : h) + (s ? ("&" + s.slice(1)) : "");
+    const params = new URLSearchParams(all);
+    const v = params.get("tgWebAppData") || params.get("tgWebAppDataRaw") || "";
+    return v ? decodeURIComponent(v) : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+
   // Bootstrap
   // --------------------
   async function bootstrap() {
@@ -2196,8 +2207,18 @@ async function loadAdminTasks() {
         tg.ready();
         tg.expand();
       } catch (e) {}
-      state.initData = tg.initData || "";
-      try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
+      state.initData = (tg && typeof tg.initData === 'string' && tg.initData) ? tg.initData : '';
+
+      if (!state.initData) {
+
+        const fb = extractTgWebAppDataFromUrl();
+
+        if (fb) state.initData = fb;
+
+      }
+
+      try { console.log('[RC] initData len=', (state.initData||'').length, 'platform=', tg && tg.platform); } catch(e) {}
+try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
 
       // Prefill user from Telegram (so avatar/name start loading immediately)
       try {
@@ -2208,9 +2229,6 @@ async function loadAdminTasks() {
           state.user.first_name = tu.first_name;
           state.user.last_name = tu.last_name;
           state.user.photo_url = tu.photo_url;
-          // keep id to avoid "anonymous" state while sync is pending
-          if (tu.id) state.user.user_id = tu.id;
-          if (typeof tu.is_premium !== "undefined") state.user.is_premium = tu.is_premium;
           if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
           renderHeader();
           renderProfile();
@@ -2237,18 +2255,7 @@ async function loadAdminTasks() {
     await syncAll();
     startTasksAutoRefresh();
   } catch (e) {
-    // If opened outside Telegram, initData will be empty -> don't scare user with "token" error
-    const notInTg = !(tg && tg.initData && String(tg.initData).length > 0);
-    if (notInTg) {
-      console.warn("Sync skipped/failed outside Telegram:", e);
-      // optional: show a gentle hint only once
-      if (!state._shownOutsideTgHint) {
-        state._shownOutsideTgHint = true;
-        tgAlert("Открой MiniApp внутри Telegram, чтобы загрузить профиль и данные.", "info", "Подключение");
-      }
-    } else {
-      tgAlert(String(e.message || e), "error", "Подключение");
-    }
+    tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
     hideLoader();
   }
