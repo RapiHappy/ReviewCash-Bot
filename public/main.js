@@ -358,6 +358,12 @@
   }
 
   async function apiPost(path, body) {
+if (!state.initData) {
+  const err = new Error("Открой мини‑приложение внутри Telegram (нет initData).");
+  err.status = 401; err.path = path;
+  throw err;
+}
+
   const url = state.api + path;
   const ctrl = new AbortController();
   const t = window.setTimeout(() => ctrl.abort(), 20000);
@@ -2213,7 +2219,10 @@ function extractTgWebAppDataFromUrl() {
     applyPerfMode(getInitialPerfMode());
     forceInitialView();
 
-    if (tg) {
+    
+// initData is required for backend auth. Try Telegram WebApp first, then URL fallback.
+state.initData = "";
+if (tg) {
       try {
         tg.ready();
         tg.expand();
@@ -2245,7 +2254,13 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           renderProfile();
         }
       } catch (e) {}
-    }
+    
+// URL fallback even outside Telegram (e.g., if opened via t.me link in browser)
+if (!state.initData) {
+  const fb = extractTgWebAppDataFromUrl();
+  if (fb) state.initData = fb;
+}
+}
 
     bindOverlayClose();
     initTgSubtypeSelect();
