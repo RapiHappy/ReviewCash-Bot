@@ -583,6 +583,7 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     Проверка подписи Telegram WebApp initData (стабильно для Desktop/Android/iOS)
     Алгоритм согласно документации Telegram.
     """
+    token = (token or "").strip()
     if not init_data or not token:
         return None
 
@@ -607,6 +608,10 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
     ).hexdigest()
 
     if not hmac.compare_digest(calculated_hash, received_hash):
+        try:
+            log.warning(f"[AUTH] hash mismatch recv={received_hash[:12]} calc={calculated_hash[:12]} keys={list(pairs.keys())[:6]}")
+        except Exception:
+            pass
         return None
 
     if "user" in pairs:
