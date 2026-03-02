@@ -39,7 +39,40 @@
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-  function tgAlert(msg, kind = "info", title = "") {
+  
+function showConnectHint() {
+  const existing = document.getElementById("connect-hint");
+  if (existing) return;
+  const wrap = document.createElement("div");
+  wrap.id = "connect-hint";
+  wrap.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:99999;padding:12px 12px;border-radius:14px;background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.35);backdrop-filter:blur(8px);";
+  wrap.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px">Нет initData (Telegram)</div>
+    <div style="opacity:.9;font-size:13px;line-height:1.25;margin-bottom:10px">
+      Открой MiniApp кнопкой <b>/app</b> внутри чата с ботом или через кнопку меню — тогда Telegram пришлёт initData и профиль загрузится.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="btn-open-bot-app" style="padding:8px 12px;border-radius:12px;border:0;background:#2ea6ff;color:#001018;font-weight:700">Открыть через бота</button>
+      <button id="btn-hide-hint" style="padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#fff;font-weight:600">Скрыть</button>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  document.getElementById("btn-hide-hint").onclick = () => wrap.remove();
+  document.getElementById("btn-open-bot-app").onclick = () => {
+    try {
+      if (window.Telegram?.WebApp?.openTelegramLink) {
+        // IMPORTANT: replace "app" with your BotFather WebApp short name if it's different
+        window.Telegram.WebApp.openTelegramLink("https://t.me/ReviewCashOrg_Bot/app");
+      } else {
+        window.location.href = "https://t.me/ReviewCashOrg_Bot/app";
+      }
+    } catch (e) {
+      window.location.href = "https://t.me/ReviewCashOrg_Bot/app";
+    }
+  };
+}
+
+function tgAlert(msg, kind = "info", title = "") {
     // Pretty in-app toast (preferred). Falls back to Telegram alert only if toast UI missing.
     const text = String(msg ?? "");
     const clean = prettifyErrText(text);
