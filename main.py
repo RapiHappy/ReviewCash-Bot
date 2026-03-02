@@ -151,6 +151,7 @@ log = logging.getLogger("reviewcash")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()  # required
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()  # required
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE", "").strip()  # required
+WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "").strip()  # for Telegram Desktop fallback session
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 
