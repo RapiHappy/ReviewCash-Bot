@@ -1131,7 +1131,9 @@ async def require_init(req: web.Request):
     # 1) Try Telegram WebApp initData
     init_data = (
         (req.headers.get("X-Tg-Init-Data") or "")
+        or (req.headers.get("X-Tg-InitData") or "")
         or (req.headers.get("X-Telegram-Init-Data") or "")
+        or (req.headers.get("X-Telegram-InitData") or "")
         or (req.headers.get("X-Tg-Initdata") or "")
         or (req.headers.get("X-Init-Data") or "")
         or (req.headers.get("X-Initdata") or "")
@@ -2263,7 +2265,7 @@ def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
         return
 
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Session-Token, Authorization"
     resp.headers["Access-Control-Max-Age"] = "86400"
 
 @web.middleware
