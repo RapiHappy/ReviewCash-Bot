@@ -767,19 +767,20 @@ async function syncAll() {
 renderInvite();
 renderTasks();
 
-// Private endpoints require session token; without it we skip to avoid 401 spam.
-if (state.sessionToken) {
-  await refreshWithdrawals();
-  await refreshOpsSilent();
-  await refreshReferrals();
-  await checkAdmin();
-} else {
-  // Likely opened outside Telegram context (no initData) OR sync didn't issue a token.
-  if (!state.initData || !state.user || !state.user.user_id) {
-    maybeShowConnectHint("missing initData/user_id");
-    tgAlert("🚫 Данные профиля не загружены. Открой MiniApp через меню бота или команду /app.", "error", "Ошибка");
-    tgHaptic("error");
-  }
+// Private endpoints: try even without session token (backend may authorize by initData alone).
+// If backend returns 401, we show connect hint (cooldown-protected) and stop noisy retries.
+let authFailed = false;
+try { await refreshWithdrawals(); } catch (e) { if (e && e.status === 401) authFailed = true; }
+try { await refreshOpsSilent(); } catch (e) { if (e && e.status === 401) authFailed = true; }
+try { await refreshReferrals(); } catch (e) { if (e && e.status === 401) authFailed = true; }
+try { await checkAdmin(); } catch (e) { if (e && e.status === 401) authFailed = true; }
+
+if (authFailed) {
+  // Most common reasons: opened outside Telegram context OR wrong initData header on backend.
+  maybeShowConnectHint("401 auth");
+  tgAlert("🔒 Нет доступа (401). Открой MiniApp через кнопку /app в боте, затем обнови.", "error", "Авторизация");
+  tgHaptic("error");
+}
 }
 }
 
