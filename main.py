@@ -227,8 +227,22 @@ def _parse_task_xp_override(task: dict) -> tuple[int | None, str | None]:
         return None, str(m.group(1)).lower()
     return None, None
 
+def _extract_tg_subtype(task: dict) -> str | None:
+    ins = str((task or {}).get("instructions") or "")
+    m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_]+)\s*$", ins)
+    if m:
+        return str(m.group(1)).strip().lower()
+    return None
+
 def task_xp(task: dict) -> int:
-    """Compute XP for a paid completion depending on task type/reward/difficulty."""
+    """Compute XP for a *paid* completion.
+
+    Rules (tuned for fairness + simple mental model):
+    - base XP depends on task type + reward tier
+    - bonuses: manual proof (+XP_MANUAL_BONUS), reviews (+XP_REVIEW_BONUS)
+    - TG subtype can bump difficulty
+    - always capped by XP_MAX_PER_TASK
+    """
     if not task:
         return int(XP_PER_TASK_PAID)
 
@@ -240,25 +254,25 @@ def task_xp(task: dict) -> int:
     check_type = str(task.get("check_type") or "").strip().lower()
     reward = float(task.get("reward_rub") or 0)
 
-    # determine difficulty if not overridden
+    tg_sub = _extract_tg_subtype(task) if ttype == "tg" else None
+
+    # difficulty pick
     diff = diff_override
     if not diff:
         if ttype in ("ya", "gm"):
+            # reviews are harder by nature
             diff = "hard" if reward >= 80 else "medium"
         elif ttype == "tg":
-            if reward <= 5:
-                diff = "easy"
-            elif reward <= 20:
+            # subtype bumps
+            if tg_sub in ("join_keep", "join_7d", "join_30d"):
+                diff = "hard"
+            elif tg_sub in ("join", "reaction", "comment"):
                 diff = "medium"
             else:
-                diff = "hard"
+                # fallback by payout
+                diff = "easy" if reward <= 8 else ("medium" if reward <= 20 else "hard")
         else:
-            if reward <= 50:
-                diff = "easy"
-            elif reward <= 120:
-                diff = "medium"
-            else:
-                diff = "hard"
+            diff = "easy" if reward <= 50 else ("medium" if reward <= 120 else "hard")
 
     base = XP_EASY if diff == "easy" else (XP_HARD if diff == "hard" else XP_MEDIUM)
 
@@ -268,8 +282,14 @@ def task_xp(task: dict) -> int:
     if ttype in ("ya", "gm"):
         base += int(XP_REVIEW_BONUS)
 
-    # small scaling by reward (keeps "harder = more")
-    base += int(min(15, max(0, round(reward * 0.05))))  # +0..+15
+    # reward scaling (+0..+18)
+    try:
+        base += int(min(18, max(0, round(reward * 0.06))))
+    except Exception:
+        pass
+
+    # keep a sensible minimum for any paid completion
+    base = max(base, int(XP_PER_TASK_PAID))
 
     return max(1, min(int(base), int(XP_MAX_PER_TASK)))
 
@@ -473,13 +493,6 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
-        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
-        try:
-            for _t in (tasks or []):
-                if isinstance(_t, dict) and _t.get("instructions"):
-                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
-        except Exception:
-            pass
 
         return web.json_response({
             "ok": True,
@@ -1139,17 +1152,16 @@ async def require_init(req: web.Request):
     if uid:
         # Make sure minimal rows exist
         await sb_upsert(T_USERS, {"user_id": uid}, on_conflict="user_id")
-        await sb_upsert(T_BALANCES, {"user_id": uid, "balance": 0}, on_conflict="user_id")
+        await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
 
-        rows = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-        u = rows[0] if rows else {"user_id": uid}
+        r = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+        u = (r.data or [{"user_id": uid}])[0]
         # normalize: downstream expects tg-style user dict with key 'id' == telegram user_id
         user = {**u, "id": int(u.get("user_id") or uid)}
         parsed = {"user": {"id": int(u.get("user_id") or uid)}}
         return parsed, user
 
     raise web.HTTPUnauthorized(text="No initData/session")
-
 
 
 async def require_admin(req: web.Request) -> dict:
@@ -1188,7 +1200,7 @@ async def require_init_optional(req: web.Request):
 async def api_sync(req: web.Request):
     _, user = await require_init_optional(req)
     if not user:
-        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balances": None})
+        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balance": None})
     body = await safe_json(req)
 
     uid = int(user["id"])
@@ -1219,11 +1231,10 @@ async def api_sync(req: web.Request):
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
-        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
-
-    
+        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0]
     session_token = _make_session_token(uid)
-return web.json_response({
+
+    return web.json_response({
         "ok": True,
         "auth": True,
         "session_token": session_token,
@@ -1374,9 +1385,14 @@ async def api_task_create(req: web.Request):
         tg_kind = desired_kind
         check_type = desired_check_type
 
-        # Telegram tasks: only automatic checks are allowed
+        # Telegram tasks:
+        # - auto: if our bot can verify membership (bot is in chat/channel; for channel — admin)
+        # - manual: if it's a bot task, private chat, or we don't have access
         if check_type != "auto":
-            return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
+            check_type = "manual"
+            # add a short reason tag (for admins / future analytics)
+            if reason:
+                instructions = (instructions + "\n\n[CHECK_REASON] " + reason).strip()
 
 
     if cost_rub <= 0:
@@ -2373,8 +2389,6 @@ async def on_cleanup(app: web.Application):
         except Exception:
             pass
     await bot.session.close()
-
-
 
 
 # -------------------------
