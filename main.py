@@ -3,6 +3,8 @@ import json
 import re
 import hmac
 import hashlib
+import base64
+import time
 import asyncio
 import logging
 from datetime import datetime, timezone, date, timedelta
@@ -159,6 +161,10 @@ if not MAIN_ADMIN_ID and ADMIN_IDS:
     MAIN_ADMIN_ID = int(ADMIN_IDS[0])
 
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()       # example: https://your-service.onrender.com/app/
+
+# WebApp session (for Telegram Desktop sometimes missing initData)
+WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "").strip()  # set in Render env
+WEBAPP_SESSION_TTL_SEC = int(os.getenv("WEBAPP_SESSION_TTL_SEC", "2592000"))  # default 30 days
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "").strip()  # example: https://your-service.onrender.com
 BASE_URL = os.getenv("BASE_URL", "").strip()             # fallback base
 PORT = int(os.getenv("PORT", "10000").strip())
@@ -619,6 +625,61 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
 
     return pairs
 
+
+# -------------------------
+# WebApp session token (fallback for Telegram Desktop, where initData can be missing)
+# -------------------------
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+def _b64url_decode(s: str) -> bytes:
+    s = s.strip()
+    pad = "=" * ((4 - len(s) % 4) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+def _make_session_token(user_id: int) -> str | None:
+    secret = (WEBAPP_SESSION_SECRET or "").strip()
+    if not secret:
+        return None
+    ts = int(time.time())
+    payload = f"{user_id}:{ts}".encode("utf-8")
+    sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).digest()
+    return _b64url(payload) + "." + _b64url(sig)
+
+def _verify_session_token(token: str) -> int | None:
+    secret = (WEBAPP_SESSION_SECRET or "").strip()
+    if not secret:
+        return None
+    try:
+        parts = token.strip().split(".")
+        if len(parts) != 2:
+            return None
+        payload = _b64url_decode(parts[0])
+        sig = _b64url_decode(parts[1])
+        calc = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(calc, sig):
+            return None
+        txt = payload.decode("utf-8", errors="strict")
+        uid_s, ts_s = txt.split(":", 1)
+        uid = int(uid_s)
+        ts = int(ts_s)
+        if WEBAPP_SESSION_TTL_SEC > 0 and int(time.time()) - ts > WEBAPP_SESSION_TTL_SEC:
+            return None
+        return uid
+    except Exception:
+        return None
+
+def _extract_session_token(req: web.Request) -> str | None:
+    # Prefer explicit header; also support Authorization: Bearer <token>
+    t = (req.headers.get("X-Session-Token") or "").strip()
+    if t:
+        return t
+    auth = (req.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return None
+
+
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -1053,57 +1114,43 @@ def parse_amount_rub(v) -> float | None:
     except Exception:
         return None
 
-async def require_init(req: web.Request) -> tuple[dict, dict]:
-    if DISABLE_INITDATA:
-        mock_user = {"id": 123456, "username": "dev", "first_name": "Dev", "last_name": "Mode", "photo_url": None}
-        return {"user": mock_user, "auth_date": str(int(_now().timestamp()))}, mock_user
-
-        # initData can arrive in different places depending on client/WebView.
-    # Prefer headers (fast path), but also accept JSON body field for clients that strip custom headers.
+async def require_init(req: web.Request):
+    # 1) Try Telegram WebApp initData
     init_data = (
-        req.headers.get("X-Tg-InitData", "")
-        or req.headers.get("X-Telegram-InitData", "")
-        or req.headers.get("X-Tg-WebApp-Data", "")
-    )
+        (req.headers.get("X-Tg-Init-Data") or "")
+        or (req.headers.get("X-Telegram-Init-Data") or "")
+        or (req.headers.get("X-Tg-Initdata") or "")
+        or (req.headers.get("X-Init-Data") or "")
+        or (req.headers.get("X-Initdata") or "")
+        or (req.headers.get("X-Telegram-WebApp-Init-Data") or "")
+        or (req.query.get("initData") or "")
+    ).strip()
 
-    if not init_data:
-        # Try Authorization: Bearer <initData>
-        auth = req.headers.get("Authorization", "")
-        if auth.lower().startswith("bearer "):
-            init_data = auth.split(" ", 1)[1].strip()
+    if init_data:
+        ok, parsed = verify_init_data(init_data, BOT_TOKEN or "")
+        if ok and parsed and isinstance(parsed.get("user"), dict):
+            tg_user = parsed["user"]
+            user = await ensure_user(tg_user)
+            return parsed, user
 
-    if not init_data:
-        # Try JSON body: {"__initData": "..."} (we keep it private with double underscore)
-        try:
-            if req.can_read_body:
-                data = await req.json()
-                if isinstance(data, dict):
-                    init_data = str(data.get("__initData") or data.get("initData") or "")
-        except Exception:
-            pass
+    # 2) Fallback: session token (for Telegram Desktop, where initData can be missing)
+    token = _extract_session_token(req)
+    uid = _verify_session_token(token) if token else None
+    if uid:
+        # Make sure minimal rows exist
+        await sb_upsert(T_USERS, {"user_id": uid}, on_conflict="user_id")
+        await sb_upsert(T_BALANCES, {"user_id": uid, "balance": 0}, on_conflict="user_id")
 
-    # diagnostics for initData issues
-    try:
-        ua = req.headers.get("User-Agent", "")
-        ref = req.headers.get("Referer", "")
-        log.warning(f"[SYNC_DIAG] initData present={bool(init_data)} len={len(init_data)} UA={ua[:80]}")
-        if ref:
-            log.warning(f"[SYNC_DIAG] referer={ref[:120]}")
-        if init_data:
-            log.warning(f"[SYNC_DIAG] initData head={init_data[:80]}")
-    except Exception:
-        pass
+        rows = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+        u = rows[0] if rows else {"user_id": uid}
+        # normalize: downstream expects tg-style user dict with key 'id' == telegram user_id
+        user = {**u, "id": int(u.get("user_id") or uid)}
+        parsed = {"user": {"id": int(u.get("user_id") or uid)}}
+        return parsed, user
 
-    parsed = verify_init_data(init_data, BOT_TOKEN)
-    if not parsed:
-        raise web.HTTPUnauthorized(
-            text="Bad initData signature (hash mismatch). Проверь BOT_TOKEN и что MiniApp открыт внутри Telegram."
-        )
+    raise web.HTTPUnauthorized(text="No initData/session")
 
-    user = parsed.get("user") or {}
-    if not user or "id" not in user:
-        raise web.HTTPUnauthorized(text="No user in initData")
-    return parsed, user
+
 
 async def require_admin(req: web.Request) -> dict:
     _, user = await require_init(req)
@@ -1174,8 +1221,12 @@ async def api_sync(req: web.Request):
         raw = tsel.data or []
         tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
 
-    return web.json_response({
+    
+    session_token = _make_session_token(uid)
+return web.json_response({
         "ok": True,
+        "auth": True,
+        "session_token": session_token,
         "user": {
             "user_id": uid,
             "username": user.get("username"),
