@@ -623,6 +623,8 @@ def _make_session_token(user_id: int) -> str:
     """Fallback auth token for Telegram Desktop when initData is empty."""
     secret = (WEBAPP_SESSION_SECRET or "").strip()
     if not secret:
+        return None
+    if not secret:
         raise RuntimeError("WEBAPP_SESSION_SECRET not set")
     now = int(datetime.now(timezone.utc).timestamp())
     payload = {"uid": int(user_id), "iat": now, "exp": now + 10 * 60}
