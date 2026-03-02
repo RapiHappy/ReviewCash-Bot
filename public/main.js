@@ -595,6 +595,7 @@ function tgAlert(msg, kind = "info", title = "") {
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
+      if (data.session_token) state.sessionToken = data.session_token;
       if (data.auth === false) {
         state.user = null;
         state.balance = null;
@@ -673,6 +674,7 @@ async function syncAll() {
     if (!data || !data.ok) throw new Error("Bad /api/sync response");
 
     state.user = data.user;
+    if (data.session_token) state.sessionToken = data.session_token;
     state.balance = data.balance || state.balance;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
 
