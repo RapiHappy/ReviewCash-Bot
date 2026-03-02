@@ -25,7 +25,10 @@
   "use strict";
 
   const RC_BUILD = "rc_20260225_181352";
-  try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
+  const DEBUG = false;
+  const log = (...a) => { try { if (DEBUG) console.log("[RC]", ...a); } catch (e) {} };
+  const warn = (...a) => { try { if (DEBUG) console.warn("[RC]", ...a); } catch (e) {} };
+  log("build", RC_BUILD);
 
 
   // --------------------
@@ -43,31 +46,51 @@
 function showConnectHint() {
   const existing = document.getElementById("connect-hint");
   if (existing) return;
+
   const wrap = document.createElement("div");
   wrap.id = "connect-hint";
-  wrap.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:99999;padding:12px 12px;border-radius:14px;background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.35);backdrop-filter:blur(8px);";
+  wrap.style.cssText = [
+    "position:fixed",
+    "left:12px","right:12px","top:12px",
+    "z-index:99999",
+    "padding:12px 12px",
+    "border-radius:14px",
+    "background:rgba(255,60,60,.12)",
+    "border:1px solid rgba(255,60,60,.35)",
+    "backdrop-filter:blur(8px)"
+  ].join(";");
+
   wrap.innerHTML = `
-    <div style="font-weight:700;margin-bottom:6px">Нет initData (Telegram)</div>
+    <div style="font-weight:800;margin-bottom:6px">🚫 Нет initData (Telegram)</div>
     <div style="opacity:.9;font-size:13px;line-height:1.25;margin-bottom:10px">
       Открой MiniApp кнопкой <b>/app</b> внутри чата с ботом или через кнопку меню — тогда Telegram пришлёт initData и профиль загрузится.
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button id="btn-open-bot-app" style="padding:8px 12px;border-radius:12px;border:0;background:#2ea6ff;color:#001018;font-weight:700">Открыть через бота</button>
-      <button id="btn-hide-hint" style="padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#fff;font-weight:600">Скрыть</button>
+      <button id="btn-open-bot-app" style="padding:8px 12px;border-radius:12px;border:0;background:#2ea6ff;color:#001018;font-weight:800">Открыть через бота</button>
+      <button id="btn-retry" style="padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:#4caf50;color:#fff;font-weight:700">Повторить</button>
+      <button id="btn-hide-hint" style="padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#fff;font-weight:700">Скрыть</button>
     </div>
   `;
+
   document.body.appendChild(wrap);
-  document.getElementById("btn-hide-hint").onclick = () => wrap.remove();
-  document.getElementById("btn-open-bot-app").onclick = () => {
+
+  const $id = (x) => document.getElementById(x);
+  const hide = () => { try { wrap.remove(); } catch (e) {} };
+
+  $id("btn-hide-hint").onclick = hide;
+
+  $id("btn-retry").onclick = () => {
+    hide();
+    try { location.reload(); } catch (e) {}
+  };
+
+  $id("btn-open-bot-app").onclick = () => {
+    const url = "https://t.me/ReviewCashOrg_Bot/app";
     try {
-      if (window.Telegram?.WebApp?.openTelegramLink) {
-        // IMPORTANT: replace "app" with your BotFather WebApp short name if it's different
-        window.Telegram.WebApp.openTelegramLink("https://t.me/ReviewCashOrg_Bot/app");
-      } else {
-        window.location.href = "https://t.me/ReviewCashOrg_Bot/app";
-      }
+      if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(url);
+      else window.location.href = url;
     } catch (e) {
-      window.location.href = "https://t.me/ReviewCashOrg_Bot/app";
+      window.location.href = url;
     }
   };
 }
@@ -298,6 +321,45 @@ function tgAlert(msg, kind = "info", title = "") {
     _adminProofSeq: 0,
   };
 
+
+
+// --------------------
+// Session token (to avoid 401 on private endpoints)
+// --------------------
+const SESSION_KEY = "rc_session_token_v1";
+
+function loadSessionToken() {
+  try {
+    const t = (localStorage.getItem(SESSION_KEY) || "").trim();
+    if (t) state.sessionToken = t;
+  } catch (e) {}
+}
+
+function saveSessionToken(t) {
+  try {
+    if (t) localStorage.setItem(SESSION_KEY, String(t));
+  } catch (e) {}
+}
+
+// --------------------
+// Connect hint cooldown (avoid spam)
+// --------------------
+const HINT_LAST_SHOWN_KEY = "rc_hint_last_shown";
+const HINT_COOLDOWN_MS = 5 * 60 * 1000;
+
+function maybeShowConnectHint(reason) {
+  try {
+    const now = Date.now();
+    const last = Number(localStorage.getItem(HINT_LAST_SHOWN_KEY) || 0);
+    if (now - last < HINT_COOLDOWN_MS) return;
+    localStorage.setItem(HINT_LAST_SHOWN_KEY, String(now));
+  } catch (e) {}
+  // best-effort
+  try { if (reason) console.warn("[RC] connect hint:", reason); } catch (e) {}
+  showConnectHint();
+}
+
+
   // --------------------
   // Performance mode (low / normal)
   // --------------------
@@ -387,7 +449,11 @@ function tgAlert(msg, kind = "info", title = "") {
   function apiHeaders(json = true) {
     const h = {};
     if (json) h["Content-Type"] = "application/json";
-    if (state.initData) h["X-Tg-InitData"] = state.initData;
+    if (state.initData) {
+      h["X-Tg-InitData"] = state.initData;
+      h["X-Tg-Init-Data"] = state.initData; // backend expects this
+      h["X-Tg-Initdata"] = state.initData;  // legacy fallback
+    }
     if (state.sessionToken) h["X-Session-Token"] = state.sessionToken;
     return h;
   }
@@ -595,7 +661,8 @@ function tgAlert(msg, kind = "info", title = "") {
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
-      if (data.session_token) state.sessionToken = data.session_token;
+      
+      if (data.session_token) { state.sessionToken = data.session_token; saveSessionToken(state.sessionToken); }
       if (data.auth === false) {
         state.user = null;
         state.balance = null;
@@ -673,10 +740,22 @@ async function syncAll() {
     const data = await apiPost("/api/sync", payload);
     if (!data || !data.ok) throw new Error("Bad /api/sync response");
 
+    
+    if (data.session_token) { state.sessionToken = data.session_token; saveSessionToken(state.sessionToken); }
+
     state.user = data.user;
-    if (data.session_token) state.sessionToken = data.session_token;
     state.balance = data.balance || state.balance;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+
+    
+
+    if (data.auth === false) {
+      state.user = null;
+      state.balance = null;
+      state.tasks = [];
+      renderAll();
+      return;
+    }
 
     // If some tasks were completed before user_id was known, migrate from anon bucket
     migrateCompletedAnonToUser();
@@ -684,16 +763,35 @@ async function syncAll() {
 
     renderHeader();
     renderProfile();
-    renderInvite();
-    renderTasks();
-    await refreshWithdrawals();
-    await refreshOpsSilent();
-    await refreshReferrals();
     
+renderInvite();
+renderTasks();
+
+// Private endpoints require session token; without it we skip to avoid 401 spam.
+if (state.sessionToken) {
+  await refreshWithdrawals();
+  await refreshOpsSilent();
+  await refreshReferrals();
   await checkAdmin();
+} else {
+  // Likely opened outside Telegram context (no initData) OR sync didn't issue a token.
+  if (!state.initData || !state.user || !state.user.user_id) {
+    maybeShowConnectHint("missing initData/user_id");
+    tgAlert("🚫 Данные профиля не загружены. Открой MiniApp через меню бота или команду /app.", "error", "Ошибка");
+    tgHaptic("error");
+  }
+}
+}
+
+  
+  function renderAll() {
+    try { renderHeader(); } catch (e) {}
+    try { renderProfile(); } catch (e) {}
+    try { renderInvite(); } catch (e) {}
+    try { renderTasks(); } catch (e) {}
   }
 
-  function renderHeader() {
+function renderHeader() {
     const u = state.user || {};
     const name = (u.first_name || u.username || "Пользователь");
     const pic = u.photo_url || "";
@@ -2242,7 +2340,9 @@ function extractTgWebAppDataFromUrl() {
   async function bootstrap() {
     state.api = getApiBase();
     initDeviceHash();
-    // init performance mode ASAP (affects animations + refresh interval)
+    
+    loadSessionToken();
+// init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
     forceInitialView();
 
@@ -2261,6 +2361,7 @@ function extractTgWebAppDataFromUrl() {
 
       }
 
+      if (!state.initData) { maybeShowConnectHint("no initData"); }
       try { console.log('[RC] initData len=', (state.initData||'').length, 'platform=', tg && tg.platform); } catch(e) {}
 try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? String(tg.initDataUnsafe.start_param) : ""; } catch (e) {}
 
