@@ -761,11 +761,10 @@ async function syncAll() {
     migrateCompletedAnonToUser();
     state._tasksSig = tasksSignature(state.tasks);
 
-    renderHeader();
-    renderProfile();
-    
-renderInvite();
-renderTasks();
+    try { renderHeader(); } catch(e) { try{console.warn('[RC] renderHeader failed', e);}catch(_){} }
+    try { renderProfile(); } catch(e) { try{console.warn('[RC] renderProfile failed', e);}catch(_){} }
+    try { renderInvite(); } catch(e) { try{console.warn('[RC] renderInvite failed', e);}catch(_){} }
+    try { renderTasks(); } catch(e) { try{console.warn('[RC] renderTasks failed', e);}catch(_){} }
 
 // Private endpoints: try even without session token (backend may authorize by initData alone).
 // If backend returns 401, we show connect hint (cooldown-protected) and stop noisy retries.
