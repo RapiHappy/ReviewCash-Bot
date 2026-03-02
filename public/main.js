@@ -244,7 +244,7 @@
   const state = {
     api: "",
     initData: "",
-    session: "",
+    sessionToken: "",
     startParam: "",
     deviceHash: "",
     user: null,
@@ -355,15 +355,11 @@
     const h = {};
     if (json) h["Content-Type"] = "application/json";
     if (state.initData) h["X-Tg-InitData"] = state.initData;
-    if (!state.initData && state.session) h["X-Session"] = state.session;
+    if (state.sessionToken) h["X-Session-Token"] = state.sessionToken;
     return h;
   }
 
   async function apiPost(path, body) {
-  if (!state.initData && state.session) {
-    body = Object.assign({ session: state.session }, body || {});
-  }
-
   const url = state.api + path;
   const ctrl = new AbortController();
   const t = window.setTimeout(() => ctrl.abort(), 20000);
@@ -566,6 +562,13 @@
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
+      if (data.auth === false) {
+        state.user = null;
+        state.balance = null;
+        state.tasks = [];
+        renderAll();
+        return;
+      }
 
       // keep user/balance fresh too
       const prevBalSig = balanceSignature(state.balance);
@@ -2214,7 +2217,6 @@ function extractTgWebAppDataFromUrl() {
         tg.expand();
       } catch (e) {}
       state.initData = (tg && typeof tg.initData === 'string' && tg.initData) ? tg.initData : '';
-      state.session = (new URLSearchParams(location.search).get('s') || '').trim();
 
       if (!state.initData) {
 
