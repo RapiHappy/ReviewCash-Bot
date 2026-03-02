@@ -1131,9 +1131,7 @@ async def require_init(req: web.Request):
     # 1) Try Telegram WebApp initData
     init_data = (
         (req.headers.get("X-Tg-Init-Data") or "")
-        or (req.headers.get("X-Tg-InitData") or "")
         or (req.headers.get("X-Telegram-Init-Data") or "")
-        or (req.headers.get("X-Telegram-InitData") or "")
         or (req.headers.get("X-Tg-Initdata") or "")
         or (req.headers.get("X-Init-Data") or "")
         or (req.headers.get("X-Initdata") or "")
@@ -1142,8 +1140,8 @@ async def require_init(req: web.Request):
     ).strip()
 
     if init_data:
-        ok, parsed = verify_init_data(init_data, BOT_TOKEN or "")
-        if ok and parsed and isinstance(parsed.get("user"), dict):
+        parsed = verify_init_data(init_data, BOT_TOKEN or "")
+        if parsed and isinstance(parsed.get("user"), dict):
             tg_user = parsed["user"]
             user = await ensure_user(tg_user)
             return parsed, user
