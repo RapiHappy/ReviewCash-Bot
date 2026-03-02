@@ -463,3 +463,18 @@ html.perf-low .qa-perf:hover{
   font-size: 11px;
   border-radius: 12px;
 }
+
+/* ---- Perf mode card: make the action button smaller (requested) ---- */
+.perf-mode-card button,
+.perf-mode-card .btn,
+#perf-mode-btn,
+#perf-mode-toggle,
+.qa-perf button,
+.qa-perf .btn {
+  padding: 8px 12px !important;
+  min-height: 36px !important;
+  font-size: 14px !important;
+  border-radius: 14px !important;
+}
+.perf-mode-card .subtitle,
+.perf-mode-card p { font-size: 12px !important; }
