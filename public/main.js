@@ -782,7 +782,6 @@ if (authFailed) {
   tgHaptic("error");
 }
 }
-}
 
   
   function renderAll() {
