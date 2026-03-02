@@ -151,7 +151,6 @@ log = logging.getLogger("reviewcash")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()  # required
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()  # required
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE", "").strip()  # required
-WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "").strip()  # for Telegram Desktop fallback session
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 
@@ -307,7 +306,7 @@ async def setup_menu_button(bot: Bot):
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="ReviewCash",
-                web_app=WebAppInfo(url=MINIAPP_URL + "?s=" + _make_session_token(m.from_user.id)),
+                web_app=WebAppInfo(url=MINIAPP_URL),
             )
         )
         log.info("[WEBAPP] MenuButton WebApp set.")
@@ -619,29 +618,6 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
             pass
 
     return pairs
-
-def _make_session_token(user_id: int) -> str:
-    """Fallback auth token for Telegram Desktop when initData is empty."""
-    secret = (WEBAPP_SESSION_SECRET or "").strip()
-    if not secret:
-        return None
-    if not secret:
-        raise RuntimeError("WEBAPP_SESSION_SECRET not set")
-    now = int(datetime.now(timezone.utc).timestamp())
-    payload = {"uid": int(user_id), "iat": now, "exp": now + 10 * 60}
-    return jwt.encode(payload, secret, algorithm="HS256")
-
-def _verify_session_token(token: str) -> int | None:
-    secret = (WEBAPP_SESSION_SECRET or "").strip()
-    if not secret or not token:
-        return None
-    try:
-        data = jwt.decode(token, secret, algorithms=["HS256"])
-        uid = int(data.get("uid"))
-        return uid
-    except Exception:
-        return None
-
 
 def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -1118,30 +1094,10 @@ async def require_init(req: web.Request) -> tuple[dict, dict]:
     except Exception:
         pass
 
-    # Fallback for Telegram Desktop when initData is missing:
-    # Accept a short-lived signed session token passed as ?s=... or X-Session header.
-    if not init_data:
-        session_token = (req.headers.get("X-Session", "") or req.query.get("s", ""))
-        if not session_token:
-            try:
-                if req.can_read_body:
-                    data = await req.json()
-                    if isinstance(data, dict):
-                        session_token = str(data.get("session") or "")
-            except Exception:
-                pass
-
-        uid = _verify_session_token(session_token.strip())
-        if uid:
-            user = {"id": uid}
-            parsed = {"user": user, "auth_date": str(int(_now().timestamp())), "fallback": "session"}
-            log.warning(f"[AUTH] fallback session ok uid={uid}")
-            return parsed, user
-
     parsed = verify_init_data(init_data, BOT_TOKEN)
     if not parsed:
         raise web.HTTPUnauthorized(
-            text="Нет initData/сессии. Открой MiniApp кнопкой /app (WebApp) внутри Telegram. На Telegram Desktop иногда initData не приходит — /app кнопка решает."
+            text="Bad initData signature (hash mismatch). Проверь BOT_TOKEN и что MiniApp открыт внутри Telegram."
         )
 
     user = parsed.get("user") or {}
@@ -1173,8 +1129,19 @@ async def api_referrals(req: web.Request):
 # -------------------------
 # API: sync
 # -------------------------
+
+
+async def require_init_optional(req: web.Request):
+    """Like require_init(), but returns (None, None) instead of raising if there is no initData/session."""
+    try:
+        return await require_init(req)
+    except web.HTTPUnauthorized:
+        return None, None
+
 async def api_sync(req: web.Request):
-    _, user = await require_init(req)
+    _, user = await require_init_optional(req)
+    if not user:
+        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balances": None})
     body = await safe_json(req)
 
     uid = int(user["id"])
@@ -2447,3 +2414,4 @@ app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
+WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "change-me-session-secret")
