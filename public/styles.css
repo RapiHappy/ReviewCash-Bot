@@ -1,4 +1,5 @@
 html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+
 :root {
   /* Dark Theme (Default) */
   --bg: #05070a;
@@ -15,6 +16,18 @@ html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   --nav-bg: rgba(15, 20, 26, 0.95);
   --shadow: rgba(0,0,0,0.5);
 }
+
+html.theme-light{
+  --bg:#f5f7fb;
+  --card-bg:#ffffff;
+  --text-main:#0b1220;
+  --text-dim:#4b5563;
+  --glass:rgba(2,6,23,0.04);
+  --glass-border:rgba(2,6,23,0.10);
+  --nav-bg:rgba(255,255,255,0.92);
+  --shadow:rgba(2,6,23,0.08);
+}
+html.theme-light body{ background: var(--bg); }
 
 body.light-mode {
   --bg: #f2f4f7;
@@ -390,23 +403,22 @@ option { background-color: var(--card-bg); color: var(--text-main); }
 }
 
 .qa-chip{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  flex:0 0 auto;
-  white-space:nowrap;
-  line-height:1;
-  height:22px;
-  font-size:11px;
+  font-size:10px;
   font-weight:900;
-  padding:0 10px;
-  border-radius:999px;
+  padding:6px 10px;
+  border-radius: 999px;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.10);
   color: var(--text-main);
-  opacity:0.9;
-}
+  opacity: 0.9;
 
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  line-height:1;
+  height:26px;
+  white-space:nowrap;
+}
 
 .qa-arrow{
   width:26px;
@@ -487,3 +499,43 @@ html.perf-low .qa-perf:hover{
 }
 .perf-mode-card .subtitle,
 .perf-mode-card p { font-size: 12px !important; }
+.theme-toggle{
+  position:absolute;
+  top:12px;
+  right:12px;
+  width:34px;
+  height:34px;
+  border-radius:12px;
+  border:1px solid var(--glass-border);
+  background: var(--glass);
+  color: var(--text-main);
+  font-size:16px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+}
+.theme-toggle:active{ transform: scale(0.98); }
+.ops-filter{
+  display:flex;
+  gap:8px;
+  margin: 0 0 14px;
+  overflow-x:auto;
+  padding-bottom:2px;
+}
+.ops-btn{
+  flex:0 0 auto;
+  padding:8px 10px;
+  border-radius:12px;
+  border:1px solid var(--glass-border);
+  background: var(--glass);
+  color: var(--text-main);
+  font-weight:800;
+  font-size:12px;
+  line-height:1;
+  white-space:nowrap;
+}
+.ops-btn.active{
+  border-color: rgba(0,234,255,0.55);
+  box-shadow: 0 0 0 1px rgba(0,234,255,0.22) inset;
+}
