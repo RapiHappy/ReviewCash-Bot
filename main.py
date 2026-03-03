@@ -2132,11 +2132,21 @@ async def api_admin_tbank_decision(req: web.Request):
 async def cmd_start(message: Message):
     uid = message.from_user.id
     args = (message.text or "").split(maxsplit=1)
-    ref = None
-    if len(args) == 2 and args[1].isdigit():
-        ref = int(args[1])
+    payload = (args[1].strip() if len(args) == 2 else "")
+    ref = int(payload) if payload.isdigit() else None
+    payload_l = payload.lower().strip()
 
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
+
+    # Fast open via deep link: https://t.me/<bot>?start=app
+    if payload_l in ("app", "open", "miniapp", "webapp"):
+        kb = InlineKeyboardBuilder()
+        miniapp_url = MINIAPP_URL_EFFECTIVE
+        if miniapp_url:
+            kb.button(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=miniapp_url))
+        kb.adjust(1)
+        await message.answer("🚀 Открывай Mini App кнопкой ниже:", reply_markup=kb.as_markup())
+        return
 
     kb = InlineKeyboardBuilder()
     miniapp_url = MINIAPP_URL_EFFECTIVE
