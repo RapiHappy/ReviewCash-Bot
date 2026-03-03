@@ -285,6 +285,7 @@ function tgAlert(msg, kind = "info", title = "") {
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
+    opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
     currentTask: null,
     isAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
@@ -352,6 +353,28 @@ function tgAlert(msg, kind = "info", title = "") {
     tgAlert("Режим: " + (state.perfMode === "low" ? "Слабое устройство" : "Нормальный"), "info", "Настройки");
   }
   window.togglePerfMode = togglePerfMode;
+
+    // --------------------
+  // Theme (dark/light)
+  // --------------------
+  const THEME_KEY = "rc_theme_v1"; // "dark" | "light"
+
+  function applyTheme(t) {
+    const v = (t === "light") ? "light" : "dark";
+    try { localStorage.setItem(THEME_KEY, v); } catch (e) {}
+    document.documentElement.classList.toggle("theme-light", v === "light");
+    const btn = document.getElementById("theme-toggle");
+    if (btn) btn.textContent = (v === "light") ? "☀️" : "🌙";
+  }
+
+  function toggleTheme() {
+    const isLight = document.documentElement.classList.contains("theme-light");
+    applyTheme(isLight ? "dark" : "light");
+    tgHaptic("impact");
+  }
+  window.toggleTheme = toggleTheme;
+
+
 
   function tasksRefreshIntervalMs() {
     // Low mode: refresh less often to save battery + CPU
@@ -494,7 +517,15 @@ function tgAlert(msg, kind = "info", title = "") {
       }
     }
     try { setActiveTab(id); } catch (e) {}
+    try { toggleFab(id === "tasks"); } catch (e) {}
   }
+
+    function toggleFab(show) {
+    const fab = document.getElementById("fab-wrap") || document.querySelector(".fab-wrap");
+    if (!fab) return;
+    fab.style.display = show ? "flex" : "none";
+  }
+  window.toggleFab = toggleFab;
 
   function openOverlay(id) {
     const el = $(id);
@@ -528,6 +559,7 @@ function tgAlert(msg, kind = "info", title = "") {
       if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
       const vt = $("view-tasks");
       if (vt) vt.classList.remove("hidden");
+      try { toggleFab(true); } catch (e) {}
     } catch (e) {}
   }
 
@@ -850,6 +882,25 @@ async function syncAll() {
   }
   window.setPlatformFilter = setPlatformFilter;
 
+    function setOpsFilter(k) {
+    const v = (k === "topup" || k === "earning" || k === "withdrawal") ? k : "all";
+    state.opsFilter = v;
+    try { localStorage.setItem("rc_ops_filter", v); } catch (e) {}
+
+    const ids = ["ops-all", "ops-topup", "ops-earning", "ops-withdrawal"];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const want = (v === "all") ? (id === "ops-all") : (id === ("ops-" + v));
+      el.classList.toggle("active", want);
+    });
+
+    try { renderOps(state._opsCache || []); } catch (e) {}
+  }
+  window.setOpsFilter = setOpsFilter;
+
+
+
   // --------------------
   // --------------------
   // Brand icons (tiny inline SVG = fast, no network)
@@ -980,6 +1031,26 @@ if (!list.length) {
   }
 
 
+  function openTaskLink(url) {
+    const link = String(url || "").trim();
+    if (!link) return;
+    try {
+      if (window.Telegram && window.Telegram.WebApp) {
+        const tg = window.Telegram.WebApp;
+        if (tg.openTelegramLink && /^https?:\/\/(t\.me|telegram\.me)\//i.test(link)) {
+          tg.openTelegramLink(link);
+          return;
+        }
+        if (tg.openLink) {
+          tg.openLink(link);
+          return;
+        }
+      }
+    } catch (e) {}
+    // fallback
+    try { window.open(link, "_blank"); } catch (e) { window.location.href = link; }
+  }
+
   function isProbablyUrl(raw) {
     const s = String(raw || "").trim();
     if (!s) return false;
@@ -1029,7 +1100,15 @@ if (!list.length) {
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) a.href = link || "#";
+    if (a) {
+      a.href = link || "#";
+      a.onclick = async (ev) => {
+        try { ev.preventDefault(); } catch(e) {}
+        if (!link) return;
+        try { await apiPost("/api/task/click", { task_id: task.id }); } catch (e) {}
+        openTaskLink(link);
+      };
+    }
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -1718,7 +1797,7 @@ if (!list.length) {
   function renderWithdrawals(list) {
     const box = $("withdrawals-list");
     if (!box) return;
-    if (!list.length) {
+    if (!view.length) {
       box.innerHTML = `<div style="color:var(--text-dim); font-size:13px;">Нет заявок</div>`;
       return;
     }
@@ -1781,16 +1860,40 @@ if (!list.length) {
   function renderOps(list) {
     const box = $("history-list");
     if (!box) return;
+    state._opsCache = Array.isArray(list) ? list.slice() : [];
+
+    let view = Array.isArray(list) ? list.slice() : [];
+    const f = state.opsFilter || "all";
+    if (f !== "all") {
+      view = view.filter(op => {
+        const k = String(op.kind || "");
+        if (f === "topup") return k === "topup";
+        if (f === "withdrawal") return k === "withdrawal";
+        if (f === "earning") return k === "earning";
+        return true;
+      });
+    }
+
     if (!list.length) {
       box.innerHTML = `<div class="menu-item" style="margin:0; opacity:0.7;">История пуста</div>`;
       return;
     }
     box.innerHTML = "";
-    list.forEach(op => {
+    view.forEach(op => {
       const kind = String(op.kind || "");
       let title = "";
       let sub = "";
-      if (kind === "payment") {
+      if (kind === "topup") {
+        title = "Пополнение";
+        sub = (op.provider ? String(op.provider).toUpperCase() : "");
+      } else if (kind === "earning") {
+        const src = String(op.source || "");
+        if (src === "task") title = "Начисление за задание";
+        else if (src === "referral") title = "Реферальный бонус";
+        else if (src === "admin") title = "Начисление админом";
+        else title = "Начисление";
+        sub = String(op.title || "") || src;
+      } else if (kind === "payment") {
         title = "Пополнение (" + safeText(op.provider || "") + ")";
         sub = (op.status === "paid") ? "✅ Оплачено" : (op.status === "rejected" ? "❌ Отклонено" : "⏳ В ожидании");
       } else {
@@ -1828,7 +1931,7 @@ if (!list.length) {
     if (kind !== "pay_stars") return;
 
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
-    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!amount || amount < 1) return tgAlert("Минимум 1 ₽");
 
     try {
       tgHaptic("impact");
@@ -2155,7 +2258,17 @@ async function loadAdminTasks() {
     const box = $("admin-task-list");
     if (!box) return;
     box.innerHTML = "";
-    // Tools: TG audit button removed (no longer needed)
+    // Tools (visible to all admins; action available only to main admin)
+    if (state.isAdmin) {
+      const tools = adminCard(`
+        <div style="display:flex; gap:10px;">
+</div>
+        <div style="font-size:11px; opacity:0.65; margin-top:8px;">Авто/ручная проверка выставится по доступу бота и типу цели. (Запускать может только главный админ)</div>
+      `);
+      const b = tools.querySelector('[data-tg-audit="1"]');
+      if (b) b.onclick = auditTgTasks;
+      box.appendChild(tools);
+    }
 
     const res = await apiPost("/api/admin/task/list", {});
     const list = (res && res.tasks) ? res.tasks : [];
@@ -2231,6 +2344,13 @@ function extractTgWebAppDataFromUrl() {
     initDeviceHash();
     // init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
+    // init theme
+    try {
+      const savedTheme = (localStorage.getItem(THEME_KEY) || "").trim();
+      if (savedTheme === "light" || savedTheme === "dark") applyTheme(savedTheme);
+      else if (tg && tg.colorScheme === "light") applyTheme("light");
+      else applyTheme("dark");
+    } catch (e) { try { applyTheme("dark"); } catch(e2){} }
     forceInitialView();
 
     if (tg) {
