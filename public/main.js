@@ -85,7 +85,7 @@ function showConnectHint() {
   };
 
   $id("btn-open-bot-app").onclick = () => {
-    const url = "https://t.me/ReviewCashOrg_Bot/app";
+    const url = "https://t.me/ReviewCashOrg_Bot?start=app";
     try {
       if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(url);
       else window.location.href = url;
