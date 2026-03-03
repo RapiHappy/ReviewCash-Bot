@@ -41,8 +41,8 @@
   // --------------------
   // Telegram WebApp
   // --------------------
-  const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-  
+  function getTg(){try{return (window.Telegram && window.Telegram.WebApp)?window.Telegram.WebApp:null;}catch(e){return null;}}
+  let tg = getTg();
 function showConnectHint() {
   const existing = document.getElementById("connect-hint");
   if (existing) return;
@@ -2337,6 +2337,7 @@ function extractTgWebAppDataFromUrl() {
   // Bootstrap
   // --------------------
   async function bootstrap() {
+    tg = getTg();
     state.api = getApiBase();
     initDeviceHash();
     
