@@ -1,4 +1,4 @@
-import os
+фimport os
 import json
 import re
 import hmac
@@ -163,10 +163,41 @@ if not MAIN_ADMIN_ID and ADMIN_IDS:
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()       # example: https://your-service.onrender.com/app/
 
 # WebApp session (for Telegram Desktop sometimes missing initData)
-WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "").strip()  # set in Render env
+WEBAPP_SESSION_SECRET = (os.getenv("WEBAPP_SESSION_SECRET", "").strip() or BOT_TOKEN)  # fallback to BOT_TOKEN
 WEBAPP_SESSION_TTL_SEC = int(os.getenv("WEBAPP_SESSION_TTL_SEC", "2592000"))  # default 30 days
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "").strip()  # example: https://your-service.onrender.com
 BASE_URL = os.getenv("BASE_URL", "").strip()             # fallback base
+
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+
+def _add_build_param(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return url
+    try:
+        u = urlparse(url)
+        q = dict(parse_qsl(u.query, keep_blank_values=True))
+        q["v"] = APP_BUILD
+        new_q = urlencode(q, doseq=True)
+        return urlunparse((u.scheme, u.netloc, u.path, u.params, new_q, u.fragment))
+    except Exception:
+        sep = "&" if "?" in url else "?"
+        return url + f"{sep}v={APP_BUILD}"
+
+def compute_miniapp_url() -> str:
+    base = (MINIAPP_URL or "").strip()
+    if not base:
+        host = (SERVER_BASE_URL or BASE_URL or "").strip()
+        if host:
+            base = host.rstrip("/") + "/app/"
+        else:
+            base = "/app/"
+    if base.endswith("/app"):
+        base = base + "/"
+    return _add_build_param(base)
+
+MINIAPP_URL_EFFECTIVE = compute_miniapp_url()
+
 PORT = int(os.getenv("PORT", "10000").strip())
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "1").strip() == "1"
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/tg/webhook").strip()
@@ -332,7 +363,7 @@ async def setup_menu_button(bot: Bot):
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="ReviewCash",
-                web_app=WebAppInfo(url=MINIAPP_URL),
+                web_app=WebAppInfo(url=MINIAPP_URL_EFFECTIVE),
             )
         )
         log.info("[WEBAPP] MenuButton WebApp set.")
@@ -343,7 +374,7 @@ async def setup_menu_button(bot: Bot):
 @dp.message(F.text == "/app")
 async def open_app_cmd(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL_EFFECTIVE))
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
@@ -1131,6 +1162,7 @@ async def require_init(req: web.Request):
     # 1) Try Telegram WebApp initData
     init_data = (
         (req.headers.get("X-Tg-Init-Data") or "")
+        or (req.headers.get("X-Tg-InitData") or "")
         or (req.headers.get("X-Telegram-Init-Data") or "")
         or (req.headers.get("X-Tg-Initdata") or "")
         or (req.headers.get("X-Init-Data") or "")
@@ -2107,16 +2139,7 @@ async def cmd_start(message: Message):
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
 
     kb = InlineKeyboardBuilder()
-
-    miniapp_url = MINIAPP_URL
-    if not miniapp_url:
-        base = SERVER_BASE_URL or BASE_URL
-        if base:
-            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
-
-    if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
-
+    miniapp_url = MINIAPP_URL_EFFECTIVE
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
 
@@ -2156,13 +2179,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
 
     try:
         kb = InlineKeyboardBuilder()
-
-        miniapp_url = MINIAPP_URL
-        if not miniapp_url:
-            base = SERVER_BASE_URL or BASE_URL
-            if base:
-                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
-
+        miniapp_url = MINIAPP_URL_EFFECTIVE
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
         kb.button(text=("🔕 Уведомления: ВЫКЛ" if new_muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
