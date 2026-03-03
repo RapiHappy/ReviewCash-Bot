@@ -322,7 +322,8 @@
 
     <!-- PROFILE -->
     <section id="view-profile" class="hidden anim-entry">
-      <div class="card">
+      <div class="card" style="position:relative;">
+        <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" type="button" aria-label="Тема">🌙</button>
         <div class="profile-header">
           <div class="avatar-ring">
             <img class="avatar-img" id="u-pic" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Avatar">
@@ -400,6 +401,12 @@
         <button class="btn btn-secondary" style="padding:10px;" onclick="closeHistory()">←</button>
         <h2 style="margin:0;">История</h2>
       </div>
+      <div class="ops-filter">
+        <button id="ops-all" class="ops-btn active" onclick="setOpsFilter('all')" type="button">Все</button>
+        <button id="ops-topup" class="ops-btn" onclick="setOpsFilter('topup')" type="button">Пополнения</button>
+        <button id="ops-earning" class="ops-btn" onclick="setOpsFilter('earning')" type="button">Начисления</button>
+        <button id="ops-withdrawal" class="ops-btn" onclick="setOpsFilter('withdrawal')" type="button">Выводы</button>
+      </div>
       <div id="history-list" class="card" style="padding:0; overflow:hidden;"></div>
     </section>
 
@@ -413,7 +420,7 @@
   </nav>
 
   <!-- FAB -->
-  <div class="fab-wrap" onclick="openModal('m-create')"><div class="fab-btn">+</div></div>
+  <div id="fab-wrap" class="fab-wrap" onclick="openModal('m-create')"><div class="fab-btn">+</div></div>
 
   <!-- CREATE MODAL -->
   <div id="m-create" class="overlay">
@@ -602,6 +609,8 @@
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по ссылке, указав код в комментарии:</p>
       <a href="https://www.tinkoff.ru/rm/r_TfPtbPbddX.PiDdKULdka/kkRwB91205" target="_blank" class="btn btn-secondary" style="width:100%; text-decoration:none; margin-bottom:20px; justify-content:center;">🔗 Открыть Т-Банк</a>
+
+      <button class="btn btn-secondary" style="width:100%; margin-top:10px; justify-content:center;" onclick="openTbankReferral()" type="button">🟡 Нет карты? Оформи по ссылке</button>
 
       <p style="font-size:13px; color:var(--text-dim); margin-bottom:5px;">3. Ваше имя (отправителя):</p>
       <input type="text" id="tb-sender" placeholder="Например: Иван И." style="margin-top:0;">
