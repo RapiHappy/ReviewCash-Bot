@@ -163,41 +163,10 @@ if not MAIN_ADMIN_ID and ADMIN_IDS:
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()       # example: https://your-service.onrender.com/app/
 
 # WebApp session (for Telegram Desktop sometimes missing initData)
-WEBAPP_SESSION_SECRET = (os.getenv("WEBAPP_SESSION_SECRET", "").strip() or BOT_TOKEN)  # fallback to BOT_TOKEN
+WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "").strip()  # set in Render env
 WEBAPP_SESSION_TTL_SEC = int(os.getenv("WEBAPP_SESSION_TTL_SEC", "2592000"))  # default 30 days
 SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "").strip()  # example: https://your-service.onrender.com
 BASE_URL = os.getenv("BASE_URL", "").strip()             # fallback base
-
-from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-
-def _add_build_param(url: str) -> str:
-    url = (url or "").strip()
-    if not url:
-        return url
-    try:
-        u = urlparse(url)
-        q = dict(parse_qsl(u.query, keep_blank_values=True))
-        q["v"] = APP_BUILD
-        new_q = urlencode(q, doseq=True)
-        return urlunparse((u.scheme, u.netloc, u.path, u.params, new_q, u.fragment))
-    except Exception:
-        sep = "&" if "?" in url else "?"
-        return url + f"{sep}v={APP_BUILD}"
-
-def compute_miniapp_url() -> str:
-    base = (MINIAPP_URL or "").strip()
-    if not base:
-        host = (SERVER_BASE_URL or BASE_URL or "").strip()
-        if host:
-            base = host.rstrip("/") + "/app/"
-        else:
-            base = "/app/"
-    if base.endswith("/app"):
-        base = base + "/"
-    return _add_build_param(base)
-
-MINIAPP_URL_EFFECTIVE = compute_miniapp_url()
-
 PORT = int(os.getenv("PORT", "10000").strip())
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "1").strip() == "1"
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/tg/webhook").strip()
@@ -363,7 +332,7 @@ async def setup_menu_button(bot: Bot):
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="ReviewCash",
-                web_app=WebAppInfo(url=MINIAPP_URL_EFFECTIVE),
+                web_app=WebAppInfo(url=MINIAPP_URL),
             )
         )
         log.info("[WEBAPP] MenuButton WebApp set.")
@@ -374,7 +343,7 @@ async def setup_menu_button(bot: Bot):
 @dp.message(F.text == "/app")
 async def open_app_cmd(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL_EFFECTIVE))
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
@@ -515,7 +484,9 @@ async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
 # -------------------------
 async def api_tg_check_chat(req: web.Request):
     _, user = await require_init(req)
-    uid = int(user["id"])
+    uid = int(user.get("id") or user.get("user_id") or 0)
+    if not uid:
+        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balance": None})
     # Light rate limit: ~1 request per 2 seconds; spam -> 1 minute block
     rate_limit_enforce(uid, "tg_check", min_interval_sec=2, spam_strikes=8, block_sec=60)
 
@@ -930,7 +901,9 @@ async def referrals_summary(uid: int):
 # users
 # -------------------------
 async def ensure_user(user: dict, referrer_id: int | None = None):
-    uid = int(user["id"])
+    uid = int(user.get("id") or user.get("user_id") or user.get("tg_user_id") or 0)
+    if not uid:
+        raise ValueError("user id missing")
 
     # узнаём новый ли пользователь
     existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
@@ -1161,8 +1134,8 @@ def parse_amount_rub(v) -> float | None:
 async def require_init(req: web.Request):
     # 1) Try Telegram WebApp initData
     init_data = (
-        (req.headers.get("X-Tg-Init-Data") or "")
-        or (req.headers.get("X-Tg-InitData") or "")
+        (req.headers.get("X-Tg-InitData") or "")
+        or (req.headers.get("X-Tg-Init-Data") or "")
         or (req.headers.get("X-Telegram-Init-Data") or "")
         or (req.headers.get("X-Tg-Initdata") or "")
         or (req.headers.get("X-Init-Data") or "")
@@ -1175,7 +1148,23 @@ async def require_init(req: web.Request):
         parsed = verify_init_data(init_data, BOT_TOKEN or "")
         if parsed and isinstance(parsed.get("user"), dict):
             tg_user = parsed["user"]
-            user = await ensure_user(tg_user)
+            urow = await ensure_user(tg_user)
+            uid = int(tg_user.get("id") or urow.get("user_id") or 0)
+
+            # Normalize: downstream expects Telegram-like user dict with key 'id'
+            user = {
+                "id": uid,
+                "user_id": uid,
+                "username": tg_user.get("username") or urow.get("username"),
+                "first_name": tg_user.get("first_name") or urow.get("first_name"),
+                "last_name": tg_user.get("last_name") or urow.get("last_name"),
+                "photo_url": tg_user.get("photo_url") or urow.get("photo_url"),
+            }
+            # copy some flags if present
+            for k in ("is_banned", "referrer_id"):
+                if isinstance(urow, dict) and k in urow:
+                    user[k] = urow.get(k)
+
             return parsed, user
 
     # 2) Fallback: session token (for Telegram Desktop, where initData can be missing)
@@ -2132,24 +2121,23 @@ async def api_admin_tbank_decision(req: web.Request):
 async def cmd_start(message: Message):
     uid = message.from_user.id
     args = (message.text or "").split(maxsplit=1)
-    payload = (args[1].strip() if len(args) == 2 else "")
-    ref = int(payload) if payload.isdigit() else None
-    payload_l = payload.lower().strip()
+    ref = None
+    if len(args) == 2 and args[1].isdigit():
+        ref = int(args[1])
 
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
 
-    # Fast open via deep link: https://t.me/<bot>?start=app
-    if payload_l in ("app", "open", "miniapp", "webapp"):
-        kb = InlineKeyboardBuilder()
-        miniapp_url = MINIAPP_URL_EFFECTIVE
-        if miniapp_url:
-            kb.button(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=miniapp_url))
-        kb.adjust(1)
-        await message.answer("🚀 Открывай Mini App кнопкой ниже:", reply_markup=kb.as_markup())
-        return
-
     kb = InlineKeyboardBuilder()
-    miniapp_url = MINIAPP_URL_EFFECTIVE
+
+    miniapp_url = MINIAPP_URL
+    if not miniapp_url:
+        base = SERVER_BASE_URL or BASE_URL
+        if base:
+            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+
+    if miniapp_url and "v=" not in miniapp_url:
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
+
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
 
@@ -2189,7 +2177,13 @@ async def cb_toggle_notify(cq: CallbackQuery):
 
     try:
         kb = InlineKeyboardBuilder()
-        miniapp_url = MINIAPP_URL_EFFECTIVE
+
+        miniapp_url = MINIAPP_URL
+        if not miniapp_url:
+            base = SERVER_BASE_URL or BASE_URL
+            if base:
+                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
         kb.button(text=("🔕 Уведомления: ВЫКЛ" if new_muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
@@ -2290,7 +2284,7 @@ def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
         return
 
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Session-Token, Authorization"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Tg-Initdata, X-Session-Token, Authorization"
     resp.headers["Access-Control-Max-Age"] = "86400"
 
 @web.middleware
