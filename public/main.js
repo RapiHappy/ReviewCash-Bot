@@ -104,6 +104,10 @@ function openExternalLink(url, opts = {}) {
 window.openTbankReferrals = function () {
   openExternalLink(TBANK_REF_URL);
 };
+// Backward-compat: some UI binds openTbankReferral (singular)
+window.openTbankReferral = function () {
+  openExternalLink(TBANK_REF_URL);
+};
 
   
 function showConnectHint() {
