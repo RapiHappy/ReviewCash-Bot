@@ -1086,6 +1086,42 @@ async def set_task_ban(uid: int, days: int = 3):
     )
     return until
 
+
+# -------------------------
+# T-Bank topup cooldown (once per 24h after successful topup)
+# -------------------------
+TBANK_COOLDOWN_KEY = "tbank_topup_until"
+TBANK_COOLDOWN_SEC = int(os.getenv("TBANK_COOLDOWN_SEC", str(24 * 3600)).strip())
+
+async def get_tbank_cooldown_until(uid: int):
+    """Returns datetime until user is blocked from creating new T-Bank topup requests, or None."""
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY}, limit=1)
+        if not r.data:
+            return None
+        until = _parse_dt(r.data[0].get("last_at"))
+        if not until:
+            return None
+        if until <= _now():
+            try:
+                await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY})
+            except Exception:
+                pass
+            return None
+        return until
+    except Exception:
+        return None
+
+async def set_tbank_cooldown(uid: int, seconds: int = TBANK_COOLDOWN_SEC):
+    until = _now() + timedelta(seconds=int(seconds))
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY, "last_at": until.isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+    return until
+
+
 async def touch_task_click(uid: int, task_id: str):
     key = CLICK_PREFIX + str(task_id)
     await sb_upsert(
@@ -1707,6 +1743,12 @@ async def api_withdraw_list(req: web.Request):
 async def api_tbank_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    cool = await get_tbank_cooldown_until(uid)
+    if cool and int(uid) not in ADMIN_IDS:
+        left = int((cool - _now()).total_seconds())
+        h = left // 3600
+        m = (left % 3600) // 60
+        return web.json_response({"ok": False, "error": f"Пополнение через Т-Банк доступно раз в сутки. Повтори через {h}ч {m}м."}, status=429)
     rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
 
@@ -2277,6 +2319,12 @@ async def api_admin_tbank_decision(req: web.Request):
             await add_xp(uid, xp_add)
 
         await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
+        try:
+            until = await set_tbank_cooldown(uid)
+            # optional notify about cooldown
+            await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
+        except Exception:
+            pass
     else:
         await sb_update(T_PAY, {"id": payment_id}, {"status": "rejected"})
         await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
