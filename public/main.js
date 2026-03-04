@@ -45,17 +45,59 @@
 // --------------------
 const TBANK_REF_URL = "https://tbank.ru/baf/56p8AlptMz5";
 
-function openExternalLink(url) {
+function openExternalLink(url, opts = {}) {
   const link = String(url || "").trim();
   if (!link) return;
+
+  // Always copy link as a fallback (some Telegram clients block opening bank links)
+  const copy = () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).catch(() => {});
+        return;
+      }
+    } catch (e) {}
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = link;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.top = "-9999px";
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) {}
+  };
+
+  try { copy(); } catch (e) {}
+
+  // 1) Telegram WebApp API (best)
   try {
     const wtg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-    if (wtg && wtg.openLink) {
+    if (wtg && typeof wtg.openLink === "function") {
       wtg.openLink(link, { try_instant_view: false });
+      try { if (opts.toast !== false) showToast("info", "Если ссылка не открылась — она скопирована в буфер.", "Ссылка"); } catch (e) {}
       return;
     }
   } catch (e) {}
+
+  // 2) Anchor click (works better than window.open in some WebViews)
+  try {
+    const a = document.createElement("a");
+    a.href = link;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    try { if (opts.toast !== false) showToast("info", "Если ссылка не открылась — она скопирована в буфер.", "Ссылка"); } catch (e) {}
+    return;
+  } catch (e) {}
+
+  // 3) Last resort
   try { window.open(link, "_blank"); } catch (e) { window.location.href = link; }
+  try { if (opts.toast !== false) showToast("info", "Ссылка скопирована в буфер.", "Ссылка"); } catch (e) {}
 }
 
 // For T-Bank: referral link to issue a card
