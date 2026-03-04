@@ -79,23 +79,36 @@ def cast_id(v):
     return s
 
 async def check_url_alive(url: str) -> tuple[bool, str]:
-    """Best-effort check that URL responds (<400)."""
+    """Best-effort check that URL responds.
+
+    Notes:
+    - Yandex/Google Maps sometimes return 403/429 to automated HEAD/GET requests.
+      We still allow such links, because they are valid for humans in a browser.
+    """
     try:
         import aiohttp
-        timeout = aiohttp.ClientTimeout(total=8)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        timeout = aiohttp.ClientTimeout(total=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; ReviewCashBot/1.0; +https://t.me/ReviewCashOrg_Bot)"
+        }
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            def _ok_status(st: int) -> bool:
+                # accept 2xx/3xx; also accept anti-bot responses
+                return (st < 400) or (st in (401, 403, 429))
+
             try:
                 async with session.head(url, allow_redirects=True) as r:
-                    if r.status < 400:
+                    if _ok_status(r.status):
                         return True, ""
                     return False, f"HTTP {r.status}"
             except Exception:
                 async with session.get(url, allow_redirects=True) as r:
-                    if r.status < 400:
+                    if _ok_status(r.status):
                         return True, ""
                     return False, f"HTTP {r.status}"
     except Exception:
         return False, "не удалось открыть ссылку"
+
 from pathlib import Path
 
 from aiohttp import web
@@ -1448,8 +1461,10 @@ async def api_task_click(req: web.Request):
     task_id = str(body.get("task_id") or "").strip()
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
+    task_id_db = cast_id(task_id)
+    task_id_db = cast_id(task_id)
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
 
@@ -1481,7 +1496,7 @@ async def api_task_submit(req: web.Request):
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
     task = t.data[0]
@@ -1503,7 +1518,7 @@ async def api_task_submit(req: web.Request):
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
     # duplicate check
-    dup = await sb_select(T_COMP, {"task_id": task_id, "user_id": uid}, limit=1)
+    dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, limit=1)
     if dup.data:
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
@@ -1539,12 +1554,12 @@ async def api_task_submit(req: web.Request):
                 upd = {"qty_left": new_left}
                 if new_left <= 0:
                     upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                await sb_update(T_TASKS, {"id": task_id_db}, upd)
         except Exception:
             pass
 
         await sb_insert(T_COMP, {
-            "task_id": task_id,
+            "task_id": task_id_db,
             "user_id": uid,
             "status": "paid",
             "proof_text": "AUTO_TG_OK",
@@ -1559,7 +1574,7 @@ async def api_task_submit(req: web.Request):
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
     await sb_insert(T_COMP, {
-        "task_id": task_id,
+        "task_id": task_id_db,
         "user_id": uid,
         "status": "pending",
         "proof_text": proof_text,
@@ -1583,6 +1598,16 @@ async def api_task_submit(req: web.Request):
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    # Withdrawals only on Saturday/Sunday (Moscow time). Admins can bypass.
+    try:
+        if int(uid) not in ADMIN_IDS:
+            msk = timezone(timedelta(hours=3))
+            wd = datetime.now(msk).weekday()  # Mon=0 ... Sun=6
+            if wd not in (5, 6):
+                return web.json_response({"ok": False, "error": "Заявки на вывод принимаются только в субботу и воскресенье."}, status=400)
+    except Exception:
+        pass
+
     body = await safe_json(req)
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
@@ -1634,7 +1659,7 @@ async def api_tbank_claim(req: web.Request):
     code = str(body.get("code") or body.get("comment") or body.get("payment_code") or body.get("provider_ref") or body.get("reference") or "").strip()
 
     if amount < MIN_TOPUP_RUB:
-        return web.json_response({"ok": False, "error": f"Минимум {MIN_STARS_TOPUP_RUB:.0f}₽"}, status=400)
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
     if not sender:
         return web.json_response({"ok": False, "error": "Укажи имя отправителя"}, status=400)
     if not code:
@@ -2040,7 +2065,7 @@ async def api_admin_proof_decision(req: web.Request):
     task_id = proof.get("task_id")
     user_id = int(proof.get("user_id") or 0)
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     task = (t.data or [{}])[0]
     reward = float(task.get("reward_rub") or 0)
 
@@ -2080,7 +2105,7 @@ async def api_admin_proof_decision(req: web.Request):
                 upd = {"qty_left": new_left}
                 if new_left <= 0:
                     upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                await sb_update(T_TASKS, {"id": task_id_db}, upd)
         except Exception:
             pass
 
@@ -2562,7 +2587,7 @@ async def api_admin_tg_audit(req: web.Request):
 
         if upd:
             try:
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
+                await sb_update(T_TASKS, {"id": task_id_db}, upd)
                 changed += 1
                 if desired_check_type == "auto":
                     set_auto += 1
