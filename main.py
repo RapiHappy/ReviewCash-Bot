@@ -1462,7 +1462,6 @@ async def api_task_click(req: web.Request):
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
     task_id_db = cast_id(task_id)
-    task_id_db = cast_id(task_id)
 
     t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     if not t.data:
@@ -1482,7 +1481,7 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=10, block_sec=600)
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=10, spam_strikes=12, block_sec=120)
     body = await safe_json(req)
 
     banned_until = await get_task_ban_until(uid)
@@ -1495,6 +1494,8 @@ async def api_task_submit(req: web.Request):
 
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
+
+    task_id_db = cast_id(task_id)
 
     t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     if not t.data:
