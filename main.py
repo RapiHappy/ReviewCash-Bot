@@ -1240,7 +1240,7 @@ async def api_sync(req: web.Request):
 
     
     session_token = _make_session_token(uid)
-return web.json_response({
+    return web.json_response({
         "ok": True,
         "auth": True,
         "session_token": session_token,
