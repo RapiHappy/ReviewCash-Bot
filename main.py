@@ -160,6 +160,14 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
 
+# Build tag for diagnostics (to ensure Render runs the expected version)
+BUILD_TAG = 'rc_backend_release4_lvlcompat'
+try:
+    log.warning('[BUILD] %s', BUILD_TAG)
+except Exception:
+    pass
+
+
 # -------------------------
 # ENV
 # -------------------------
@@ -595,6 +603,56 @@ async def sb_select_in(
             q = q.limit(limit)
         return q.execute()
     return await sb_exec(_f)
+# -------------------------
+# helpers: tolerate schema differences (e.g., balances table without 'level' column)
+# -------------------------
+def _is_pgrst_missing_column(err: Exception, col: str) -> bool:
+    try:
+        s = str(err)
+        if "PGRST204" in s and f"'{col}'" in s:
+            return True
+        if "Could not find" in s and f"'{col}'" in s:
+            return True
+    except Exception:
+        pass
+    return False
+
+async def balances_update(uid: int, updates: dict) -> bool:
+    """Update balances row. If some columns don't exist (level/updated_at), retry without them."""
+    updates = dict(updates or {})
+    if not updates:
+        return True
+    # try full
+    try:
+        await sb_update(T_BAL, {"user_id": int(uid)}, updates)
+        return True
+    except Exception as e:
+        # drop 'level' if missing
+        if "level" in updates and _is_pgrst_missing_column(e, "level"):
+            updates.pop("level", None)
+            try:
+                await sb_update(T_BAL, {"user_id": int(uid)}, updates)
+                return True
+            except Exception:
+                pass
+        # drop updated_at if missing
+        if "updated_at" in updates and _is_pgrst_missing_column(e, "updated_at"):
+            updates.pop("updated_at", None)
+            try:
+                await sb_update(T_BAL, {"user_id": int(uid)}, updates)
+                return True
+            except Exception:
+                pass
+        # last resort: try only numeric balances/xp keys
+        slim = {k: v for k, v in updates.items() if k in ("rub_balance", "stars_balance", "xp")}
+        if slim and slim != updates:
+            try:
+                await sb_update(T_BAL, {"user_id": int(uid)}, slim)
+                return True
+            except Exception:
+                pass
+        return False
+
 
 # -------------------------
 # Telegram initData verify (WebApp)
@@ -772,13 +830,13 @@ async def get_balance(uid: int):
         row["level"] = lvl
         # best-effort persist fixes
         try:
-            await sb_update(T_BAL, {"user_id": uid}, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
+            await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
         except Exception:
             pass
         return row
     # ensure row exists
     try:
-        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "level": 1, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
+        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
     except Exception:
         pass
     return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
@@ -786,7 +844,7 @@ async def get_balance(uid: int):
 async def set_xp_level(uid: int, xp: int):
     xp = int(max(0, xp))
     lvl = calc_level(xp)
-    await sb_update(T_BAL, {"user_id": uid}, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
+    await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
     return xp, lvl
 
 async def add_xp(uid: int, amount: int):
@@ -797,7 +855,7 @@ async def add_xp(uid: int, amount: int):
 async def add_rub(uid: int, amount: float):
     bal = await get_balance(uid)
     new_val = float(bal.get("rub_balance") or 0) + float(amount)
-    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": new_val, "updated_at": _now().isoformat()})
+    await balances_update(uid, {"rub_balance": new_val, "updated_at": _now().isoformat()})
     return new_val
 
 async def sub_rub(uid: int, amount: float) -> bool:
@@ -805,7 +863,7 @@ async def sub_rub(uid: int, amount: float) -> bool:
     cur = float(bal.get("rub_balance") or 0)
     if cur < float(amount):
         return False
-    await sb_update(T_BAL, {"user_id": uid}, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
+    await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
     return True
 
 # -------------------------
@@ -2412,7 +2470,7 @@ async def cors_middleware(req: web.Request, handler):
 # aiohttp app + webhook + static Mini App
 # =========================================================
 async def health(req: web.Request):
-    return web.Response(text="OK")
+    return web.json_response({'ok': True, 'build': BUILD_TAG, 'app_build': APP_BUILD})
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)
@@ -2429,6 +2487,7 @@ def make_app():
 
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
+    app.router.add_get("/api/version", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
