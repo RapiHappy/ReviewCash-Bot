@@ -2230,9 +2230,24 @@ if (!list.length) {
           <button class="btn btn-main" data-approve="1">✅ Выплатить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+          <button class="btn btn-secondary" data-ban-withdraw="1" style="padding:8px 10px; font-size:12px;">🚫 Бан вывода 1д</button>
+          <button class="btn btn-secondary" data-ban-global="1" style="padding:8px 10px; font-size:12px;">⛔ Бан 1д</button>
+          <button class="btn btn-secondary" data-fine="1" style="padding:8px 10px; font-size:12px;">💸 Штраф</button>
+        </div>
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideWithdraw(w.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideWithdraw(w.id, false, c);
+
+      // Sanctions
+      const uid = Number(w.user_id || 0);
+      const bw = c.querySelector('[data-ban-withdraw="1"]');
+      if (bw) bw.onclick = () => adminBanQuick(uid, "withdraw", 1);
+      const bg = c.querySelector('[data-ban-global="1"]');
+      if (bg) bg.onclick = () => adminBanQuick(uid, "global", 1);
+      const bf = c.querySelector('[data-fine="1"]');
+      if (bf) bf.onclick = () => adminFineQuick(uid);
+
       box.appendChild(c);
     });
   }
@@ -2272,9 +2287,24 @@ if (!list.length) {
           <button class="btn btn-main" data-approve="1">✅ Подтвердить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+          <button class="btn btn-secondary" data-ban-tbank="1" style="padding:8px 10px; font-size:12px;">🚫 Бан T‑Bank 1д</button>
+          <button class="btn btn-secondary" data-ban-global="1" style="padding:8px 10px; font-size:12px;">⛔ Бан 1д</button>
+          <button class="btn btn-secondary" data-fine="1" style="padding:8px 10px; font-size:12px;">💸 Штраф</button>
+        </div>
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideTbank(p.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideTbank(p.id, false, c);
+
+      // Sanctions
+      const uid = Number(p.user_id || 0);
+      const bt = c.querySelector('[data-ban-tbank="1"]');
+      if (bt) bt.onclick = () => adminBanQuick(uid, "tbank", 1);
+      const bg = c.querySelector('[data-ban-global="1"]');
+      if (bg) bg.onclick = () => adminBanQuick(uid, "global", 1);
+      const bf = c.querySelector('[data-fine="1"]');
+      if (bf) bf.onclick = () => adminFineQuick(uid);
+
       box.appendChild(c);
     });
   }
@@ -2291,6 +2321,67 @@ if (!list.length) {
       tgAlert(String(e.message || e));
     }
   }
+
+  // --------------------
+  // Admin sanctions (ban / fine)
+  // --------------------
+  async function adminPunish(userId, action, kind, extra = {}) {
+    const uid = Number(userId || 0);
+    if (!uid) throw new Error("bad user_id");
+    const payload = Object.assign({ user_id: uid, action: String(action || ""), kind: String(kind || "global") }, extra || {});
+    return await apiPost("/api/admin/user/punish", payload);
+  }
+
+  async function adminBanQuick(userId, kind = "global", days = 1) {
+    try {
+      const uid = Number(userId || 0);
+      if (!uid) return;
+      const reason = (prompt("Причина бана (необязательно):", "") || "").trim();
+      tgHaptic("impact");
+      await adminPunish(uid, "ban", kind, { days: Number(days || 1), reason });
+      tgHaptic("success");
+      tgAlert(`Бан (${kind}) выдан ✅`, "success", "Админка");
+      await checkAdmin();
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e), "error", "Админка");
+    }
+  }
+
+  async function adminUnbanQuick(userId, kind = "global") {
+    try {
+      const uid = Number(userId || 0);
+      if (!uid) return;
+      tgHaptic("impact");
+      await adminPunish(uid, "unban", kind, {});
+      tgHaptic("success");
+      tgAlert(`Бан (${kind}) снят ✅`, "success", "Админка");
+      await checkAdmin();
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e), "error", "Админка");
+    }
+  }
+
+  async function adminFineQuick(userId) {
+    try {
+      const uid = Number(userId || 0);
+      if (!uid) return;
+      const raw = (prompt("Штраф в ₽ (введите число):", "100") || "").trim();
+      const n = Number(raw.replace(",", "."));
+      if (!isFinite(n) || n <= 0) { tgAlert("Некорректная сумма", "error"); return; }
+      const reason = (prompt("Причина штрафа (необязательно):", "") || "").trim();
+      tgHaptic("impact");
+      await adminPunish(uid, "fine", "global", { amount_rub: -Math.abs(n), reason });
+      tgHaptic("success");
+      tgAlert(`Штраф -${Math.abs(n)} ₽ применён ✅`, "success", "Админка");
+      await checkAdmin();
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e), "error", "Админка");
+    }
+  }
+
 
   // --------------------
 
@@ -2344,6 +2435,26 @@ async function loadAdminTasks() {
       const b = tools.querySelector('[data-tg-audit="1"]');
       if (b) b.onclick = auditTgTasks;
       box.appendChild(tools);
+
+      // User management (ban / fine)
+      const um = adminCard(`
+        <div style="font-weight:900; margin-bottom:8px;">⚠️ Санкции пользователю</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <input id="admin-user-id" placeholder="User ID" inputmode="numeric" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text);" />
+          <button class="btn btn-secondary" data-um-ban="1" style="padding:10px 12px;">⛔ Бан 1д</button>
+          <button class="btn btn-secondary" data-um-unban="1" style="padding:10px 12px;">✅ Разбан</button>
+          <button class="btn btn-secondary" data-um-fine="1" style="padding:10px 12px;">💸 Штраф</button>
+        </div>
+        <div style="font-size:11px; opacity:0.65; margin-top:8px;">Бан по умолчанию — глобальный на 1 день. Штраф — списание ₽.</div>
+      `);
+      const getUid = () => Number((um.querySelector("#admin-user-id")?.value || "").trim() || 0);
+      const bban = um.querySelector('[data-um-ban="1"]');
+      if (bban) bban.onclick = () => { const u = getUid(); if (u) adminBanQuick(u, "global", 1); else tgAlert("Введите User ID", "error"); };
+      const bunban = um.querySelector('[data-um-unban="1"]');
+      if (bunban) bunban.onclick = () => { const u = getUid(); if (u) adminUnbanQuick(u, "global"); else tgAlert("Введите User ID", "error"); };
+      const bf = um.querySelector('[data-um-fine="1"]');
+      if (bf) bf.onclick = () => { const u = getUid(); if (u) adminFineQuick(u); else tgAlert("Введите User ID", "error"); };
+      box.appendChild(um);
     }
 
     const res = await apiPost("/api/admin/task/list", {});
