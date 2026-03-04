@@ -39,6 +39,30 @@
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+// --------------------
+// External links helpers
+// --------------------
+const TBANK_REF_URL = "https://tbank.ru/baf/56p8AlptMz5";
+
+function openExternalLink(url) {
+  const link = String(url || "").trim();
+  if (!link) return;
+  try {
+    const wtg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+    if (wtg && wtg.openLink) {
+      wtg.openLink(link, { try_instant_view: false });
+      return;
+    }
+  } catch (e) {}
+  try { window.open(link, "_blank"); } catch (e) { window.location.href = link; }
+}
+
+// For T-Bank: referral link to issue a card
+window.openTbankReferrals = function () {
+  openExternalLink(TBANK_REF_URL);
+};
+
   
 function showConnectHint() {
   const existing = document.getElementById("connect-hint");
@@ -1042,7 +1066,7 @@ if (!list.length) {
           return;
         }
         if (tg.openLink) {
-          tg.openLink(link);
+          tg.openLink(link, { try_instant_view: false });
           return;
         }
       }
@@ -1972,6 +1996,12 @@ if (!list.length) {
     if ($("tb-amount-display")) $("tb-amount-display").textContent = fmtRub(amount);
 
     openOverlay("m-pay-tbank");
+
+    // ensure referral button works even if HTML calls openTbankReferrals
+    try {
+      const btn = document.getElementById("tb-ref-btn");
+      if (btn) btn.onclick = () => window.openTbankReferrals();
+    } catch (e) {}
   };
 
   window.copyCode = function () {
