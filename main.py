@@ -1086,6 +1086,55 @@ async def set_task_ban(uid: int, days: int = 3):
     )
     return until
 
+# Global / feature bans (admin)
+GLOBAL_BAN_KEY = "global_ban_until"      # blocks any paid actions
+TBANK_BAN_KEY = "tbank_ban_until"        # blocks T-Bank topups
+WITHDRAW_BAN_KEY = "withdraw_ban_until"  # blocks withdrawals (in addition to weekend rule)
+
+async def get_limit_until(uid: int, key: str):
+    """Return datetime until limit active, or None."""
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)}, limit=1)
+        if not r.data:
+            return None
+        row = r.data[0] or {}
+        until = _parse_dt(row.get("last_at"))
+        if not until:
+            return None
+        if until <= _now():
+            # cleanup expired
+            try:
+                await sb_delete(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)})
+            except Exception:
+                pass
+            return None
+        return until
+    except Exception:
+        return None
+
+async def set_limit_until(uid: int, key: str, seconds: int):
+    until = _now() + timedelta(seconds=int(max(0, seconds)))
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(uid), "limit_key": str(key), "last_at": until.isoformat()},
+        on_conflict="user_id,limit_key",
+    )
+    return until
+
+async def clear_limit(uid: int, key: str):
+    try:
+        await sb_delete(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)})
+    except Exception:
+        pass
+
+async def get_global_ban_until(uid: int):
+    return await get_limit_until(uid, GLOBAL_BAN_KEY)
+
+async def get_tbank_ban_until(uid: int):
+    return await get_limit_until(uid, TBANK_BAN_KEY)
+
+async def get_withdraw_ban_until(uid: int):
+    return await get_limit_until(uid, WITHDRAW_BAN_KEY)
 
 # -------------------------
 # T-Bank topup cooldown (once per 24h after successful topup)
@@ -1255,6 +1304,15 @@ async def require_init(req: web.Request):
             merged.setdefault("first_name", tg_user.get("first_name"))
             merged.setdefault("last_name", tg_user.get("last_name"))
             merged.setdefault("photo_url", tg_user.get("photo_url"))
+
+            # global ban checks
+            uid = int(merged.get("id") or merged.get("user_id") or 0)
+            if merged.get("is_banned"):
+                raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": "Аккаунт заблокирован"}), content_type="application/json")
+            gban = await get_global_ban_until(uid)
+            if gban:
+                raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
+
             return parsed, merged
 
     # 2) Fallback: session token (for Telegram Desktop, where initData can be missing)
@@ -1270,6 +1328,14 @@ async def require_init(req: web.Request):
         # normalize: downstream expects tg-style user dict with key 'id' == telegram user_id
         user = {**u, "id": int(u.get("user_id") or uid), "user_id": int(u.get("user_id") or uid)}
         parsed = {"user": {"id": int(u.get("user_id") or uid)}}
+
+        # global ban checks
+        if user.get("is_banned"):
+            raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": "Аккаунт заблокирован"}), content_type="application/json")
+        gban = await get_global_ban_until(int(user.get("id") or uid))
+        if gban:
+            raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
+
         return parsed, user
 
     raise web.HTTPUnauthorized(text="No initData/session")
@@ -1693,6 +1759,12 @@ async def api_task_submit(req: web.Request):
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+
+    # Ban from withdrawals (admin)
+    wb = await get_withdraw_ban_until(uid)
+    if wb:
+        return web.json_response({"ok": False, "error": f"Выводы временно заблокированы до {wb.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
+
     # Withdrawals only on Saturday/Sunday (Moscow time). Admins can bypass.
     try:
         if int(uid) not in ADMIN_IDS:
@@ -1743,6 +1815,12 @@ async def api_withdraw_list(req: web.Request):
 async def api_tbank_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+
+    # Ban from T-Bank topups (admin)
+    b = await get_tbank_ban_until(uid)
+    if b:
+        return web.json_response({"ok": False, "error": f"Пополнение T-Bank временно заблокировано до {b.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
+
     cool = await get_tbank_cooldown_until(uid)
     if cool and int(uid) not in ADMIN_IDS:
         left = int((cool - _now()).total_seconds())
@@ -2092,6 +2170,146 @@ async def api_admin_balance_credit(req: web.Request):
         pass
 
     return web.json_response({"ok": True})
+
+
+async def api_admin_user_punish(req: web.Request):
+    """
+    Admin sanctions:
+      - temporary ban (global/tasks/tbank/withdraw)
+      - permanent ban via users.is_banned
+      - fine / manual balance adjustment (rub only)
+    Body:
+      { user_id, action: "ban"|"unban"|"permaban"|"unpermaban"|"fine",
+        kind: "global"|"tasks"|"tbank"|"withdraw",
+        days, hours, seconds,
+        amount_rub, reason }
+    """
+    admin = await require_admin(req)
+    body = await safe_json(req)
+
+    try:
+        uid = int(body.get("user_id") or body.get("uid") or 0)
+    except Exception:
+        uid = 0
+    if uid <= 0:
+        return web.json_response({"ok": False, "error": "Некорректный user_id"}, status=400)
+
+    action = str(body.get("action") or "").strip().lower()
+    if not action:
+        # backward-compat: if "ban_days" provided assume ban
+        action = "ban" if body.get("days") or body.get("ban_days") else "fine"
+
+    kind = str(body.get("kind") or "global").strip().lower()
+    if kind not in ("global", "tasks", "tbank", "withdraw"):
+        kind = "global"
+
+    reason = str(body.get("reason") or "").strip()
+    admin_id = int(admin.get("id") or 0)
+
+    # Permanent ban/unban (only main admin)
+    if action in ("permaban", "ban_perm", "perma"):
+        if int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
+            return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
+        try:
+            await sb_update(T_USERS, {"user_id": uid}, {"is_banned": True})
+        except Exception:
+            # row might not exist yet
+            await sb_upsert(T_USERS, {"user_id": uid, "is_banned": True}, on_conflict="user_id")
+        await notify_user(uid, f"🚫 Аккаунт заблокирован администратором.\n{('Причина: ' + reason) if reason else ''}".strip())
+        return web.json_response({"ok": True, "action": "permaban", "user_id": uid})
+
+    if action in ("unpermaban", "unban_perm", "unperma"):
+        if int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
+            return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
+        try:
+            await sb_update(T_USERS, {"user_id": uid}, {"is_banned": False})
+        except Exception:
+            await sb_upsert(T_USERS, {"user_id": uid, "is_banned": False}, on_conflict="user_id")
+        await notify_user(uid, "✅ Блокировка аккаунта снята администратором.")
+        return web.json_response({"ok": True, "action": "unpermaban", "user_id": uid})
+
+    # Temporary bans
+    if action in ("ban", "tempban"):
+        # only main admin can set GLOBAL ban longer than 30 days
+        days = body.get("days") if body.get("days") is not None else body.get("ban_days")
+        hours = body.get("hours")
+        seconds = body.get("seconds")
+
+        try:
+            days = int(days or 0)
+        except Exception:
+            days = 0
+        try:
+            hours = int(hours or 0)
+        except Exception:
+            hours = 0
+        try:
+            seconds = int(seconds or 0)
+        except Exception:
+            seconds = 0
+
+        total_sec = max(0, seconds + hours * 3600 + days * 86400)
+        if total_sec <= 0:
+            total_sec = 86400  # default 1 day
+
+        if kind == "global":
+            if days >= 30 and int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
+                return web.json_response({"ok": False, "error": "Длительный глобальный бан — только главный админ"}, status=403)
+            until = await set_limit_until(uid, GLOBAL_BAN_KEY, total_sec)
+        elif kind == "tasks":
+            until = await set_task_ban(uid, max(1, int(total_sec // 86400) or 1))
+        elif kind == "tbank":
+            until = await set_limit_until(uid, TBANK_BAN_KEY, total_sec)
+        else:  # withdraw
+            until = await set_limit_until(uid, WITHDRAW_BAN_KEY, total_sec)
+
+        await notify_user(uid, f"⛔ Временная блокировка ({kind}) до {until.strftime('%Y-%m-%d %H:%M')} UTC.\n{('Причина: ' + reason) if reason else ''}".strip())
+        return web.json_response({"ok": True, "action": "ban", "kind": kind, "user_id": uid, "until": until.isoformat()})
+
+    if action in ("unban", "clearban"):
+        if kind == "tasks":
+            await clear_limit(uid, TASK_BAN_KEY)
+        elif kind == "tbank":
+            await clear_limit(uid, TBANK_BAN_KEY)
+        elif kind == "withdraw":
+            await clear_limit(uid, WITHDRAW_BAN_KEY)
+        else:
+            await clear_limit(uid, GLOBAL_BAN_KEY)
+
+        await notify_user(uid, f"✅ Бан ({kind}) снят администратором.")
+        return web.json_response({"ok": True, "action": "unban", "kind": kind, "user_id": uid})
+
+    # Fine / manual adjustment (rub only)
+    if action in ("fine", "adjust", "balance"):
+        try:
+            amount = float(body.get("amount_rub") if body.get("amount_rub") is not None else body.get("rub") or body.get("amount") or 0)
+        except Exception:
+            amount = 0.0
+        if amount == 0:
+            return web.json_response({"ok": False, "error": "Укажи сумму (amount_rub)"}, status=400)
+
+        # amount can be negative (fine) or positive (manual credit)
+        new_rub = await add_rub(uid, float(amount))
+
+        # record in payments so it appears in history
+        try:
+            await sb_insert(T_PAY, {
+                "user_id": uid,
+                "provider": "admin",
+                "status": "paid",
+                "amount_rub": float(amount),
+                "provider_ref": f"admin:{admin_id}:{int(_now().timestamp())}",
+                "meta": {"reason": reason, "by": admin_id, "kind": "fine" if amount < 0 else "credit"}
+            })
+        except Exception:
+            pass
+
+        txt = "💸 Штраф" if amount < 0 else "➕ Начисление"
+        await notify_user(uid, f"{txt}: {amount:+.0f} ₽\nБаланс: {new_rub:.0f} ₽\n{('Причина: ' + reason) if reason else ''}".strip())
+
+        return web.json_response({"ok": True, "action": "fine", "user_id": uid, "amount_rub": float(amount), "rub_balance": new_rub})
+
+    return web.json_response({"ok": False, "error": "Неизвестное действие"}, status=400)
 
 async def api_admin_proof_list(req: web.Request):
     await require_admin(req)
@@ -2593,6 +2811,7 @@ def make_app():
     # admin
     app.router.add_post("/api/admin/summary", api_admin_summary)
     app.router.add_post("/api/admin/balance/credit", api_admin_balance_credit)
+    app.router.add_post("/api/admin/user/punish", api_admin_user_punish)
     app.router.add_post("/api/admin/proof/list", api_admin_proof_list)
     app.router.add_post("/api/admin/proof/decision", api_admin_proof_decision)
     app.router.add_post("/api/admin/withdraw/list", api_admin_withdraw_list)
