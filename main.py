@@ -79,36 +79,23 @@ def cast_id(v):
     return s
 
 async def check_url_alive(url: str) -> tuple[bool, str]:
-    """Best-effort check that URL responds.
-
-    Notes:
-    - Yandex/Google Maps sometimes return 403/429 to automated HEAD/GET requests.
-      We still allow such links, because they are valid for humans in a browser.
-    """
+    """Best-effort check that URL responds (<400)."""
     try:
         import aiohttp
-        timeout = aiohttp.ClientTimeout(total=10)
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; ReviewCashBot/1.0; +https://t.me/ReviewCashOrg_Bot)"
-        }
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            def _ok_status(st: int) -> bool:
-                # accept 2xx/3xx; also accept anti-bot responses
-                return (st < 400) or (st in (401, 403, 429))
-
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
                 async with session.head(url, allow_redirects=True) as r:
-                    if _ok_status(r.status):
+                    if r.status < 400:
                         return True, ""
                     return False, f"HTTP {r.status}"
             except Exception:
                 async with session.get(url, allow_redirects=True) as r:
-                    if _ok_status(r.status):
+                    if r.status < 400:
                         return True, ""
                     return False, f"HTTP {r.status}"
     except Exception:
         return False, "не удалось открыть ссылку"
-
 from pathlib import Path
 
 from aiohttp import web
@@ -160,14 +147,6 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
 
-# Build tag for diagnostics (to ensure Render runs the expected version)
-BUILD_TAG = 'rc_backend_release4_lvlcompat'
-try:
-    log.warning('[BUILD] %s', BUILD_TAG)
-except Exception:
-    pass
-
-
 # -------------------------
 # ENV
 # -------------------------
@@ -204,8 +183,6 @@ GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 
 # topup minimum
 MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "300").strip())
-# Stars topup minimum (in RUB)
-MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "1").strip())
 
 # Stars rate: сколько рублей даёт 1 Star
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
@@ -372,6 +349,7 @@ T_WD = "withdrawals"
 T_LIMITS = "user_limits"
 T_STATS = "stats_daily"
 T_REF = "referral_events"
+T_BALANCES = T_BAL  # compat alias
 
 # -------------------------
 # In-memory rate limiting (per process)
@@ -603,56 +581,6 @@ async def sb_select_in(
             q = q.limit(limit)
         return q.execute()
     return await sb_exec(_f)
-# -------------------------
-# helpers: tolerate schema differences (e.g., balances table without 'level' column)
-# -------------------------
-def _is_pgrst_missing_column(err: Exception, col: str) -> bool:
-    try:
-        s = str(err)
-        if "PGRST204" in s and f"'{col}'" in s:
-            return True
-        if "Could not find" in s and f"'{col}'" in s:
-            return True
-    except Exception:
-        pass
-    return False
-
-async def balances_update(uid: int, updates: dict) -> bool:
-    """Update balances row. If some columns don't exist (level/updated_at), retry without them."""
-    updates = dict(updates or {})
-    if not updates:
-        return True
-    # try full
-    try:
-        await sb_update(T_BAL, {"user_id": int(uid)}, updates)
-        return True
-    except Exception as e:
-        # drop 'level' if missing
-        if "level" in updates and _is_pgrst_missing_column(e, "level"):
-            updates.pop("level", None)
-            try:
-                await sb_update(T_BAL, {"user_id": int(uid)}, updates)
-                return True
-            except Exception:
-                pass
-        # drop updated_at if missing
-        if "updated_at" in updates and _is_pgrst_missing_column(e, "updated_at"):
-            updates.pop("updated_at", None)
-            try:
-                await sb_update(T_BAL, {"user_id": int(uid)}, updates)
-                return True
-            except Exception:
-                pass
-        # last resort: try only numeric balances/xp keys
-        slim = {k: v for k, v in updates.items() if k in ("rub_balance", "stars_balance", "xp")}
-        if slim and slim != updates:
-            try:
-                await sb_update(T_BAL, {"user_id": int(uid)}, slim)
-                return True
-            except Exception:
-                pass
-        return False
-
 
 # -------------------------
 # Telegram initData verify (WebApp)
@@ -801,71 +729,99 @@ async def anti_fraud_check_and_touch(
         return False, f"Слишком много аккаунтов на одном устройстве ({len(users)})."
     return True, None
 
+
 # -------------------------
-# levels / balances
+# levels / balances (schema-safe)
 # -------------------------
+_BAL_MISSING_COLS: set[str] = set()
+
 def calc_level(xp: int) -> int:
     if XP_PER_LEVEL <= 0:
         return 1
     return max(1, (int(xp) // int(XP_PER_LEVEL)) + 1)
 
+def _missing_col_from_exc(e: Exception) -> str | None:
+    s = str(e)
+    m = re.search(r"Could not find the '([^']+)' column", s)
+    if m:
+        return m.group(1)
+    m = re.search(r"column of 'balances' in the schema cache.*'([^']+)'", s)
+    if m:
+        return m.group(1)
+    return None
+
+async def balances_update(uid: int, updates: dict):
+    """Update balances row but auto-drop missing columns (level/updated_at etc)."""
+    if not updates:
+        return
+    # drop known-missing cols
+    u = {k: v for k, v in dict(updates).items() if k not in _BAL_MISSING_COLS}
+    if not u:
+        return
+    try:
+        await sb_update(T_BAL, {"user_id": int(uid)}, u)
+        return
+    except Exception as e:
+        col = _missing_col_from_exc(e)
+        if col and col in u:
+            _BAL_MISSING_COLS.add(col)
+            u.pop(col, None)
+            if u:
+                try:
+                    await sb_update(T_BAL, {"user_id": int(uid)}, u)
+                except Exception:
+                    pass
+            return
+        # other 4xx errors: don't crash the whole flow
+        log.warning("balances_update failed uid=%s updates=%s err=%s", uid, list(u.keys()), e)
+        return
+
 async def get_balance(uid: int):
-    r = await sb_select(T_BAL, {"user_id": uid}, limit=1)
+    r = await sb_select(T_BAL, {"user_id": int(uid)}, limit=1)
     if r.data:
         row = r.data[0] or {}
-        # normalize possible NULLs from DB
         xp = int(row.get("xp") or 0)
-        lvl = row.get("level")
-        try:
-            lvl = int(lvl) if lvl is not None else None
-        except Exception:
-            lvl = None
-        calc_lvl = calc_level(xp)
-        if not lvl or lvl < 1:
-            lvl = calc_lvl
-        # if DB stored wrong level - fix silently
-        if lvl != calc_lvl:
-            lvl = calc_lvl
+        lvl = calc_level(xp)
         row["xp"] = xp
-        row["level"] = lvl
-        # best-effort persist fixes
-        try:
-            await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
-        except Exception:
-            pass
+        row["level"] = lvl  # always computed (even if column doesn't exist)
+        # normalize missing numeric fields
+        if row.get("rub_balance") is None:
+            row["rub_balance"] = 0
+        if row.get("stars_balance") is None:
+            row["stars_balance"] = 0
         return row
-    # ensure row exists
+
+    # ensure row exists (best-effort)
     try:
-        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
+        await sb_upsert(T_BAL, {"user_id": int(uid), "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
     except Exception:
         pass
-    return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
+    return {"user_id": int(uid), "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
 
 async def set_xp_level(uid: int, xp: int):
     xp = int(max(0, xp))
-    lvl = calc_level(xp)
-    await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
-    return xp, lvl
+    # store only xp (schema-safe). level is computed.
+    await balances_update(int(uid), {"xp": xp})
+    return xp, calc_level(xp)
 
 async def add_xp(uid: int, amount: int):
-    bal = await get_balance(uid)
+    bal = await get_balance(int(uid))
     cur = int(bal.get("xp") or 0)
-    return await set_xp_level(uid, cur + int(amount))
+    return await set_xp_level(int(uid), cur + int(amount))
 
 async def add_rub(uid: int, amount: float):
-    bal = await get_balance(uid)
+    bal = await get_balance(int(uid))
     new_val = float(bal.get("rub_balance") or 0) + float(amount)
-    await balances_update(uid, {"rub_balance": new_val, "updated_at": _now().isoformat()})
+    await balances_update(int(uid), {"rub_balance": new_val})
     return new_val
 
 async def sub_rub(uid: int, amount: float) -> bool:
-    bal = await get_balance(uid)
+    bal = await get_balance(int(uid))
     cur = float(bal.get("rub_balance") or 0)
     if cur < float(amount):
         return False
-    await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
+    await balances_update(int(uid), {"rub_balance": cur - float(amount)})
     return True
-
 # -------------------------
 # stats
 # -------------------------
@@ -959,7 +915,7 @@ async def referrals_summary(uid: int):
 # users
 # -------------------------
 async def ensure_user(user: dict, referrer_id: int | None = None):
-    uid = int(user.get("id") or user.get("user_id") or user.get("tg_user_id"))
+    uid = int(user["id"])
 
     # узнаём новый ли пользователь
     existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
@@ -986,13 +942,7 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         await ensure_referral_event(uid, referrer_id)
 
     u = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-    row = (u.data or [upd])[0] or {}
-    # normalize to tg-style keys
-    if "id" not in row:
-        row["id"] = uid
-    if "user_id" not in row:
-        row["user_id"] = uid
-    return row
+    return (u.data or [upd])[0]
 
 # -------------------------
 # limits (ya/gm cooldown)
@@ -1085,91 +1035,6 @@ async def set_task_ban(uid: int, days: int = 3):
         on_conflict="user_id,limit_key"
     )
     return until
-
-# Global / feature bans (admin)
-GLOBAL_BAN_KEY = "global_ban_until"      # blocks any paid actions
-TBANK_BAN_KEY = "tbank_ban_until"        # blocks T-Bank topups
-WITHDRAW_BAN_KEY = "withdraw_ban_until"  # blocks withdrawals (in addition to weekend rule)
-
-async def get_limit_until(uid: int, key: str):
-    """Return datetime until limit active, or None."""
-    try:
-        r = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)}, limit=1)
-        if not r.data:
-            return None
-        row = r.data[0] or {}
-        until = _parse_dt(row.get("last_at"))
-        if not until:
-            return None
-        if until <= _now():
-            # cleanup expired
-            try:
-                await sb_delete(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)})
-            except Exception:
-                pass
-            return None
-        return until
-    except Exception:
-        return None
-
-async def set_limit_until(uid: int, key: str, seconds: int):
-    until = _now() + timedelta(seconds=int(max(0, seconds)))
-    await sb_upsert(
-        T_LIMITS,
-        {"user_id": int(uid), "limit_key": str(key), "last_at": until.isoformat()},
-        on_conflict="user_id,limit_key",
-    )
-    return until
-
-async def clear_limit(uid: int, key: str):
-    try:
-        await sb_delete(T_LIMITS, {"user_id": int(uid), "limit_key": str(key)})
-    except Exception:
-        pass
-
-async def get_global_ban_until(uid: int):
-    return await get_limit_until(uid, GLOBAL_BAN_KEY)
-
-async def get_tbank_ban_until(uid: int):
-    return await get_limit_until(uid, TBANK_BAN_KEY)
-
-async def get_withdraw_ban_until(uid: int):
-    return await get_limit_until(uid, WITHDRAW_BAN_KEY)
-
-# -------------------------
-# T-Bank topup cooldown (once per 24h after successful topup)
-# -------------------------
-TBANK_COOLDOWN_KEY = "tbank_topup_until"
-TBANK_COOLDOWN_SEC = int(os.getenv("TBANK_COOLDOWN_SEC", str(24 * 3600)).strip())
-
-async def get_tbank_cooldown_until(uid: int):
-    """Returns datetime until user is blocked from creating new T-Bank topup requests, or None."""
-    try:
-        r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY}, limit=1)
-        if not r.data:
-            return None
-        until = _parse_dt(r.data[0].get("last_at"))
-        if not until:
-            return None
-        if until <= _now():
-            try:
-                await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY})
-            except Exception:
-                pass
-            return None
-        return until
-    except Exception:
-        return None
-
-async def set_tbank_cooldown(uid: int, seconds: int = TBANK_COOLDOWN_SEC):
-    until = _now() + timedelta(seconds=int(seconds))
-    await sb_upsert(
-        T_LIMITS,
-        {"user_id": uid, "limit_key": TBANK_COOLDOWN_KEY, "last_at": until.isoformat()},
-        on_conflict="user_id,limit_key"
-    )
-    return until
-
 
 async def touch_task_click(uid: int, task_id: str):
     key = CLICK_PREFIX + str(task_id)
@@ -1282,7 +1147,6 @@ async def require_init(req: web.Request):
     # 1) Try Telegram WebApp initData
     init_data = (
         (req.headers.get("X-Tg-Init-Data") or "")
-        or (req.headers.get("X-Tg-InitData") or "")
         or (req.headers.get("X-Telegram-Init-Data") or "")
         or (req.headers.get("X-Tg-Initdata") or "")
         or (req.headers.get("X-Init-Data") or "")
@@ -1292,28 +1156,11 @@ async def require_init(req: web.Request):
     ).strip()
 
     if init_data:
-        parsed = verify_init_data(init_data, BOT_TOKEN or "")
-        if parsed and isinstance(parsed.get("user"), dict):
+        ok, parsed = verify_init_data(init_data, BOT_TOKEN or "")
+        if ok and parsed and isinstance(parsed.get("user"), dict):
             tg_user = parsed["user"]
             user = await ensure_user(tg_user)
-            # merge TG fields (ensure_user returns DB row)
-            merged = {**user}
-            merged.setdefault("id", int(tg_user.get("id")))
-            merged.setdefault("user_id", int(tg_user.get("id")))
-            merged.setdefault("username", tg_user.get("username"))
-            merged.setdefault("first_name", tg_user.get("first_name"))
-            merged.setdefault("last_name", tg_user.get("last_name"))
-            merged.setdefault("photo_url", tg_user.get("photo_url"))
-
-            # global ban checks
-            uid = int(merged.get("id") or merged.get("user_id") or 0)
-            if merged.get("is_banned"):
-                raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": "Аккаунт заблокирован"}), content_type="application/json")
-            gban = await get_global_ban_until(uid)
-            if gban:
-                raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
-
-            return parsed, merged
+            return parsed, user
 
     # 2) Fallback: session token (for Telegram Desktop, where initData can be missing)
     token = _extract_session_token(req)
@@ -1321,21 +1168,13 @@ async def require_init(req: web.Request):
     if uid:
         # Make sure minimal rows exist
         await sb_upsert(T_USERS, {"user_id": uid}, on_conflict="user_id")
-        await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
+        await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
 
         rows = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-        u = (rows.data[0] if getattr(rows, "data", None) else None) or {"user_id": uid}
+        u = rows[0] if rows else {"user_id": uid}
         # normalize: downstream expects tg-style user dict with key 'id' == telegram user_id
-        user = {**u, "id": int(u.get("user_id") or uid), "user_id": int(u.get("user_id") or uid)}
+        user = {**u, "id": int(u.get("user_id") or uid)}
         parsed = {"user": {"id": int(u.get("user_id") or uid)}}
-
-        # global ban checks
-        if user.get("is_banned"):
-            raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": "Аккаунт заблокирован"}), content_type="application/json")
-        gban = await get_global_ban_until(int(user.get("id") or uid))
-        if gban:
-            raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
-
         return parsed, user
 
     raise web.HTTPUnauthorized(text="No initData/session")
@@ -1378,10 +1217,10 @@ async def require_init_optional(req: web.Request):
 async def api_sync(req: web.Request):
     _, user = await require_init_optional(req)
     if not user:
-        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balances": None})
+        return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balance": None})
     body = await safe_json(req)
 
-    uid = int(user.get("id") or user.get("user_id") or 0)
+    uid = int(user["id"])
     device_hash = str(body.get("device_hash") or "").strip()
     device_id = str(body.get("device_id") or "").strip()
     ua = req.headers.get("User-Agent", "")
@@ -1621,9 +1460,8 @@ async def api_task_click(req: web.Request):
     task_id = str(body.get("task_id") or "").strip()
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
-    task_id_db = cast_id(task_id)
 
-    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
+    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
 
@@ -1641,7 +1479,7 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=10, spam_strikes=12, block_sec=120)
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=10, block_sec=600)
     body = await safe_json(req)
 
     banned_until = await get_task_ban_until(uid)
@@ -1655,9 +1493,7 @@ async def api_task_submit(req: web.Request):
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
 
-    task_id_db = cast_id(task_id)
-
-    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
+    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
     task = t.data[0]
@@ -1679,7 +1515,7 @@ async def api_task_submit(req: web.Request):
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
     # duplicate check
-    dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, limit=1)
+    dup = await sb_select(T_COMP, {"task_id": task_id, "user_id": uid}, limit=1)
     if dup.data:
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
@@ -1715,12 +1551,12 @@ async def api_task_submit(req: web.Request):
                 upd = {"qty_left": new_left}
                 if new_left <= 0:
                     upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
         except Exception:
             pass
 
         await sb_insert(T_COMP, {
-            "task_id": task_id_db,
+            "task_id": task_id,
             "user_id": uid,
             "status": "paid",
             "proof_text": "AUTO_TG_OK",
@@ -1728,15 +1564,14 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        bal = await get_balance(uid)
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": bal})
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
     await sb_insert(T_COMP, {
-        "task_id": task_id_db,
+        "task_id": task_id,
         "user_id": uid,
         "status": "pending",
         "proof_text": proof_text,
@@ -1760,22 +1595,6 @@ async def api_task_submit(req: web.Request):
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-
-    # Ban from withdrawals (admin)
-    wb = await get_withdraw_ban_until(uid)
-    if wb:
-        return web.json_response({"ok": False, "error": f"Выводы временно заблокированы до {wb.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
-
-    # Withdrawals only on Saturday/Sunday (Moscow time). Admins can bypass.
-    try:
-        if int(uid) not in ADMIN_IDS:
-            msk = timezone(timedelta(hours=3))
-            wd = datetime.now(msk).weekday()  # Mon=0 ... Sun=6
-            if wd not in (5, 6):
-                return web.json_response({"ok": False, "error": "Заявки на вывод принимаются только в субботу и воскресенье."}, status=400)
-    except Exception:
-        pass
-
     body = await safe_json(req)
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
@@ -1816,18 +1635,6 @@ async def api_withdraw_list(req: web.Request):
 async def api_tbank_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-
-    # Ban from T-Bank topups (admin)
-    b = await get_tbank_ban_until(uid)
-    if b:
-        return web.json_response({"ok": False, "error": f"Пополнение T-Bank временно заблокировано до {b.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
-
-    cool = await get_tbank_cooldown_until(uid)
-    if cool and int(uid) not in ADMIN_IDS:
-        left = int((cool - _now()).total_seconds())
-        h = left // 3600
-        m = (left % 3600) // 60
-        return web.json_response({"ok": False, "error": f"Пополнение через Т-Банк доступно раз в сутки. Повтори через {h}ч {m}м."}, status=429)
     rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
 
@@ -1869,8 +1676,8 @@ async def api_stars_link(req: web.Request):
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
     if amount is None:
         return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
-    if amount < MIN_STARS_TOPUP_RUB:
-        return web.json_response({"ok": False, "error": f"Минимум {MIN_STARS_TOPUP_RUB:.0f}₽"}, status=400)
+    if amount < MIN_TOPUP_RUB:
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
 
     stars = int(round(float(amount) / STARS_RUB_RATE))
     if stars <= 0:
@@ -1942,8 +1749,8 @@ async def api_cryptobot_create(req: web.Request):
     body = await safe_json(req)
 
     amount = float(body.get("amount_rub") or 0)
-    if amount < MIN_STARS_TOPUP_RUB:
-        return web.json_response({"ok": False, "error": f"Минимум {MIN_STARS_TOPUP_RUB:.0f}₽"}, status=400)
+    if amount < MIN_TOPUP_RUB:
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
 
     usdt = round(amount / CRYPTO_RUB_PER_USDT, 2)
     inv = await crypto.create_invoice(asset="USDT", amount=usdt, description=f"Topup {amount} RUB for {uid}")
@@ -2013,58 +1820,20 @@ async def api_ops_list(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
 
-    pays = await sb_select(T_PAY, {"user_id": uid}, order="created_at", desc=True, limit=300)
-    wds = await sb_select(T_WD, {"user_id": uid}, order="created_at", desc=True, limit=300)
-    comps = await sb_select(T_COMP, {"user_id": uid, "status": "paid"}, order="moderated_at", desc=True, limit=300)
-    refs = await sb_select(T_REF, {"referrer_id": uid, "status": "paid"}, order="paid_at", desc=True, limit=300)
+    pays = await sb_select(T_PAY, {"user_id": uid}, order="created_at", desc=True, limit=200)
+    wds = await sb_select(T_WD, {"user_id": uid}, order="created_at", desc=True, limit=200)
 
-    # preload tasks for completions
-    task_ids = list({c.get("task_id") for c in (comps.data or []) if c.get("task_id") is not None})
-    tasks_map: dict[str, dict] = {}
-    if task_ids:
-        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,type,target_url", limit=500)
-        for t in (tr.data or []):
-            tasks_map[str(t.get("id"))] = t
-
-    ops: list[dict] = []
-
-    # Topups + admin credits live in payments table
+    ops = []
     for p in (pays.data or []):
-        provider = str(p.get("provider") or "")
-        status = str(p.get("status") or "")
-        amount = float(p.get("amount_rub") or 0)
-        meta = p.get("meta") or {}
-        if provider in ("tbank", "stars", "cryptobot"):
-            ops.append({
-                "kind": "topup",
-                "provider": provider,
-                "status": status,
-                "amount_rub": amount,
-                "created_at": p.get("created_at"),
-                "id": p.get("id"),
-            })
-        elif provider == "admin_credit":
-            ops.append({
-                "kind": "earning",
-                "source": "admin",
-                "status": status,
-                "amount_rub": amount,
-                "title": str(meta.get("reason") or "Ручное начисление"),
-                "created_at": p.get("created_at"),
-                "id": p.get("id"),
-            })
-        else:
-            # unknown payment provider -> treat as topup
-            ops.append({
-                "kind": "topup",
-                "provider": provider or "payment",
-                "status": status,
-                "amount_rub": amount,
-                "created_at": p.get("created_at"),
-                "id": p.get("id"),
-            })
+        ops.append({
+            "kind": "payment",
+            "provider": p.get("provider"),
+            "status": p.get("status"),
+            "amount_rub": float(p.get("amount_rub") or 0),
+            "created_at": p.get("created_at"),
+            "id": p.get("id"),
+        })
 
-    # Withdrawals
     for w in (wds.data or []):
         ops.append({
             "kind": "withdrawal",
@@ -2075,39 +1844,9 @@ async def api_ops_list(req: web.Request):
             "id": w.get("id"),
         })
 
-    # Earnings from tasks (paid completions)
-    for c in (comps.data or []):
-        tid = str(c.get("task_id"))
-        t = tasks_map.get(tid, {})
-        reward = float(t.get("reward_rub") or 0)
-        title = str(t.get("title") or "Выполнение задания")
-        ops.append({
-            "kind": "earning",
-            "source": "task",
-            "status": "paid",
-            "amount_rub": reward,
-            "title": title,
-            "task_id": c.get("task_id"),
-            "created_at": c.get("moderated_at") or c.get("created_at"),
-            "id": c.get("id"),
-        })
-
-    # Referral bonuses
-    for r in (refs.data or []):
-        bonus = float(r.get("bonus_rub") or REF_BONUS_RUB)
-        ops.append({
-            "kind": "earning",
-            "source": "referral",
-            "status": "paid",
-            "amount_rub": bonus,
-            "title": "Реферальный бонус",
-            "referred_id": r.get("referred_id"),
-            "created_at": r.get("paid_at") or r.get("created_at"),
-            "id": r.get("id"),
-        })
-
     ops.sort(key=lambda x: _dt_key(x.get("created_at")), reverse=True)
     return web.json_response({"ok": True, "operations": ops})
+
 # =========================================================
 # ADMIN API
 # =========================================================
@@ -2134,183 +1873,6 @@ async def api_admin_summary(req: web.Request):
             "tasks": len(tasks_active),
         }
     })
-
-async def api_admin_balance_credit(req: web.Request):
-    admin = await require_admin(req)
-    # only MAIN admin can credit balances
-    if int(MAIN_ADMIN_ID or 0) and int(admin["id"]) != int(MAIN_ADMIN_ID or 0):
-        raise web.HTTPForbidden(text="Only main admin")
-
-    body = await safe_json(req)
-    user_id = int(body.get("user_id") or body.get("uid") or 0)
-
-    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
-    if amount is None or amount <= 0:
-        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
-    reason = str(body.get("reason") or body.get("comment") or "Начисление админом").strip()
-
-    if user_id <= 0:
-        return web.json_response({"ok": False, "error": "Некорректный user_id"}, status=400)
-
-    await add_rub(user_id, float(amount))
-    try:
-        await sb_insert(T_PAY, {
-            "user_id": user_id,
-            "provider": "admin_credit",
-            "status": "paid",
-            "amount_rub": float(amount),
-            "provider_ref": f"admin_credit:{int(admin['id'])}:{int(_now().timestamp())}",
-            "meta": {"reason": reason, "admin_id": int(admin["id"])}
-        })
-    except Exception:
-        pass
-
-    try:
-        await notify_user(user_id, f"💸 Начисление: +{float(amount):.2f}₽\nПричина: {reason}")
-    except Exception:
-        pass
-
-    return web.json_response({"ok": True})
-
-
-async def api_admin_user_punish(req: web.Request):
-    """
-    Admin sanctions:
-      - temporary ban (global/tasks/tbank/withdraw)
-      - permanent ban via users.is_banned
-      - fine / manual balance adjustment (rub only)
-    Body:
-      { user_id, action: "ban"|"unban"|"permaban"|"unpermaban"|"fine",
-        kind: "global"|"tasks"|"tbank"|"withdraw",
-        days, hours, seconds,
-        amount_rub, reason }
-    """
-    admin = await require_admin(req)
-    body = await safe_json(req)
-
-    try:
-        uid = int(body.get("user_id") or body.get("uid") or 0)
-    except Exception:
-        uid = 0
-    if uid <= 0:
-        return web.json_response({"ok": False, "error": "Некорректный user_id"}, status=400)
-
-    action = str(body.get("action") or "").strip().lower()
-    if not action:
-        # backward-compat: if "ban_days" provided assume ban
-        action = "ban" if body.get("days") or body.get("ban_days") else "fine"
-
-    kind = str(body.get("kind") or "global").strip().lower()
-    if kind not in ("global", "tasks", "tbank", "withdraw"):
-        kind = "global"
-
-    reason = str(body.get("reason") or "").strip()
-    admin_id = int(admin.get("id") or 0)
-
-    # Permanent ban/unban (only main admin)
-    if action in ("permaban", "ban_perm", "perma"):
-        if int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
-            return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
-        try:
-            await sb_update(T_USERS, {"user_id": uid}, {"is_banned": True})
-        except Exception:
-            # row might not exist yet
-            await sb_upsert(T_USERS, {"user_id": uid, "is_banned": True}, on_conflict="user_id")
-        await notify_user(uid, f"🚫 Аккаунт заблокирован администратором.\n{('Причина: ' + reason) if reason else ''}".strip())
-        return web.json_response({"ok": True, "action": "permaban", "user_id": uid})
-
-    if action in ("unpermaban", "unban_perm", "unperma"):
-        if int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
-            return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
-        try:
-            await sb_update(T_USERS, {"user_id": uid}, {"is_banned": False})
-        except Exception:
-            await sb_upsert(T_USERS, {"user_id": uid, "is_banned": False}, on_conflict="user_id")
-        await notify_user(uid, "✅ Блокировка аккаунта снята администратором.")
-        return web.json_response({"ok": True, "action": "unpermaban", "user_id": uid})
-
-    # Temporary bans
-    if action in ("ban", "tempban"):
-        # only main admin can set GLOBAL ban longer than 30 days
-        days = body.get("days") if body.get("days") is not None else body.get("ban_days")
-        hours = body.get("hours")
-        seconds = body.get("seconds")
-
-        try:
-            days = int(days or 0)
-        except Exception:
-            days = 0
-        try:
-            hours = int(hours or 0)
-        except Exception:
-            hours = 0
-        try:
-            seconds = int(seconds or 0)
-        except Exception:
-            seconds = 0
-
-        total_sec = max(0, seconds + hours * 3600 + days * 86400)
-        if total_sec <= 0:
-            total_sec = 86400  # default 1 day
-
-        if kind == "global":
-            if days >= 30 and int(MAIN_ADMIN_ID or 0) and admin_id != int(MAIN_ADMIN_ID or 0):
-                return web.json_response({"ok": False, "error": "Длительный глобальный бан — только главный админ"}, status=403)
-            until = await set_limit_until(uid, GLOBAL_BAN_KEY, total_sec)
-        elif kind == "tasks":
-            until = await set_task_ban(uid, max(1, int(total_sec // 86400) or 1))
-        elif kind == "tbank":
-            until = await set_limit_until(uid, TBANK_BAN_KEY, total_sec)
-        else:  # withdraw
-            until = await set_limit_until(uid, WITHDRAW_BAN_KEY, total_sec)
-
-        await notify_user(uid, f"⛔ Временная блокировка ({kind}) до {until.strftime('%Y-%m-%d %H:%M')} UTC.\n{('Причина: ' + reason) if reason else ''}".strip())
-        return web.json_response({"ok": True, "action": "ban", "kind": kind, "user_id": uid, "until": until.isoformat()})
-
-    if action in ("unban", "clearban"):
-        if kind == "tasks":
-            await clear_limit(uid, TASK_BAN_KEY)
-        elif kind == "tbank":
-            await clear_limit(uid, TBANK_BAN_KEY)
-        elif kind == "withdraw":
-            await clear_limit(uid, WITHDRAW_BAN_KEY)
-        else:
-            await clear_limit(uid, GLOBAL_BAN_KEY)
-
-        await notify_user(uid, f"✅ Бан ({kind}) снят администратором.")
-        return web.json_response({"ok": True, "action": "unban", "kind": kind, "user_id": uid})
-
-    # Fine / manual adjustment (rub only)
-    if action in ("fine", "adjust", "balance"):
-        try:
-            amount = float(body.get("amount_rub") if body.get("amount_rub") is not None else body.get("rub") or body.get("amount") or 0)
-        except Exception:
-            amount = 0.0
-        if amount == 0:
-            return web.json_response({"ok": False, "error": "Укажи сумму (amount_rub)"}, status=400)
-
-        # amount can be negative (fine) or positive (manual credit)
-        new_rub = await add_rub(uid, float(amount))
-
-        # record in payments so it appears in history
-        try:
-            await sb_insert(T_PAY, {
-                "user_id": uid,
-                "provider": "admin",
-                "status": "paid",
-                "amount_rub": float(amount),
-                "provider_ref": f"admin:{admin_id}:{int(_now().timestamp())}",
-                "meta": {"reason": reason, "by": admin_id, "kind": "fine" if amount < 0 else "credit"}
-            })
-        except Exception:
-            pass
-
-        txt = "💸 Штраф" if amount < 0 else "➕ Начисление"
-        await notify_user(uid, f"{txt}: {amount:+.0f} ₽\nБаланс: {new_rub:.0f} ₽\n{('Причина: ' + reason) if reason else ''}".strip())
-
-        return web.json_response({"ok": True, "action": "fine", "user_id": uid, "amount_rub": float(amount), "rub_balance": new_rub})
-
-    return web.json_response({"ok": False, "error": "Неизвестное действие"}, status=400)
 
 async def api_admin_proof_list(req: web.Request):
     await require_admin(req)
@@ -2385,7 +1947,7 @@ async def api_admin_proof_decision(req: web.Request):
     task_id = proof.get("task_id")
     user_id = int(proof.get("user_id") or 0)
 
-    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
+    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
     task = (t.data or [{}])[0]
     reward = float(task.get("reward_rub") or 0)
 
@@ -2425,7 +1987,7 @@ async def api_admin_proof_decision(req: web.Request):
                 upd = {"qty_left": new_left}
                 if new_left <= 0:
                     upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
         except Exception:
             pass
 
@@ -2538,12 +2100,6 @@ async def api_admin_tbank_decision(req: web.Request):
             await add_xp(uid, xp_add)
 
         await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
-        try:
-            until = await set_tbank_cooldown(uid)
-            # optional notify about cooldown
-            await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
-        except Exception:
-            pass
     else:
         await sb_update(T_PAY, {"id": payment_id}, {"status": "rejected"})
         await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
@@ -2720,7 +2276,7 @@ def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
         return
 
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Telegram-Init-Data, X-Session-Token, Authorization"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Session-Token, X-Telegram-Init-Data"
     resp.headers["Access-Control-Max-Age"] = "86400"
 
 @web.middleware
@@ -2737,7 +2293,7 @@ async def cors_middleware(req: web.Request, handler):
 # aiohttp app + webhook + static Mini App
 # =========================================================
 async def health(req: web.Request):
-    return web.json_response({'ok': True, 'build': BUILD_TAG, 'app_build': APP_BUILD})
+    return web.json_response({"ok": True, "build": APP_BUILD})
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)
@@ -2754,7 +2310,6 @@ def make_app():
 
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
-    app.router.add_get("/api/version", health)
     # static miniapp at /app/
     base_dir = Path(__file__).resolve().parent
 
@@ -2811,8 +2366,6 @@ def make_app():
 
     # admin
     app.router.add_post("/api/admin/summary", api_admin_summary)
-    app.router.add_post("/api/admin/balance/credit", api_admin_balance_credit)
-    app.router.add_post("/api/admin/user/punish", api_admin_user_punish)
     app.router.add_post("/api/admin/proof/list", api_admin_proof_list)
     app.router.add_post("/api/admin/proof/decision", api_admin_proof_decision)
     app.router.add_post("/api/admin/withdraw/list", api_admin_withdraw_list)
@@ -2915,7 +2468,7 @@ async def api_admin_tg_audit(req: web.Request):
 
         if upd:
             try:
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
                 changed += 1
                 if desired_check_type == "auto":
                     set_auto += 1
