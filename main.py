@@ -1728,7 +1728,8 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
+        bal = await get_balance(uid)
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": bal})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
@@ -2568,10 +2569,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
     if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2617,7 +2618,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
