@@ -830,7 +830,7 @@ async def get_balance(uid: int):
         row["level"] = lvl
         # best-effort persist fixes
         try:
-            await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
+            await balances_update(uid, {"xp": xp, "updated_at": _now().isoformat()})
         except Exception:
             pass
         return row
@@ -844,7 +844,7 @@ async def get_balance(uid: int):
 async def set_xp_level(uid: int, xp: int):
     xp = int(max(0, xp))
     lvl = calc_level(xp)
-    await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
+    await balances_update(uid, {"xp": xp, "updated_at": _now().isoformat()})
     return xp, lvl
 
 async def add_xp(uid: int, amount: int):
@@ -1728,9 +1728,7 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        bal = await get_balance(uid)
-
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": bal})
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": await get_balance(uid)})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
