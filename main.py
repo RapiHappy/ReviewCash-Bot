@@ -19,7 +19,7 @@ APP_BUILD = (
 )
 from urllib.parse import parse_qsl
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit, urlencode
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
@@ -314,7 +314,7 @@ async def setup_menu_button(bot: Bot):
         await bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(
                 text="ReviewCash",
-                web_app=WebAppInfo(url=MINIAPP_URL),
+                web_app=WebAppInfo(url=get_miniapp_url()),
             )
         )
         log.info("[WEBAPP] MenuButton WebApp set.")
@@ -325,7 +325,7 @@ async def setup_menu_button(bot: Bot):
 @dp.message(F.text == "/app")
 async def open_app_cmd(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=get_miniapp_url()))
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
@@ -428,14 +428,28 @@ def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
 # MiniApp URL (cache-busted)
 # -------------------------
 def get_miniapp_url() -> str:
+    """Return MiniApp URL with build cache-busting (?v=APP_BUILD). Always overrides any existing v param."""
     url = (MINIAPP_URL or "").strip()
     if not url:
         base = (SERVER_BASE_URL or BASE_URL or "").strip()
+        url = (base.rstrip("/") + "/app/") if base else "/app/"
+
+    # If relative path, try to make absolute using SERVER_BASE_URL/BASE_URL
+    if url.startswith("/"):
+        base = (SERVER_BASE_URL or BASE_URL or "").strip()
         if base:
-            url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
-    if url and "v=" not in url:
-        url = url + ("&" if "?" in url else "?") + f"v={APP_BUILD}"
-    return url or "/app/"
+            url = base.rstrip("/") + url
+
+    # Force-set v param (Telegram WebView cache bust)
+    try:
+        sp = urlsplit(url)
+        qs = dict(parse_qsl(sp.query, keep_blank_values=True))
+        qs["v"] = APP_BUILD
+        url = urlunsplit((sp.scheme, sp.netloc, sp.path, urlencode(qs), sp.fragment))
+    except Exception:
+        if "v=" not in url:
+            url = url + ("&" if "?" in url else "?") + f"v={APP_BUILD}"
+    return url
 
 # -------------------------
 # Broadcast: notify all users about new tasks
@@ -546,14 +560,6 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
-        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
-        try:
-            for _t in (tasks or []):
-                if isinstance(_t, dict) and _t.get("instructions"):
-                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
-        except Exception:
-            pass
-
         return web.json_response({
             "ok": True,
             "valid": False,
@@ -830,6 +836,18 @@ async def balances_update(uid: int, updates: dict):
     u = {k: v for k, v in dict(updates).items() if k not in _BAL_MISSING_COLS}
     if not u:
         return
+
+    # Normalize numeric types (many schemas store balances as integers)
+    for k in list(u.keys()):
+        try:
+            if u[k] is None:
+                continue
+            if k in ("xp", "level"):
+                u[k] = int(u[k])
+            elif k.endswith("_balance") or k in ("rub_balance", "stars_balance"):
+                u[k] = int(round(float(u[k])))
+        except Exception:
+            pass
     try:
         await sb_update(T_BAL, {"user_id": int(uid)}, u)
         return
@@ -1014,7 +1032,10 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         await ensure_referral_event(uid, referrer_id)
 
     u = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-    return (u.data or [upd])[0]
+    out = (u.data or [upd])[0] or {}
+    # Normalize: downstream expects Telegram-style key 'id'
+    out["id"] = int(out.get("user_id") or uid)
+    return out
 
 # -------------------------
 # limits (ya/gm cooldown)
@@ -1242,8 +1263,8 @@ async def require_init(req: web.Request):
         await sb_upsert(T_USERS, {"user_id": uid}, on_conflict="user_id")
         await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
 
-        rows = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-        u = rows[0] if rows else {"user_id": uid}
+        r = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+        u = (r.data or [])[0] if (r and getattr(r, "data", None)) else {"user_id": uid}
         # normalize: downstream expects tg-style user dict with key 'id' == telegram user_id
         user = {**u, "id": int(u.get("user_id") or uid)}
         parsed = {"user": {"id": int(u.get("user_id") or uid)}}
@@ -2198,14 +2219,7 @@ async def cmd_start(message: Message):
 
     kb = InlineKeyboardBuilder()
 
-    miniapp_url = MINIAPP_URL
-    if not miniapp_url:
-        base = SERVER_BASE_URL or BASE_URL
-        if base:
-            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
-
-    if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
+    miniapp_url = get_miniapp_url()
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2383,7 +2397,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[no_cache_mw, cors_middleware], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
@@ -2571,4 +2585,3 @@ app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
     web.run_app(app, host="0.0.0.0", port=PORT)
-WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "change-me-session-secret")
