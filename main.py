@@ -7,6 +7,7 @@ import base64
 import time
 import asyncio
 import logging
+import html
 from datetime import datetime, timezone, date, timedelta
 
 # Build/version string used for cache-busting in Telegram WebView
@@ -146,6 +147,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
+log.warning("[BUILD] rc_backend_notifyfix_20260305")
 
 # -------------------------
 # ENV
@@ -422,6 +424,76 @@ def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
         return "bot"
     return "chat"
+# -------------------------
+# MiniApp URL (cache-busted)
+# -------------------------
+def get_miniapp_url() -> str:
+    url = (MINIAPP_URL or "").strip()
+    if not url:
+        base = (SERVER_BASE_URL or BASE_URL or "").strip()
+        if base:
+            url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
+    if url and "v=" not in url:
+        url = url + ("&" if "?" in url else "?") + f"v={APP_BUILD}"
+    return url or "/app/"
+
+# -------------------------
+# Broadcast: notify all users about new tasks
+# -------------------------
+async def _iter_user_ids(batch: int = 1000):
+    """Yield user_id from users table (best-effort pagination)."""
+    start = 0
+    while True:
+        def _f():
+            q = sb.table(T_USERS).select("user_id").order("user_id", desc=False)
+            # postgrest supports range; if missing, fallback to limit
+            if hasattr(q, "range"):
+                q = q.range(start, start + batch - 1)
+            else:
+                q = q.limit(min(batch, 5000))
+            return q.execute()
+        r = await sb_exec(_f)
+        rows = (r.data or [])
+        if not rows:
+            break
+        for row in rows:
+            try:
+                yield int(row.get("user_id"))
+            except Exception:
+                continue
+        if len(rows) < batch:
+            break
+        start += batch
+
+async def broadcast_new_task(task: dict):
+    """Send one short message about a new task to all users (except muted)."""
+    try:
+        title = str(task.get("title") or task.get("platform") or "Новое задание").strip()
+        reward = task.get("reward_rub")
+        if reward is None:
+            reward = task.get("reward") or 0
+        try:
+            reward_i = int(float(reward))
+        except Exception:
+            reward_i = 0
+
+        text = f"🆕 <b>Новое задание</b>\n\n<b>{html.escape(title)}</b>\n💰 {reward_i} ₽"
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Открыть", web_app=WebAppInfo(url=get_miniapp_url()))
+        markup = kb.as_markup()
+
+        async for uid in _iter_user_ids():
+            # respect mute
+            if await is_notify_muted(uid):
+                continue
+            try:
+                await bot.send_message(uid, text, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+            except Exception:
+                pass
+            await asyncio.sleep(0.03)  # anti-flood (best effort)
+    except Exception as e:
+        log.warning("broadcast_new_task failed: %s", e)
+
 
 async def tg_calc_check_type(tg_chat: str, target_url: str) -> tuple[str, str, str]:
     """Return (check_type, tg_kind, reason)."""
@@ -1156,8 +1228,8 @@ async def require_init(req: web.Request):
     ).strip()
 
     if init_data:
-        ok, parsed = verify_init_data(init_data, BOT_TOKEN or "")
-        if ok and parsed and isinstance(parsed.get("user"), dict):
+        parsed = verify_init_data(init_data, BOT_TOKEN or "")
+        if parsed and isinstance(parsed.get("user"), dict):
             tg_user = parsed["user"]
             user = await ensure_user(tg_user)
             return parsed, user
@@ -1441,6 +1513,11 @@ async def api_task_create(req: web.Request):
 
     await stats_add("revenue_rub", total_cost)
     await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}")
+
+    try:
+        asyncio.create_task(broadcast_new_task(task))
+    except Exception:
+        pass
 
     return web.json_response({"ok": True, "task": task})
 
