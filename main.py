@@ -1728,7 +1728,9 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
+        bal = await get_balance(uid)
+
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": bal})
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
