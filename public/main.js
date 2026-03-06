@@ -714,6 +714,9 @@ function tgAlert(msg, kind = "info", title = "") {
       const newTasks = Array.isArray(data.tasks) ? data.tasks : [];
 
       migrateCompletedAnonToUser();
+      if (Array.isArray(data.reopen_task_ids)) {
+        data.reopen_task_ids.forEach(id => unmarkTaskCompleted(id));
+      }
 
       const newSig = tasksSignature(newTasks);
       const changed = newSig !== state._tasksSig;
@@ -780,6 +783,9 @@ async function syncAll() {
 
     // If some tasks were completed before user_id was known, migrate from anon bucket
     migrateCompletedAnonToUser();
+    if (Array.isArray(data.reopen_task_ids)) {
+      data.reopen_task_ids.forEach(id => unmarkTaskCompleted(id));
+    }
     state._tasksSig = tasksSignature(state.tasks);
 
     renderHeader();
@@ -915,6 +921,16 @@ async function syncAll() {
     const set = loadCompletedIds();
     set.add(id);
     saveCompletedIds(set);
+  }
+
+  function unmarkTaskCompleted(taskId) {
+    const id = String(taskId || "");
+    if (!id) return;
+    const set = loadCompletedIds();
+    if (set.has(id)) {
+      set.delete(id);
+      saveCompletedIds(set);
+    }
   }
 
   function isTaskCompleted(taskId) {
@@ -1272,11 +1288,13 @@ if (!list.length) {
   };
 
   async function submitTaskAuto(task) {
+    if (submitTaskAuto._busy) return;
     if (isTaskOwner(task)) {
       tgHaptic("error");
       return tgAlert("Нельзя выполнять своё задание");
     }
     try {
+      submitTaskAuto._busy = true;
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
@@ -1294,6 +1312,8 @@ if (!list.length) {
     } catch (e) {
       tgHaptic("error");
       tgAlert(String(e.message || e));
+    } finally {
+      submitTaskAuto._busy = false;
     }
   }
   async function uploadProof(file, taskId) {
@@ -1306,6 +1326,7 @@ if (!list.length) {
   }
 
   async function submitTaskManual(task) {
+    if (submitTaskManual._busy) return;
     if (isTaskOwner(task)) {
       tgHaptic("error");
       return tgAlert("Нельзя выполнять своё задание");
@@ -1324,6 +1345,7 @@ if (!list.length) {
     }
 
     try {
+      submitTaskManual._busy = true;
       tgHaptic("impact");
 
       // 1) upload image -> get public URL
@@ -1359,6 +1381,8 @@ if (!list.length) {
     } catch (e) {
       tgHaptic("error");
       tgAlert(String(e.message || e));
+    } finally {
+      submitTaskManual._busy = false;
     }
   }
 
@@ -1954,6 +1978,7 @@ if (!list.length) {
       let title = "";
       let sub = "";
       if (kind === "topup") {
+        if (String(op.status || "paid") !== "paid") return;
         title = "Пополнение";
         sub = (op.provider ? String(op.provider).toUpperCase() : "");
       } else if (kind === "earning") {
@@ -2159,7 +2184,15 @@ if (!list.length) {
     box.innerHTML = "";
 
     const res = await apiPost("/api/admin/proof/list", {});
-    const proofs = (res && res.proofs) ? res.proofs : [];
+    let proofs = (res && res.proofs) ? res.proofs : [];
+    const seen = new Set();
+    proofs = proofs.filter(p => {
+      const sig = [p && p.user_id, p && p.task_id, p && p.proof_url, p && p.proof_text].join("|");
+      if (seen.has(sig)) return false;
+      seen.add(sig);
+      return true;
+    });
+
     if (!proofs.length) {
       box.innerHTML = `<div class="card" style="opacity:0.7;">Нет отчётов на проверку</div>`;
       return;
@@ -2171,6 +2204,7 @@ if (!list.length) {
       const proofUrl = p.proof_url ? normalizeUrl(p.proof_url) : "";
       const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
+      const isReview = ["ya", "gm"].includes(String(t.type || "").toLowerCase());
 
       const c = adminCard(`
         <div style="display:flex; justify-content:space-between; gap:10px;">
@@ -2185,22 +2219,28 @@ if (!list.length) {
         </div>
         ${linkHtml}
         ${imgHtml}
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
+        <div style="display:grid; grid-template-columns:${isReview ? '1fr 1fr 1fr' : '1fr 1fr'}; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
+          ${isReview ? '<button class="btn btn-secondary" data-rework="1">🛠 Доработка</button>' : ''}
         </div>
       `);
 
       c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c);
+      const rw = c.querySelector('[data-rework="1"]');
+      if (rw) rw.onclick = async () => {
+        const comment = (prompt("Комментарий к доработке:", "") || "").trim();
+        await decideProof(p.id, false, c, { rework: true, comment });
+      };
       box.appendChild(c);
     });
   }
 
-  async function decideProof(proofId, approved, cardEl) {
+async function decideProof(proofId, approved, cardEl, extra = {}) {
     try {
       tgHaptic("impact");
-      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved });
+      await apiPost("/api/admin/proof/decision", Object.assign({ proof_id: proofId, approved: !!approved }, extra || {}));
       tgHaptic("success");
       if (cardEl) cardEl.remove();
       await checkAdmin();
@@ -2210,7 +2250,7 @@ if (!list.length) {
     }
   }
 
-  async function loadAdminWithdrawals() {
+async function loadAdminWithdrawals() {
     const box = $("admin-withdraw-list");
     if (!box) return;
     box.innerHTML = "";
@@ -2396,46 +2436,11 @@ if (!list.length) {
     });
   }
 
-  
-  async function auditTgTasks() {
-    if (!state.isMainAdmin) {
-      tgAlert("Только главный админ может запускать проверку.", "error", "Админка");
-      return;
-    }
-    const ok = await tgConfirm("Проверить ВСЕ TG-задания и выставить авто/ручную проверку автоматически?");
-    if (!ok) return;
-    try {
-      tgHaptic("impact");
-      const res = await apiPost("/api/admin/task/tg_audit", {});
-      const total = Number(res.total_tg || 0);
-      const changed = Number(res.changed || 0);
-      const a = Number(res.set_auto || 0);
-      const m = Number(res.set_manual || 0);
-      const p = Number(res.problems || 0);
-      tgHaptic("success");
-      tgAlert(`Готово ✅\nTG задач: ${total}\nИзменено: ${changed}\nАвто: ${a}\nРучн.: ${m}${p ? `\nПроблем: ${p}` : ""}`, "success", "TG аудит");
-      await loadAdminTasks();
-    } catch (e) {
-      tgHaptic("error");
-      tgAlert(String(e.message || e), "error", "TG аудит");
-    }
-  }
-
 async function loadAdminTasks() {
     const box = $("admin-task-list");
     if (!box) return;
     box.innerHTML = "";
-    // Tools (visible to all admins; action available only to main admin)
     if (state.isAdmin) {
-      const tools = adminCard(`
-        <div style="display:flex; gap:10px;">
-</div>
-        <div style="font-size:11px; opacity:0.65; margin-top:8px;">Авто/ручная проверка выставится по доступу бота и типу цели. (Запускать может только главный админ)</div>
-      `);
-      const b = tools.querySelector('[data-tg-audit="1"]');
-      if (b) b.onclick = auditTgTasks;
-      box.appendChild(tools);
-
       // User management (ban / fine)
       const um = adminCard(`
         <div style="font-weight:900; margin-bottom:8px;">⚠️ Санкции пользователю</div>
