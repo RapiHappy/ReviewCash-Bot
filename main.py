@@ -859,12 +859,29 @@ async def add_rub(uid: int, amount: float):
     await balances_update(uid, {"rub_balance": new_val, "updated_at": _now().isoformat()})
     return new_val
 
+async def add_stars(uid: int, amount: int | float):
+    bal = await get_balance(uid)
+    cur = int(float(bal.get("stars_balance") or 0))
+    add = int(round(float(amount or 0)))
+    new_val = max(0, cur + add)
+    await balances_update(uid, {"stars_balance": new_val, "updated_at": _now().isoformat()})
+    return new_val
+
 async def sub_rub(uid: int, amount: float) -> bool:
     bal = await get_balance(uid)
     cur = float(bal.get("rub_balance") or 0)
     if cur < float(amount):
         return False
     await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
+    return True
+
+async def sub_stars(uid: int, amount: int | float) -> bool:
+    bal = await get_balance(uid)
+    cur = int(float(bal.get("stars_balance") or 0))
+    sub = int(round(float(amount or 0)))
+    if cur < sub:
+        return False
+    await balances_update(uid, {"stars_balance": cur - sub, "updated_at": _now().isoformat()})
     return True
 
 # -------------------------
@@ -1511,6 +1528,9 @@ async def api_sync(req: web.Request):
         "tasks": tasks,
         "reopen_task_ids": reopen_task_ids,
         "task_ban_until": banned_until.isoformat() if banned_until else None,
+        "config": {
+            "stars_rub_rate": STARS_RUB_RATE,
+        },
     })
 
 # -------------------------
@@ -1596,6 +1616,9 @@ async def api_task_create(req: web.Request):
     tg_chat = str(body.get("tg_chat") or "").strip() or None
     tg_kind = str(body.get("tg_kind") or "").strip() or None
     sub_type = str(body.get("sub_type") or "").strip() or None
+    pay_currency = str(body.get("pay_currency") or "rub").strip().lower()
+    if pay_currency in ("stars", "xtr"):
+        pay_currency = "star"
 
     if ttype not in ("tg", "ya", "gm"):
         raise web.HTTPBadRequest(text="Bad type")
@@ -1656,11 +1679,20 @@ async def api_task_create(req: web.Request):
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
 
-    total_cost = cost_rub
+    total_cost = float(cost_rub)
+    charged_amount = total_cost
+    charged_currency = "rub"
 
-    ok = await sub_rub(uid, total_cost)
-    if not ok:
-        return web.json_response({"ok": False, "error": f"Недостаточно RUB. Нужно {total_cost:.2f}"}, status=400)
+    if pay_currency == "star":
+        charged_currency = "star"
+        charged_amount = max(1, int(round(total_cost / max(STARS_RUB_RATE, 0.000001))))
+        ok = await sub_stars(uid, charged_amount)
+        if not ok:
+            return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {int(charged_amount)}⭐"}, status=400)
+    else:
+        ok = await sub_rub(uid, total_cost)
+        if not ok:
+            return web.json_response({"ok": False, "error": f"Недостаточно RUB. Нужно {total_cost:.2f}"}, status=400)
 
     row = {
         "owner_id": uid,
@@ -1685,13 +1717,20 @@ async def api_task_create(req: web.Request):
     task = (ins.data or [row])[0]
 
     await stats_add("revenue_rub", total_cost)
-    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}")
+    pay_text = f"{int(charged_amount)}⭐" if charged_currency == "star" else f"{charged_amount:.2f}₽"
+    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}\n• Оплата: {pay_text}")
     try:
         asyncio.create_task(broadcast_new_task(task))
     except Exception:
         pass
 
-    return web.json_response({"ok": True, "task": task})
+    return web.json_response({
+        "ok": True,
+        "task": task,
+        "charged_amount": int(charged_amount) if charged_currency == "star" else charged_amount,
+        "charged_currency": charged_currency,
+        "cost_rub": total_cost,
+    })
 
 
 # -------------------------
@@ -2773,6 +2812,7 @@ async def cmd_me(message: Message):
     await message.answer(
         "👤 Профиль\n"
         f"Баланс: {float(bal.get('rub_balance') or 0):.0f} ₽\n"
+        f"Stars: {int(float(bal.get('stars_balance') or 0))} ⭐\n"
         f"XP: {int(bal.get('xp') or 0)} | LVL: {int(bal.get('level') or 1)}\n\n"
         "👥 Рефералы\n"
         f"Друзей: {ref['count']}\n"
@@ -2808,15 +2848,36 @@ async def on_successful_payment(message: Message):
             return
 
         amount_rub = float(prow.get("amount_rub") or 0)
+        meta = prow.get("meta") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        stars_amount = meta.get("stars")
+        try:
+            stars_amount = int(round(float(stars_amount))) if stars_amount is not None else None
+        except Exception:
+            stars_amount = None
+
+        if not stars_amount or stars_amount <= 0:
+            try:
+                stars_amount = int(round(float(getattr(sp, "total_amount", 0) or 0)))
+            except Exception:
+                stars_amount = 0
+        if stars_amount <= 0:
+            stars_amount = max(1, int(round(amount_rub / max(STARS_RUB_RATE, 0.000001))))
+
         await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
-        await add_rub(uid, amount_rub)
+        await add_stars(uid, stars_amount)
         await stats_add("topups_rub", amount_rub)
 
         xp_add = int((amount_rub // 100) * XP_PER_TOPUP_100)
         if xp_add > 0:
             await add_xp(uid, xp_add)
 
-        await message.answer(f"✅ Пополнение Stars успешно: +{amount_rub:.2f}₽")
+        await message.answer(
+            f"✅ Пополнение Stars успешно: +{stars_amount}⭐"
+            + (f"\nЭквивалент: {amount_rub:.2f}₽" if amount_rub > 0 else "")
+        )
     except Exception as e:
         log.exception("successful_payment handle error: %s", e)
 
