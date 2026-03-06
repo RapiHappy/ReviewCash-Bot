@@ -87,12 +87,12 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
                 async with session.head(url, allow_redirects=True) as r:
-                    if r.status < 400:
+                    if r.status < 400 or r.status in (401, 403, 429):
                         return True, ""
                     return False, f"HTTP {r.status}"
             except Exception:
                 async with session.get(url, allow_redirects=True) as r:
-                    if r.status < 400:
+                    if r.status < 400 or r.status in (401, 403, 429):
                         return True, ""
                     return False, f"HTTP {r.status}"
     except Exception:
@@ -424,6 +424,109 @@ def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
         return "bot"
     return "chat"
+# -------------------------
+# TG subtype helpers / delayed 24h payout
+# -------------------------
+TG_MANUAL_SUBTYPES = {"invite_friends", "bot_start", "bot_msg", "open_miniapp", "view_react", "poll"}
+TG_HOLD24_STATUS = "hold_24h"
+TG_HOLD24_PREFIX = "AUTO_TG_24H_PENDING|"
+
+def tg_subtype_from_instructions(text: str | None) -> str | None:
+    s = str(text or "")
+    m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_\-]+)\s*$", s)
+    if m:
+        return str(m.group(1)).strip().lower()
+    return None
+
+def get_task_tg_subtype(task: dict | None) -> str | None:
+    if not task:
+        return None
+    st = tg_subtype_from_instructions(task.get("instructions"))
+    if st:
+        return st
+    title = str(task.get("title") or "").lower()
+    if "24" in title and "подпис" in title:
+        return "sub_24h"
+    return None
+
+def make_hold24_text(release_at: datetime) -> str:
+    return TG_HOLD24_PREFIX + release_at.isoformat()
+
+def parse_hold24_text(text: str | None) -> datetime | None:
+    s = str(text or "")
+    if not s.startswith(TG_HOLD24_PREFIX):
+        return None
+    try:
+        return datetime.fromisoformat(s[len(TG_HOLD24_PREFIX):].replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+async def reserve_task_slot(task: dict):
+    try:
+        left = int(task.get("qty_left") or 0)
+        if left <= 0:
+            return
+        new_left = max(0, left - 1)
+        upd = {"qty_left": new_left}
+        if new_left <= 0:
+            upd["status"] = "closed"
+        await sb_update(T_TASKS, {"id": cast_id(task.get("id"))}, upd)
+    except Exception as e:
+        log.warning("reserve_task_slot failed: %s", e)
+
+async def restore_task_slot(task: dict):
+    try:
+        left = int(task.get("qty_left") or 0)
+        new_left = left + 1
+        upd = {"qty_left": new_left}
+        if str(task.get("status") or "") == "closed":
+            upd["status"] = "active"
+        await sb_update(T_TASKS, {"id": cast_id(task.get("id"))}, upd)
+    except Exception as e:
+        log.warning("restore_task_slot failed: %s", e)
+
+async def process_due_hold24_for_user(uid: int):
+    try:
+        r = await sb_select(T_COMP, {"user_id": int(uid), "status": TG_HOLD24_STATUS}, order="created_at", desc=False, limit=100)
+        rows = r.data or []
+        if not rows:
+            return
+        now = _now()
+        for comp in rows:
+            release_at = parse_hold24_text(comp.get("proof_text"))
+            if not release_at or release_at > now:
+                continue
+            task_id = comp.get("task_id")
+            tr = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+            task = (tr.data or [None])[0]
+            if not task:
+                await sb_update(T_COMP, {"id": cast_id(comp.get("id"))}, {"status": "rejected", "moderated_at": now.isoformat()})
+                continue
+            chat = str(task.get("tg_chat") or "").strip()
+            ok_member = await tg_is_member(chat, int(uid)) if chat else False
+            if ok_member:
+                reward = float(task.get("reward_rub") or 0)
+                await add_rub(int(uid), reward)
+                await stats_add("payouts_rub", reward)
+                xp_added = task_xp(task)
+                try:
+                    await add_xp(int(uid), xp_added)
+                except Exception as e:
+                    log.warning("add_xp hold24 skipped: %s", e)
+                await maybe_pay_referral_bonus(int(uid))
+                await sb_update(T_COMP, {"id": cast_id(comp.get("id"))}, {"status": "paid", "moderated_at": now.isoformat(), "proof_text": f"AUTO_TG_24H_OK|{release_at.isoformat()}"})
+                try:
+                    bal = await get_balance(int(uid))
+                    await notify_user(int(uid), f"✅ Подписка 24ч подтверждена. +{reward:.2f}₽ и +{int(xp_added)} XP")
+                except Exception:
+                    pass
+            else:
+                await sb_update(T_COMP, {"id": cast_id(comp.get("id"))}, {"status": "rejected", "moderated_at": now.isoformat(), "proof_text": f"AUTO_TG_24H_FAIL|{release_at.isoformat()}"})
+                await restore_task_slot(task)
+                await notify_user(int(uid), "❌ Проверка через 24 часа не пройдена: подписка не найдена. Награда не начислена.")
+    except Exception as e:
+        log.warning("process_due_hold24_for_user failed uid=%s: %s", uid, e)
+
 # -------------------------
 # MiniApp URL (cache-busted)
 # -------------------------
@@ -1335,15 +1438,24 @@ async def api_sync(req: web.Request):
     if urow.get("is_banned"):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
+    # delayed 24h TG payouts are processed on sync
+    await process_due_hold24_for_user(uid)
+
     bal = await get_balance(uid)
     banned_until = await get_task_ban_until(uid)
     tasks = []
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
-        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
+        tasks = []
+        for t in raw:
+            if int(t.get("qty_left") or 0) <= 0:
+                continue
+            tt = dict(t)
+            tt["tg_subtype"] = get_task_tg_subtype(tt)
+            tt["instructions"] = strip_meta_tags(tt.get("instructions") or "")
+            tasks.append(tt)
 
-    
     session_token = _make_session_token(uid)
     return web.json_response({
         "ok": True,
@@ -1462,9 +1574,7 @@ async def api_task_create(req: web.Request):
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
-    # TG task:
-    # - принимаем только @юзернейм или ссылку t.me/...
-    # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
+    # TG task
     if ttype == "tg":
         raw_tg = (tg_chat or target_url or "").strip()
         raw_low = raw_tg.lower()
@@ -1477,29 +1587,25 @@ async def api_task_create(req: web.Request):
             return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
         tg_chat = tg_chat_n
 
-        # Определяем тип TG-цели.
-        # Для bot задач (например /start) Telegram Bot API часто НЕ даёт getChat,
-        # поэтому не блокируем создание, а делаем ручную проверку.
         kind_guess = tg_detect_kind(tg_chat, target_url)
-        if kind_guess == "chat":
-            # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
-            try:
-                await bot.get_chat(tg_chat)
-            except Exception:
-                return json_error(
-                    400,
-                    "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
-                    code="TG_BAD_TARGET",
-                )
+        tg_kind = kind_guess
 
-        desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
-        tg_kind = desired_kind
-        check_type = desired_check_type
-
-        # Telegram tasks: only automatic checks are allowed
-        if check_type != "auto":
-            return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
-
+        # Manual-only subtypes stay manual and are allowed (invite friends, bot tasks, etc.)
+        if sub_type in TG_MANUAL_SUBTYPES:
+            check_type = "manual"
+        elif sub_type == "sub_24h":
+            # 24h hold task must be auto-checkable, otherwise it makes no sense
+            if kind_guess != "chat":
+                return json_error(400, "Подписка на 24ч доступна только для канала/группы, не для бота.", code="TG_24H_BAD_TARGET")
+            ok_auto, msg = await ensure_bot_in_chat(tg_chat)
+            if not ok_auto:
+                return json_error(400, "Для задания 24ч бот должен быть добавлен в чат/канал и иметь доступ к проверке подписки.", code="TG_24H_NEEDS_AUTO", reason=(msg or "NO_ACCESS"))
+            check_type = "auto"
+        else:
+            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+            tg_kind = desired_kind
+            # allow fallback to manual for tasks that are not auto-checkable
+            check_type = desired_check_type
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
@@ -1577,24 +1683,29 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=60, spam_strikes=10, block_sec=600)
+    rate_limit_enforce(uid, "task_submit", min_interval_sec=10, spam_strikes=10, block_sec=600)
     body = await safe_json(req)
 
     banned_until = await get_task_ban_until(uid)
     if banned_until:
         return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
 
+    # first, release due 24h holds for this user (so balance can update before new submit)
+    await process_due_hold24_for_user(uid)
+
     task_id = str(body.get("task_id") or "").strip()
+    task_id_db = cast_id(task_id)
     proof_text = str(body.get("proof_text") or "").strip()
     proof_url = str(body.get("proof_url") or "").strip() or None
 
     if not task_id:
         raise web.HTTPBadRequest(text="Missing task_id")
 
-    t = await sb_select(T_TASKS, {"id": cast_id(task_id)}, limit=1)
+    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     if not t.data:
         return web.json_response({"ok": False, "error": "Task not found"}, status=404)
     task = t.data[0]
+    tg_subtype = get_task_tg_subtype(task)
 
     if int(task.get("owner_id") or 0) == uid:
         return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
@@ -1602,7 +1713,6 @@ async def api_task_submit(req: web.Request):
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
 
-    # cooldown for reviews
     if task.get("type") == "ya":
         ok_lim, rem = await check_limit(uid, "ya_review", YA_COOLDOWN_SEC)
         if not ok_lim:
@@ -1612,20 +1722,25 @@ async def api_task_submit(req: web.Request):
         if not ok_lim:
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
-    # duplicate check
-    dup = await sb_select(T_COMP, {"task_id": task_id, "user_id": uid}, limit=1)
+    dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, limit=1)
     if dup.data:
+        ex = dup.data[0]
+        st = str(ex.get("status") or "")
+        if st == TG_HOLD24_STATUS:
+            rel = parse_hold24_text(ex.get("proof_text"))
+            if rel:
+                return web.json_response({"ok": False, "error": f"Повторная проверка будет через 24ч: {rel.strftime('%d.%m %H:%M')}"}, status=400)
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
 
-    # require that user opened the task link (anti-fake) for manual checks
     if not is_auto:
         ok_clicked = await require_recent_task_click(uid, task_id)
         if not ok_clicked:
             return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
+
     if is_auto:
-        chat = task.get("tg_chat") or ""
+        chat = str(task.get("tg_chat") or "").strip()
         if not chat:
             return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
 
@@ -1633,43 +1748,52 @@ async def api_task_submit(req: web.Request):
         if not ok_member:
             return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
 
+        # Special mode: keep subscription for 24h, then bot re-checks and credits
+        if tg_subtype == "sub_24h":
+            release_at = _now() + timedelta(hours=24)
+            await reserve_task_slot(task)
+            await sb_insert(T_COMP, {
+                "task_id": task_id_db,
+                "user_id": uid,
+                "status": TG_HOLD24_STATUS,
+                "proof_text": make_hold24_text(release_at),
+                "proof_url": None,
+            })
+            return web.json_response({
+                "ok": True,
+                "status": TG_HOLD24_STATUS,
+                "release_at": release_at.isoformat(),
+                "message": "Подписка найдена. Бот перепроверит её через 24 часа и только потом начислит награду.",
+            })
+
         reward = float(task.get("reward_rub") or 0)
         await add_rub(uid, reward)
         await stats_add("payouts_rub", reward)
 
-        # XP + maybe referral payout
         xp_added = task_xp(task)
-        await add_xp(uid, xp_added)
+        try:
+            await add_xp(uid, xp_added)
+        except Exception as e:
+            log.warning("add_xp skipped: %s", e)
         await maybe_pay_referral_bonus(uid)
 
-        try:
-            left = int(task.get("qty_left") or 0)
-            if left > 0:
-                new_left = max(0, left - 1)
-                upd = {"qty_left": new_left}
-                if new_left <= 0:
-                    upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
-        except Exception:
-            pass
-
+        await reserve_task_slot(task)
         await sb_insert(T_COMP, {
-            "task_id": task_id,
+            "task_id": task_id_db,
             "user_id": uid,
             "status": "paid",
             "proof_text": "AUTO_TG_OK",
             "proof_url": None,
             "moderated_at": _now().isoformat(),
         })
+        bal = await get_balance(uid)
+        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added, "balance": bal})
 
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
-
-    # manual proof: обязательно нужен proof_url
     if not proof_url:
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
     await sb_insert(T_COMP, {
-        "task_id": task_id,
+        "task_id": task_id_db,
         "user_id": uid,
         "status": "pending",
         "proof_text": proof_text,
@@ -1687,6 +1811,8 @@ async def api_task_submit(req: web.Request):
     xp_expected = task_xp(task)
     return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
 
+# -------------------------
+# withdraw
 # -------------------------
 # withdraw
 # -------------------------
@@ -1917,6 +2043,7 @@ def _dt_key(v: str):
 async def api_ops_list(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    await process_due_hold24_for_user(uid)
 
     pays = await sb_select(T_PAY, {"user_id": uid}, order="created_at", desc=True, limit=200)
     wds = await sb_select(T_WD, {"user_id": uid}, order="created_at", desc=True, limit=200)
