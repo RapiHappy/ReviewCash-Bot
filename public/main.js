@@ -352,6 +352,7 @@ function tgAlert(msg, kind = "info", title = "") {
     deviceHash: "",
     user: null,
     balance: { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 },
+    config: { stars_rub_rate: 1 },
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
@@ -557,6 +558,15 @@ function tgAlert(msg, kind = "info", title = "") {
     return n.toLocaleString("ru-RU") + " ⭐";
   }
   function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+  function starsRate() {
+    const r = Number(state.config && state.config.stars_rub_rate);
+    return r > 0 ? r : 1;
+  }
+  function rubToStars(amountRub) {
+    const amount = Number(amountRub || 0);
+    if (amount <= 0) return 0;
+    return Math.max(1, Math.round(amount / starsRate()));
+  }
 
   function safeText(s) {
     return String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
@@ -709,6 +719,7 @@ function tgAlert(msg, kind = "info", title = "") {
       const prevBalSig = balanceSignature(state.balance);
       state.user = data.user || state.user;
       state.balance = data.balance || state.balance;
+      state.config = data.config || state.config;
       const newBalSig = balanceSignature(state.balance);
       const balanceChanged = prevBalSig !== newBalSig;
       const newTasks = Array.isArray(data.tasks) ? data.tasks : [];
@@ -779,6 +790,7 @@ async function syncAll() {
 
     state.user = data.user;
     state.balance = data.balance || state.balance;
+    state.config = data.config || state.config;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
 
     // If some tasks were completed before user_id was known, migrate from anon bucket
@@ -1679,9 +1691,8 @@ if (!list.length) {
 
     updateTgHint();
 
-    // currency display only (backend charges RUB in this version)
     const totalEl = $("t-total");
-    if (totalEl) totalEl.textContent = cur === "star" ? (Math.round(total) + " ⭐") : fmtRub(total);
+    if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
 
     // target status reset
     const s = $("t-target-status");
@@ -1731,6 +1742,7 @@ if (!list.length) {
     let tgChat = null;
     let tgKind = null;
     let subType = null;
+    const payCurrency = $("t-cur") ? String($("t-cur").value || "rub").toLowerCase() : "rub";
 
     if (type === "ya") {
       title = YA.title;
@@ -1808,6 +1820,17 @@ if (!list.length) {
         }
       }
     }
+    const neededRub = Number(cost || 0);
+    const neededStars = rubToStars(neededRub);
+    const bal = state.balance || {};
+    if (payCurrency === "star") {
+      if (Number(bal.stars_balance || 0) < neededStars) {
+        return tgAlert(`Недостаточно Stars. Нужно ${neededStars} ⭐`, "error", "Недостаточно баланса");
+      }
+    } else if (Number(bal.rub_balance || 0) < neededRub) {
+      return tgAlert(`Недостаточно RUB. Нужно ${fmtRub(neededRub)}`, "error", "Недостаточно баланса");
+    }
+
     try {
       tgHaptic("impact");
       const res = await apiPost("/api/task/create", {
@@ -1817,6 +1840,7 @@ if (!list.length) {
         instructions: txt,
         reward_rub: reward,
         cost_rub: cost,
+        pay_currency: payCurrency,
         qty_total: qty,
         check_type: checkType,
         tg_chat: tgChat,
@@ -1827,7 +1851,10 @@ if (!list.length) {
       if (res && res.ok) {
         closeAllOverlays();
         tgHaptic("success");
-        tgAlert("Задание создано ✅");
+        const paidText = (res.charged_currency === "star")
+          ? `${Number(res.charged_amount || 0)} ⭐`
+          : fmtRub(res.charged_amount || cost);
+        tgAlert(`Задание создано ✅\nСписано: ${paidText}`);
         await syncAll();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка создания");
