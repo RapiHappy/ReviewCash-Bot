@@ -39,76 +39,6 @@
   // Telegram WebApp
   // --------------------
   const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-
-// --------------------
-// External links helpers
-// --------------------
-const TBANK_REF_URL = "https://tbank.ru/baf/56p8AlptMz5";
-
-function openExternalLink(url, opts = {}) {
-  const link = String(url || "").trim();
-  if (!link) return;
-
-  // Always copy link as a fallback (some Telegram clients block opening bank links)
-  const copy = () => {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(link).catch(() => {});
-        return;
-      }
-    } catch (e) {}
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = link;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      ta.style.top = "-9999px";
-      document.body.appendChild(ta);
-      ta.focus(); ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    } catch (e) {}
-  };
-
-  try { copy(); } catch (e) {}
-
-  // 1) Telegram WebApp API (best)
-  try {
-    const wtg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-    if (wtg && typeof wtg.openLink === "function") {
-      wtg.openLink(link, { try_instant_view: false });
-      try { if (opts.toast !== false) showToast("info", "Если ссылка не открылась — она скопирована в буфер.", "Ссылка"); } catch (e) {}
-      return;
-    }
-  } catch (e) {}
-
-  // 2) Anchor click (works better than window.open in some WebViews)
-  try {
-    const a = document.createElement("a");
-    a.href = link;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    try { if (opts.toast !== false) showToast("info", "Если ссылка не открылась — она скопирована в буфер.", "Ссылка"); } catch (e) {}
-    return;
-  } catch (e) {}
-
-  // 3) Last resort
-  try { window.open(link, "_blank"); } catch (e) { window.location.href = link; }
-  try { if (opts.toast !== false) showToast("info", "Ссылка скопирована в буфер.", "Ссылка"); } catch (e) {}
-}
-
-// For T-Bank: referral link to issue a card
-window.openTbankReferrals = function () {
-  openExternalLink(TBANK_REF_URL);
-};
-// Backward-compat: some UI binds openTbankReferral (singular)
-window.openTbankReferral = function () {
-  openExternalLink(TBANK_REF_URL);
-};
-
   
 function showConnectHint() {
   const existing = document.getElementById("connect-hint");
@@ -355,7 +285,6 @@ function tgAlert(msg, kind = "info", title = "") {
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
-    opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
     currentTask: null,
     isAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
@@ -423,28 +352,6 @@ function tgAlert(msg, kind = "info", title = "") {
     tgAlert("Режим: " + (state.perfMode === "low" ? "Слабое устройство" : "Нормальный"), "info", "Настройки");
   }
   window.togglePerfMode = togglePerfMode;
-
-    // --------------------
-  // Theme (dark/light)
-  // --------------------
-  const THEME_KEY = "rc_theme_v1"; // "dark" | "light"
-
-  function applyTheme(t) {
-    const v = (t === "light") ? "light" : "dark";
-    try { localStorage.setItem(THEME_KEY, v); } catch (e) {}
-    document.documentElement.classList.toggle("theme-light", v === "light");
-    const btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = (v === "light") ? "☀️" : "🌙";
-  }
-
-  function toggleTheme() {
-    const isLight = document.documentElement.classList.contains("theme-light");
-    applyTheme(isLight ? "dark" : "light");
-    tgHaptic("impact");
-  }
-  window.toggleTheme = toggleTheme;
-
-
 
   function tasksRefreshIntervalMs() {
     // Low mode: refresh less often to save battery + CPU
@@ -587,15 +494,7 @@ function tgAlert(msg, kind = "info", title = "") {
       }
     }
     try { setActiveTab(id); } catch (e) {}
-    try { toggleFab(id === "tasks"); } catch (e) {}
   }
-
-    function toggleFab(show) {
-    const fab = document.getElementById("fab-wrap") || document.querySelector(".fab-wrap");
-    if (!fab) return;
-    fab.style.display = show ? "flex" : "none";
-  }
-  window.toggleFab = toggleFab;
 
   function openOverlay(id) {
     const el = $(id);
@@ -629,7 +528,6 @@ function tgAlert(msg, kind = "info", title = "") {
       if (app) { app.style.display = "block"; app.style.visibility = "visible"; app.style.opacity = "1"; }
       const vt = $("view-tasks");
       if (vt) vt.classList.remove("hidden");
-      try { toggleFab(true); } catch (e) {}
     } catch (e) {}
   }
 
@@ -697,6 +595,7 @@ function tgAlert(msg, kind = "info", title = "") {
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
+      if (data.session_token) state.sessionToken = data.session_token;
       if (data.auth === false) {
         state.user = null;
         state.balance = null;
@@ -775,6 +674,7 @@ async function syncAll() {
     if (!data || !data.ok) throw new Error("Bad /api/sync response");
 
     state.user = data.user;
+    if (data.session_token) state.sessionToken = data.session_token;
     state.balance = data.balance || state.balance;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
 
@@ -952,25 +852,6 @@ async function syncAll() {
   }
   window.setPlatformFilter = setPlatformFilter;
 
-    function setOpsFilter(k) {
-    const v = (k === "topup" || k === "earning" || k === "withdrawal") ? k : "all";
-    state.opsFilter = v;
-    try { localStorage.setItem("rc_ops_filter", v); } catch (e) {}
-
-    const ids = ["ops-all", "ops-topup", "ops-earning", "ops-withdrawal"];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const want = (v === "all") ? (id === "ops-all") : (id === ("ops-" + v));
-      el.classList.toggle("active", want);
-    });
-
-    try { renderOps(state._opsCache || []); } catch (e) {}
-  }
-  window.setOpsFilter = setOpsFilter;
-
-
-
   // --------------------
   // --------------------
   // Brand icons (tiny inline SVG = fast, no network)
@@ -1101,26 +982,6 @@ if (!list.length) {
   }
 
 
-  function openTaskLink(url) {
-    const link = String(url || "").trim();
-    if (!link) return;
-    try {
-      if (window.Telegram && window.Telegram.WebApp) {
-        const tg = window.Telegram.WebApp;
-        if (tg.openTelegramLink && /^https?:\/\/(t\.me|telegram\.me)\//i.test(link)) {
-          tg.openTelegramLink(link);
-          return;
-        }
-        if (tg.openLink) {
-          tg.openLink(link, { try_instant_view: false });
-          return;
-        }
-      }
-    } catch (e) {}
-    // fallback
-    try { window.open(link, "_blank"); } catch (e) { window.location.href = link; }
-  }
-
   function isProbablyUrl(raw) {
     const s = String(raw || "").trim();
     if (!s) return false;
@@ -1170,15 +1031,7 @@ if (!list.length) {
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
-    if (a) {
-      a.href = link || "#";
-      a.onclick = async (ev) => {
-        try { ev.preventDefault(); } catch(e) {}
-        if (!link) return;
-        try { await apiPost("/api/task/click", { task_id: task.id }); } catch (e) {}
-        openTaskLink(link);
-      };
-    }
+    if (a) a.href = link || "#";
 
     // proof blocks
     const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
@@ -1286,24 +1139,8 @@ if (!list.length) {
         renderTasks();
         closeAllOverlays();
         tgHaptic("success");
-        // Update balance/XPs immediately (do not rely on syncAll which can be cached/blocked)
-try {
-  const earned = Number((res && res.earned) ?? (task.reward_rub || 0) ?? 0);
-  const xpAdded = Number((res && res.xp_added) ?? 0);
-  if (res && res.balance) {
-    state.balance = res.balance;
-  } else {
-    if (!state.balance) state.balance = { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 };
-    state.balance.rub_balance = Number(state.balance.rub_balance || 0) + earned;
-    state.balance.xp = Number(state.balance.xp || 0) + xpAdded;
-    const li = levelFromXp(state.balance.xp || 0);
-    state.balance.level = li.lvl;
-  }
-  renderHeader();
-  renderProfile();
-} catch (e) {}
-tgAlert("Готово! Начислено: +" + fmtRub(res.earned || task.reward_rub || 0) + (res.xp_added ? (" и +" + String(res.xp_added) + " XP") : ""));
-try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_){} }
+        tgAlert("Готово! Начислено: +" + fmtRub(res.earned || task.reward_rub || 0));
+        await syncAll();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка проверки");
       }
@@ -1883,7 +1720,7 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
   function renderWithdrawals(list) {
     const box = $("withdrawals-list");
     if (!box) return;
-    if (!view.length) {
+    if (!list.length) {
       box.innerHTML = `<div style="color:var(--text-dim); font-size:13px;">Нет заявок</div>`;
       return;
     }
@@ -1946,40 +1783,16 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
   function renderOps(list) {
     const box = $("history-list");
     if (!box) return;
-    state._opsCache = Array.isArray(list) ? list.slice() : [];
-
-    let view = Array.isArray(list) ? list.slice() : [];
-    const f = state.opsFilter || "all";
-    if (f !== "all") {
-      view = view.filter(op => {
-        const k = String(op.kind || "");
-        if (f === "topup") return k === "topup";
-        if (f === "withdrawal") return k === "withdrawal";
-        if (f === "earning") return k === "earning";
-        return true;
-      });
-    }
-
     if (!list.length) {
       box.innerHTML = `<div class="menu-item" style="margin:0; opacity:0.7;">История пуста</div>`;
       return;
     }
     box.innerHTML = "";
-    view.forEach(op => {
+    list.forEach(op => {
       const kind = String(op.kind || "");
       let title = "";
       let sub = "";
-      if (kind === "topup") {
-        title = "Пополнение";
-        sub = (op.provider ? String(op.provider).toUpperCase() : "");
-      } else if (kind === "earning") {
-        const src = String(op.source || "");
-        if (src === "task") title = "Начисление за задание";
-        else if (src === "referral") title = "Реферальный бонус";
-        else if (src === "admin") title = "Начисление админом";
-        else title = "Начисление";
-        sub = String(op.title || "") || src;
-      } else if (kind === "payment") {
+      if (kind === "payment") {
         title = "Пополнение (" + safeText(op.provider || "") + ")";
         sub = (op.status === "paid") ? "✅ Оплачено" : (op.status === "rejected" ? "❌ Отклонено" : "⏳ В ожидании");
       } else {
@@ -2017,7 +1830,7 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
     if (kind !== "pay_stars") return;
 
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
-    if (!amount || amount < 1) return tgAlert("Минимум 1 ₽");
+    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
 
     try {
       tgHaptic("impact");
@@ -2058,12 +1871,6 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
     if ($("tb-amount-display")) $("tb-amount-display").textContent = fmtRub(amount);
 
     openOverlay("m-pay-tbank");
-
-    // ensure referral button works even if HTML calls openTbankReferrals
-    try {
-      const btn = document.getElementById("tb-ref-btn");
-      if (btn) btn.onclick = () => window.openTbankReferrals();
-    } catch (e) {}
   };
 
   window.copyCode = function () {
@@ -2188,6 +1995,14 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
       const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
 
+      const isMapTask = String(t.type || "").toLowerCase() === "ya" || String(t.type || "").toLowerCase() === "gm";
+      const reworkHtml = isMapTask
+        ? `<button class="btn btn-secondary" data-rework="1">↩️ Доработка</button>`
+        : "";
+      const reworkFieldHtml = isMapTask
+        ? `<div style="margin-top:10px;"><textarea data-rework-message="1" placeholder="Комментарий к доработке (что исправить)" style="width:100%;min-height:78px;resize:vertical;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:var(--glass);color:var(--text);font:inherit;box-sizing:border-box;"></textarea></div>`
+        : "";
+      const buttonsGrid = isMapTask ? "1fr 1fr 1fr" : "1fr 1fr";
       const c = adminCard(`
         <div style="display:flex; justify-content:space-between; gap:10px;">
           <div style="flex:1;">
@@ -2201,22 +2016,43 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
         </div>
         ${linkHtml}
         ${imgHtml}
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
+        ${reworkFieldHtml}
+        <div style="display:grid; grid-template-columns:${buttonsGrid}; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
+          ${reworkHtml}
         </div>
       `);
 
-      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c);
-      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c);
+      c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, "approve", c);
+      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, "reject", c);
+      const rw = c.querySelector('[data-rework="1"]');
+      if (rw) rw.onclick = async () => {
+        const msgEl = c.querySelector('[data-rework-message="1"]');
+        const msg = String((msgEl && msgEl.value) || "").trim();
+        if (!msg) {
+          tgAlert("Напиши комментарий к доработке", "error", "Доработка");
+          tgHaptic("error");
+          if (msgEl) msgEl.focus();
+          return;
+        }
+        await decideProof(p.id, "rework", c, msg);
+      };
       box.appendChild(c);
     });
   }
 
-  async function decideProof(proofId, approved, cardEl) {
+  async function decideProof(proofId, mode, cardEl, reworkMessage = "") {
     try {
       tgHaptic("impact");
-      await apiPost("/api/admin/proof/decision", { proof_id: proofId, approved: !!approved });
+      const payload = { proof_id: proofId };
+      if (mode === "approve") payload.approved = true;
+      else if (mode === "reject") payload.approved = false;
+      else if (mode === "rework") {
+        payload.action = "rework";
+        payload.message = String(reworkMessage || "").trim();
+      }
+      await apiPost("/api/admin/proof/decision", payload);
       tgHaptic("success");
       if (cardEl) cardEl.remove();
       await checkAdmin();
@@ -2246,24 +2082,9 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
           <button class="btn btn-main" data-approve="1">✅ Выплатить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-          <button class="btn btn-secondary" data-ban-withdraw="1" style="padding:8px 10px; font-size:12px;">🚫 Бан вывода 1д</button>
-          <button class="btn btn-secondary" data-ban-global="1" style="padding:8px 10px; font-size:12px;">⛔ Бан 1д</button>
-          <button class="btn btn-secondary" data-fine="1" style="padding:8px 10px; font-size:12px;">💸 Штраф</button>
-        </div>
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideWithdraw(w.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideWithdraw(w.id, false, c);
-
-      // Sanctions
-      const uid = Number(w.user_id || 0);
-      const bw = c.querySelector('[data-ban-withdraw="1"]');
-      if (bw) bw.onclick = () => adminBanQuick(uid, "withdraw", 1);
-      const bg = c.querySelector('[data-ban-global="1"]');
-      if (bg) bg.onclick = () => adminBanQuick(uid, "global", 1);
-      const bf = c.querySelector('[data-fine="1"]');
-      if (bf) bf.onclick = () => adminFineQuick(uid);
-
       box.appendChild(c);
     });
   }
@@ -2303,24 +2124,9 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
           <button class="btn btn-main" data-approve="1">✅ Подтвердить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-          <button class="btn btn-secondary" data-ban-tbank="1" style="padding:8px 10px; font-size:12px;">🚫 Бан T‑Bank 1д</button>
-          <button class="btn btn-secondary" data-ban-global="1" style="padding:8px 10px; font-size:12px;">⛔ Бан 1д</button>
-          <button class="btn btn-secondary" data-fine="1" style="padding:8px 10px; font-size:12px;">💸 Штраф</button>
-        </div>
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideTbank(p.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideTbank(p.id, false, c);
-
-      // Sanctions
-      const uid = Number(p.user_id || 0);
-      const bt = c.querySelector('[data-ban-tbank="1"]');
-      if (bt) bt.onclick = () => adminBanQuick(uid, "tbank", 1);
-      const bg = c.querySelector('[data-ban-global="1"]');
-      if (bg) bg.onclick = () => adminBanQuick(uid, "global", 1);
-      const bf = c.querySelector('[data-fine="1"]');
-      if (bf) bf.onclick = () => adminFineQuick(uid);
-
       box.appendChild(c);
     });
   }
@@ -2337,67 +2143,6 @@ try { await syncTasksOnly(true); } catch (e) { try { await syncAll(); } catch(_)
       tgAlert(String(e.message || e));
     }
   }
-
-  // --------------------
-  // Admin sanctions (ban / fine)
-  // --------------------
-  async function adminPunish(userId, action, kind, extra = {}) {
-    const uid = Number(userId || 0);
-    if (!uid) throw new Error("bad user_id");
-    const payload = Object.assign({ user_id: uid, action: String(action || ""), kind: String(kind || "global") }, extra || {});
-    return await apiPost("/api/admin/user/punish", payload);
-  }
-
-  async function adminBanQuick(userId, kind = "global", days = 1) {
-    try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
-      const reason = (prompt("Причина бана (необязательно):", "") || "").trim();
-      tgHaptic("impact");
-      await adminPunish(uid, "ban", kind, { days: Number(days || 1), reason });
-      tgHaptic("success");
-      tgAlert(`Бан (${kind}) выдан ✅`, "success", "Админка");
-      await checkAdmin();
-    } catch (e) {
-      tgHaptic("error");
-      tgAlert(String(e.message || e), "error", "Админка");
-    }
-  }
-
-  async function adminUnbanQuick(userId, kind = "global") {
-    try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
-      tgHaptic("impact");
-      await adminPunish(uid, "unban", kind, {});
-      tgHaptic("success");
-      tgAlert(`Бан (${kind}) снят ✅`, "success", "Админка");
-      await checkAdmin();
-    } catch (e) {
-      tgHaptic("error");
-      tgAlert(String(e.message || e), "error", "Админка");
-    }
-  }
-
-  async function adminFineQuick(userId) {
-    try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
-      const raw = (prompt("Штраф в ₽ (введите число):", "100") || "").trim();
-      const n = Number(raw.replace(",", "."));
-      if (!isFinite(n) || n <= 0) { tgAlert("Некорректная сумма", "error"); return; }
-      const reason = (prompt("Причина штрафа (необязательно):", "") || "").trim();
-      tgHaptic("impact");
-      await adminPunish(uid, "fine", "global", { amount_rub: -Math.abs(n), reason });
-      tgHaptic("success");
-      tgAlert(`Штраф -${Math.abs(n)} ₽ применён ✅`, "success", "Админка");
-      await checkAdmin();
-    } catch (e) {
-      tgHaptic("error");
-      tgAlert(String(e.message || e), "error", "Админка");
-    }
-  }
-
 
   // --------------------
 
@@ -2445,32 +2190,13 @@ async function loadAdminTasks() {
     if (state.isAdmin) {
       const tools = adminCard(`
         <div style="display:flex; gap:10px;">
-</div>
+          <button class="btn btn-main" data-tg-audit="1" style="flex:1;" ${state.isMainAdmin ? "" : "disabled"}>${state.isMainAdmin ? "🔄 Проверить TG задания" : "🔒 Проверить TG задания"}</button>
+        </div>
         <div style="font-size:11px; opacity:0.65; margin-top:8px;">Авто/ручная проверка выставится по доступу бота и типу цели. (Запускать может только главный админ)</div>
       `);
       const b = tools.querySelector('[data-tg-audit="1"]');
       if (b) b.onclick = auditTgTasks;
       box.appendChild(tools);
-
-      // User management (ban / fine)
-      const um = adminCard(`
-        <div style="font-weight:900; margin-bottom:8px;">⚠️ Санкции пользователю</div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <input id="admin-user-id" placeholder="User ID" inputmode="numeric" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text);" />
-          <button class="btn btn-secondary" data-um-ban="1" style="padding:10px 12px;">⛔ Бан 1д</button>
-          <button class="btn btn-secondary" data-um-unban="1" style="padding:10px 12px;">✅ Разбан</button>
-          <button class="btn btn-secondary" data-um-fine="1" style="padding:10px 12px;">💸 Штраф</button>
-        </div>
-        <div style="font-size:11px; opacity:0.65; margin-top:8px;">Бан по умолчанию — глобальный на 1 день. Штраф — списание ₽.</div>
-      `);
-      const getUid = () => Number((um.querySelector("#admin-user-id")?.value || "").trim() || 0);
-      const bban = um.querySelector('[data-um-ban="1"]');
-      if (bban) bban.onclick = () => { const u = getUid(); if (u) adminBanQuick(u, "global", 1); else tgAlert("Введите User ID", "error"); };
-      const bunban = um.querySelector('[data-um-unban="1"]');
-      if (bunban) bunban.onclick = () => { const u = getUid(); if (u) adminUnbanQuick(u, "global"); else tgAlert("Введите User ID", "error"); };
-      const bf = um.querySelector('[data-um-fine="1"]');
-      if (bf) bf.onclick = () => { const u = getUid(); if (u) adminFineQuick(u); else tgAlert("Введите User ID", "error"); };
-      box.appendChild(um);
     }
 
     const res = await apiPost("/api/admin/task/list", {});
@@ -2547,13 +2273,6 @@ function extractTgWebAppDataFromUrl() {
     initDeviceHash();
     // init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
-    // init theme
-    try {
-      const savedTheme = (localStorage.getItem(THEME_KEY) || "").trim();
-      if (savedTheme === "light" || savedTheme === "dark") applyTheme(savedTheme);
-      else if (tg && tg.colorScheme === "light") applyTheme("light");
-      else applyTheme("dark");
-    } catch (e) { try { applyTheme("dark"); } catch(e2){} }
     forceInitialView();
 
     if (tg) {
