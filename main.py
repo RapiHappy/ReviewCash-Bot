@@ -7,6 +7,7 @@ import base64
 import time
 import asyncio
 import logging
+import html
 from datetime import datetime, timezone, date, timedelta
 
 # Build/version string used for cache-busting in Telegram WebView
@@ -1216,9 +1217,17 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
 # notify helpers
 # -------------------------
 async def notify_admin(text: str):
+    seen = set()
     for aid in ADMIN_IDS:
         try:
-            await bot.send_message(aid, text)
+            aid_int = int(aid)
+        except Exception:
+            continue
+        if aid_int in seen:
+            continue
+        seen.add(aid_int)
+        try:
+            await bot.send_message(aid_int, text)
         except Exception:
             pass
 
@@ -1233,6 +1242,71 @@ async def notify_user(uid: int, text: str, force: bool = False):
         await bot.send_message(uid, text)
     except Exception:
         pass
+
+# -------------------------
+# MiniApp URL helper + broadcast about new tasks
+# -------------------------
+def get_miniapp_url() -> str:
+    url = (MINIAPP_URL or '').strip()
+    if not url:
+        base = (SERVER_BASE_URL or BASE_URL or '').strip()
+        if base:
+            url = base.rstrip('/') + f'/app/?v={APP_BUILD}'
+    if url and 'v=' not in url:
+        url = url + ('&' if '?' in url else '?') + f'v={APP_BUILD}'
+    return url or '/app/'
+
+async def _iter_user_ids(batch: int = 1000):
+    start = 0
+    while True:
+        def _f():
+            q = sb.table(T_USERS).select('user_id').order('user_id', desc=False)
+            if hasattr(q, 'range'):
+                q = q.range(start, start + batch - 1)
+            else:
+                q = q.limit(min(batch, 5000))
+            return q.execute()
+        r = await sb_exec(_f)
+        rows = (r.data or [])
+        if not rows:
+            break
+        for row in rows:
+            try:
+                yield int(row.get('user_id'))
+            except Exception:
+                continue
+        if len(rows) < batch:
+            break
+        start += batch
+
+async def broadcast_new_task(task: dict):
+    try:
+        title = str(task.get('title') or task.get('platform') or 'Новое задание').strip()
+        try:
+            reward_i = int(float(task.get('reward_rub') or task.get('reward') or 0))
+        except Exception:
+            reward_i = 0
+        kind_map = {'tg': 'Telegram', 'ya': 'Яндекс', 'gm': 'Google'}
+        kind = kind_map.get(str(task.get('type') or '').lower(), 'ReviewCash')
+        text_msg = (
+            f"🆕 <b>Новое задание</b>\n\n"
+            f"<b>{html.escape(title)}</b>\n"
+            f"💰 Награда: <b>{reward_i} ₽</b>\n"
+            f"📍 Платформа: <b>{html.escape(kind)}</b>"
+        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text='🚀 Открыть ReviewCash', web_app=WebAppInfo(url=get_miniapp_url()))
+        markup = kb.as_markup()
+        async for uid in _iter_user_ids():
+            if await is_notify_muted(uid):
+                continue
+            try:
+                await bot.send_message(uid, text_msg, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
+            except Exception:
+                pass
+            await asyncio.sleep(0.03)
+    except Exception as e:
+        log.warning('broadcast_new_task failed: %s', e)
 
 # =========================================================
 # WEB API (Mini App -> backend)
@@ -1411,7 +1485,16 @@ async def api_sync(req: web.Request):
         raw = tsel.data or []
         tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
 
-    
+    reopen_task_ids = []
+    try:
+        rr = await sb_select(T_COMP, {"user_id": uid, "status": "rework"}, order="moderated_at", desc=True, limit=200)
+        if rr.data:
+            active_ids = {str(t.get('id')) for t in tasks}
+            reopen_task_ids = [str(x.get('task_id')) for x in (rr.data or []) if str(x.get('task_id')) in active_ids]
+            reopen_task_ids = list(dict.fromkeys(reopen_task_ids))
+    except Exception:
+        reopen_task_ids = []
+
     session_token = _make_session_token(uid)
     return web.json_response({
         "ok": True,
@@ -1426,6 +1509,7 @@ async def api_sync(req: web.Request):
         },
         "balance": bal,
         "tasks": tasks,
+        "reopen_task_ids": reopen_task_ids,
         "task_ban_until": banned_until.isoformat() if banned_until else None,
     })
 
@@ -1602,6 +1686,10 @@ async def api_task_create(req: web.Request):
 
     await stats_add("revenue_rub", total_cost)
     await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}")
+    try:
+        asyncio.create_task(broadcast_new_task(task))
+    except Exception:
+        pass
 
     return web.json_response({"ok": True, "task": task})
 
@@ -1678,9 +1766,10 @@ async def api_task_submit(req: web.Request):
         if not ok_lim:
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
-    # duplicate check
-    dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, limit=1)
-    if dup.data:
+    # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
+    dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
+    blocking_statuses = {"pending", "paid", "fake"}
+    if any(str(x.get("status") or "").lower() in blocking_statuses for x in (dup.data or [])):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
@@ -2034,14 +2123,15 @@ async def api_ops_list(req: web.Request):
         amount = float(p.get("amount_rub") or 0)
         meta = p.get("meta") or {}
         if provider in ("tbank", "stars", "cryptobot"):
-            ops.append({
-                "kind": "topup",
-                "provider": provider,
-                "status": status,
-                "amount_rub": amount,
-                "created_at": p.get("created_at"),
-                "id": p.get("id"),
-            })
+            if status == "paid":
+                ops.append({
+                    "kind": "topup",
+                    "provider": provider,
+                    "status": status,
+                    "amount_rub": amount,
+                    "created_at": p.get("created_at"),
+                    "id": p.get("id"),
+                })
         elif provider == "admin_credit":
             ops.append({
                 "kind": "earning",
@@ -2313,35 +2403,48 @@ async def api_admin_user_punish(req: web.Request):
 
 async def api_admin_proof_list(req: web.Request):
     await require_admin(req)
-    r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=200)
+    r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=300)
     comps = r.data or []
 
     task_ids = list({c.get("task_id") for c in comps if c.get("task_id")})
     tasks_map = {}
     if task_ids:
-        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,target_url,type,owner_id", limit=500)
+        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,target_url,type,owner_id,instructions", limit=500)
         for t in (tr.data or []):
             tasks_map[str(t["id"])] = t
 
     visible_after_ya = _now() - timedelta(days=3)
 
     out = []
+    seen = set()
     for c in comps:
         tid = str(c.get("task_id"))
         t = tasks_map.get(tid)
+        if not t:
+            continue
 
-        # Delay Yandex review proofs: show to admins only after 3 days
-        if t and t.get("type") == "ya":
-            ca = c.get("created_at")
+        # Hide Yandex review reports for 3 days
+        if t.get("type") == "ya":
             dt = None
             try:
+                ca = c.get("created_at")
                 if isinstance(ca, str) and ca:
-                    s = ca.replace("Z", "+00:00")
-                    dt = datetime.fromisoformat(s)
+                    dt = datetime.fromisoformat(ca.replace("Z", "+00:00"))
             except Exception:
                 dt = None
             if dt and dt > visible_after_ya:
                 continue
+
+        # Prevent the same pending proof from appearing twice in admin UI
+        sig = (
+            str(c.get("user_id") or ""),
+            tid,
+            str(c.get("proof_url") or ""),
+            str(c.get("proof_text") or ""),
+        )
+        if sig in seen:
+            continue
+        seen.add(sig)
 
         out.append({
             "id": c.get("id"),
@@ -2350,7 +2453,7 @@ async def api_admin_proof_list(req: web.Request):
             "proof_text": c.get("proof_text"),
             "proof_url": c.get("proof_url"),
             "created_at": c.get("created_at"),
-            "task": t
+            "task": t,
         })
 
     return web.json_response({"ok": True, "proofs": out})
@@ -2366,9 +2469,11 @@ async def api_admin_proof_decision(req: web.Request):
     elif isinstance(approved_raw, (int, float)):
         approved = bool(approved_raw)
     else:
-        approved = str(approved_raw).strip().lower() in ("1","true","yes","y","on")
+        approved = str(approved_raw).strip().lower() in ("1", "true", "yes", "y", "on")
 
     fake = bool(body.get("fake"))
+    rework = bool(body.get("rework"))
+    comment = str(body.get("comment") or body.get("rework_comment") or "").strip()
 
     if proof_id is None:
         raise web.HTTPBadRequest(text="Missing proof_id")
@@ -2382,15 +2487,30 @@ async def api_admin_proof_decision(req: web.Request):
         return web.json_response({"ok": True, "status": proof.get("status")})
 
     task_id = proof.get("task_id")
+    task_id_db = cast_id(task_id)
     user_id = int(proof.get("user_id") or 0)
 
     t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
     task = (t.data or [{}])[0]
     reward = float(task.get("reward_rub") or 0)
+    task_type = str(task.get("type") or "").lower()
 
+    if rework:
+        if task_type not in ("ya", "gm"):
+            return web.json_response({"ok": False, "error": "Доработка доступна только для Яндекс/Google отзывов"}, status=400)
+        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
+            "status": "rework",
+            "moderated_by": int(admin["id"]),
+            "moderated_at": _now().isoformat(),
+        })
+        msg = "🛠 Отчёт отправлен на доработку."
+        if comment:
+            msg += f"\n\nКомментарий: {comment}"
+        msg += "\n\nИсправь отзыв/скрин и отправь отчёт заново."
+        await notify_user(user_id, msg)
+        return web.json_response({"ok": True, "status": "rework"})
 
     if approved:
-        # 1) начисление — обязательное, иначе не принимаем
         try:
             await add_rub(user_id, reward)
         except Exception as e:
@@ -2401,7 +2521,6 @@ async def api_admin_proof_decision(req: web.Request):
                 "message": "Не удалось принять отчёт: ошибка начисления. Проверь таблицу balances (rub_balance) и права Supabase."
             }, status=200)
 
-        # 2) статистика/XP/рефералка — best effort (не блокируем модерацию)
         await stats_add("payouts_rub", reward)
         try:
             xp_added = task_xp(task)
@@ -2434,7 +2553,6 @@ async def api_admin_proof_decision(req: web.Request):
             xp_txt = ""
         await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽{xp_txt}")
     else:
-        # rejected / fake
         new_status = "fake" if fake else "rejected"
         await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
             "status": new_status,
@@ -2451,7 +2569,10 @@ async def api_admin_proof_decision(req: web.Request):
                 txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
             await notify_user(user_id, txt)
         else:
-            await notify_user(user_id, "❌ Отчёт отклонён модератором.")
+            msg = "❌ Отчёт отклонён модератором."
+            if comment:
+                msg += f"\n\nКомментарий: {comment}"
+            await notify_user(user_id, msg)
 
     try:
         resp_extra = {"xp_added": int(xp_added)} if "xp_added" in locals() else {}
@@ -2568,10 +2689,10 @@ async def cmd_start(message: Message):
     if not miniapp_url:
         base = SERVER_BASE_URL or BASE_URL
         if base:
-            miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+            miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
     if miniapp_url and "v=" not in miniapp_url:
-        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + "v=fix_20260219"
+        miniapp_url = miniapp_url + ("&" if "?" in miniapp_url else "?") + f"v={APP_BUILD}"
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
@@ -2617,7 +2738,7 @@ async def cb_toggle_notify(cq: CallbackQuery):
         if not miniapp_url:
             base = SERVER_BASE_URL or BASE_URL
             if base:
-                miniapp_url = base.rstrip("/") + "/app/?v=fix_20260219"
+                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
 
         if miniapp_url:
             kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
