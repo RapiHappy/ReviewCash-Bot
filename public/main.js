@@ -352,13 +352,14 @@ function tgAlert(msg, kind = "info", title = "") {
     deviceHash: "",
     user: null,
     balance: { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 },
-    config: { stars_rub_rate: 1 },
+    config: { stars_rub_rate: 1, stars_payments_enabled: true },
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
     opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
     currentTask: null,
     isAdmin: false,
+    isMainAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
     tbankCode: "",
     currentSection: "tasks",
@@ -568,6 +569,66 @@ function tgAlert(msg, kind = "info", title = "") {
     return Math.max(1, Math.round(amount / starsRate()));
   }
 
+  function starsPaymentsEnabled() {
+    return !state.config || state.config.stars_payments_enabled !== false;
+  }
+
+  function renderAdminStarsToggle() {
+    const modal = $("m-admin");
+    if (!modal) return;
+    const root = qs(".modal", modal);
+    if (!root) return;
+
+    let box = $("admin-stars-toggle");
+    if (!state.isMainAdmin) {
+      if (box) box.style.display = "none";
+      return;
+    }
+
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "admin-stars-toggle";
+      box.className = "card";
+      box.style.margin = "0 0 12px";
+      box.style.padding = "12px";
+      const tabs = qs(".admin-tabs", root);
+      if (tabs) root.insertBefore(box, tabs);
+      else root.appendChild(box);
+    }
+
+    box.style.display = "block";
+    const enabled = starsPaymentsEnabled();
+    box.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:900;">Оплата Stars</div>
+          <div style="font-size:12px; color:var(--text-dim);">Сейчас: ${enabled ? "🟢 включена" : "🔴 выключена"}</div>
+        </div>
+        <button class="btn ${enabled ? "btn-danger" : "btn-main"}" type="button" onclick="adminToggleStarsPayments(${enabled ? "false" : "true"})">${enabled ? "Выключить" : "Включить"}</button>
+      </div>
+    `;
+  }
+
+  function applyStarsUiState() {
+    const enabled = starsPaymentsEnabled();
+    const starOpt = qs('#t-cur option[value="star"]');
+    if (starOpt) {
+      starOpt.disabled = !enabled;
+      starOpt.hidden = !enabled;
+    }
+
+    const curSel = $("t-cur");
+    if (curSel && !enabled && String(curSel.value || "rub").toLowerCase() === "star") {
+      curSel.value = "rub";
+    }
+
+    const payStarsCard = qsa('.pay-opt').find(el => String(el.getAttribute('onclick') || '').includes("pay_stars"));
+    if (payStarsCard) payStarsCard.style.display = enabled ? "" : "none";
+
+    renderAdminStarsToggle();
+    try { recalc(); } catch (e) {}
+  }
+
   function safeText(s) {
     return String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
   }
@@ -720,6 +781,8 @@ function tgAlert(msg, kind = "info", title = "") {
       state.user = data.user || state.user;
       state.balance = data.balance || state.balance;
       state.config = data.config || state.config;
+    applyStarsUiState();
+      applyStarsUiState();
       const newBalSig = balanceSignature(state.balance);
       const balanceChanged = prevBalSig !== newBalSig;
       const newTasks = Array.isArray(data.tasks) ? data.tasks : [];
@@ -1823,6 +1886,9 @@ if (!list.length) {
     const neededRub = Number(cost || 0);
     const neededStars = rubToStars(neededRub);
     const bal = state.balance || {};
+    if (payCurrency === "star" && !starsPaymentsEnabled()) {
+      return tgAlert("Оплата Stars временно отключена администратором", "error", "Stars выключены");
+    }
     if (payCurrency === "star") {
       if (Number(bal.stars_balance || 0) < neededStars) {
         return tgAlert(`Недостаточно Stars. Нужно ${neededStars} ⭐`, "error", "Недостаточно баланса");
@@ -2051,6 +2117,7 @@ if (!list.length) {
   // --------------------
   window.processPay = async function (kind) {
     if (kind !== "pay_stars") return;
+    if (!starsPaymentsEnabled()) return tgAlert("Оплата Stars временно отключена администратором", "error", "Stars выключены");
 
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
     if (!amount || amount < 1) return tgAlert("Минимум 1 ₽");
@@ -2146,18 +2213,24 @@ if (!list.length) {
         state.isAdmin = true;
         state.isMainAdmin = !!(res.is_main_admin);
         state.adminCounts = res.counts || state.adminCounts;
+        if (res.features && Object.prototype.hasOwnProperty.call(res.features, "stars_payments_enabled")) {
+          state.config = Object.assign({}, state.config || {}, { stars_payments_enabled: !!res.features.stars_payments_enabled });
+        }
         renderAdminBadge();
+        applyStarsUiState();
         const apc = $("admin-panel-card");
         if (apc) apc.style.display = "block";
       } else {
         state.isAdmin = false;
         state.isMainAdmin = false;
+        applyStarsUiState();
         const apc2 = $("admin-panel-card");
         if (apc2) apc2.style.display = "none";
       }
     } catch (e) {
       state.isAdmin = false;
-        state.isMainAdmin = false;
+      state.isMainAdmin = false;
+      applyStarsUiState();
       const c = $("admin-panel-card");
       if (c) c.style.display = "none";
     }
@@ -2174,7 +2247,21 @@ if (!list.length) {
   window.openAdminPanel = async function () {
     if (!state.isAdmin) return;
     openOverlay("m-admin");
+    renderAdminStarsToggle();
     await switchAdminTab("proofs");
+  };
+
+  window.adminToggleStarsPayments = async function (enabled) {
+    if (!state.isMainAdmin) return tgAlert("Только для главного админа");
+    try {
+      const res = await apiPost("/api/admin/stars-pay/set", { enabled: !!enabled });
+      if (!res || !res.ok) throw new Error((res && res.error) || "Не удалось сохранить");
+      state.config = Object.assign({}, state.config || {}, { stars_payments_enabled: !!res.enabled });
+      applyStarsUiState();
+      tgAlert(`Оплата Stars ${res.enabled ? "включена" : "выключена"}`);
+    } catch (e) {
+      tgAlert(String(e.message || e));
+    }
   };
 
   window.switchAdminTab = async function (tab) {
