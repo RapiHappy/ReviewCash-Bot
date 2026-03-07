@@ -2,15 +2,11 @@ html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 
 :root {
   /* Dark Theme (Default) */
-  --text: var(--text-main);
-  --toast-bg: rgba(18, 20, 28, 0.94);
-  --toast-border: rgba(255,255,255,0.10);
-  --toast-shadow: 0 12px 34px rgba(0,0,0,0.35);
-  --field-bg: rgba(255,255,255,0.04);
   --bg: #05070a;
   --card-bg: #0e1218;
   --text-main: #ffffff;
   --text-dim: #94a3b8;
+  --text: #ffffff;
   --glass: rgba(255, 255, 255, 0.04);
   --glass-border: rgba(255, 255, 255, 0.1);
   --accent-cyan: #00eaff;
@@ -26,16 +22,12 @@ html.theme-light{
   --bg:#f5f7fb;
   --card-bg:#ffffff;
   --text-main:#0b1220;
+  --text:#0b1220;
   --text-dim:#4b5563;
-  --text: var(--text-main);
   --glass:rgba(2,6,23,0.04);
   --glass-border:rgba(2,6,23,0.10);
   --nav-bg:rgba(255,255,255,0.92);
   --shadow:rgba(2,6,23,0.08);
-  --toast-bg: rgba(255,255,255,0.96);
-  --toast-border: rgba(15,23,42,0.12);
-  --toast-shadow: 0 14px 34px rgba(15,23,42,0.10);
-  --field-bg: rgba(15,23,42,0.03);
 }
 html.theme-light body{ background: var(--bg); }
 
@@ -43,6 +35,7 @@ body.light-mode {
   --bg: #f2f4f7;
   --card-bg: #ffffff;
   --text-main: #1a1e23;
+  --text: #1a1e23;
   --text-dim: #64748b;
   --glass: rgba(0, 0, 0, 0.03);
   --glass-border: rgba(0, 0, 0, 0.08);
@@ -557,64 +550,47 @@ html, body{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 .qa-perf .qa-right{ gap:8px !important; }
 
 
-/* ===== Visibility + Light theme polish ===== */
-body, .modal, .card, .task-item, .menu-item, .list-item, .qa-card, .admin-tab, .pay-opt, .copy-box, .total-badge{
-  color: var(--text-main);
-}
-input::placeholder, textarea::placeholder, select::placeholder{
-  color: var(--text-dim);
-  opacity: .82;
-}
-small, .muted, .subtitle{ color: var(--text-dim); }
-a{ color: var(--accent-cyan); }
-.btn-danger{
-  background: linear-gradient(135deg, #ff6b6b, #ff3b3b);
-  color: #fff;
-  border: none;
-}
-input, select, textarea{
-  background-color: var(--field-bg);
-}
-html.theme-light .card,
-html.theme-light .task-item,
-html.theme-light .menu-item,
-html.theme-light .pay-opt,
-html.theme-light .copy-box,
-html.theme-light .admin-tabs,
-html.theme-light .total-badge,
-html.theme-light .qa-card,
-html.theme-light .nav-bar,
-html.theme-light .modal{
-  box-shadow: 0 10px 30px rgba(15,23,42,0.08);
-}
+/* Light theme: only contrast fixes, no redesign */
 html.theme-light .btn-secondary,
-html.theme-light .ops-btn,
-html.theme-light .theme-toggle{
-  background: rgba(15,23,42,0.04);
-  color: var(--text-main);
-  border-color: rgba(15,23,42,0.10);
+body.light-mode .btn-secondary,
+html.theme-light .menu-item,
+body.light-mode .menu-item,
+html.theme-light .pay-opt,
+body.light-mode .pay-opt,
+html.theme-light .task-item,
+body.light-mode .task-item,
+html.theme-light .admin-tabs,
+body.light-mode .admin-tabs{
+  background: rgba(255,255,255,0.92);
 }
-html.theme-light .brand-box{
-  background:#fff;
-  box-shadow:0 6px 18px rgba(15,23,42,0.08);
+
+html.theme-light .qa-card,
+body.light-mode .qa-card{
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,250,252,0.96));
+  border-color: rgba(2,6,23,0.08);
+  box-shadow: 0 10px 28px rgba(2,6,23,0.08);
 }
-html.theme-light .file-upload-btn{
-  background: rgba(0,112,243,0.06);
-}
-html.theme-light .copy-box{
-  background: rgba(0,112,243,0.06);
-  border-color: rgba(0,112,243,0.18);
-}
+
+html.theme-light .qa-chip,
+body.light-mode .qa-chip,
 html.theme-light .qa-arrow,
-html.theme-light .qa-chip{
+body.light-mode .qa-arrow{
+  background: rgba(2,6,23,0.04);
+  border-color: rgba(2,6,23,0.08);
   color: var(--text-main);
-  background: rgba(15,23,42,0.05);
-  border-color: rgba(15,23,42,0.08);
 }
-html.theme-light .nav-item.active{
-  background: #0f172a;
-  color: #fff;
+
+html.theme-light .copy-box,
+body.light-mode .copy-box{
+  background: rgba(37,99,235,0.06);
+  border-color: rgba(37,99,235,0.22);
 }
-html.theme-light .st-pending{ background: rgba(255,204,0,0.16); }
-html.theme-light .st-paid{ background: rgba(0,255,136,0.14); }
-html.theme-light .st-rejected{ background: rgba(255,75,75,0.14); }
+
+html.theme-light input,
+html.theme-light select,
+html.theme-light textarea,
+body.light-mode input,
+body.light-mode select,
+body.light-mode textarea{
+  background-color: rgba(2,6,23,0.03);
+}
