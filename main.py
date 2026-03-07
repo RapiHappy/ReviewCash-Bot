@@ -1260,6 +1260,88 @@ async def notify_user(uid: int, text: str, force: bool = False):
     except Exception:
         pass
 
+
+# -------------------------
+# Telegram Stars admin helpers
+# -------------------------
+async def tg_bot_api_call(method: str, data: dict | None = None) -> dict:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    payload = data or {}
+    import aiohttp
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, json=payload) as resp:
+            try:
+                res = await resp.json(content_type=None)
+            except Exception:
+                body = await resp.text()
+                raise RuntimeError(f"Telegram API {method} bad response: HTTP {resp.status} {body[:300]}")
+            if not isinstance(res, dict) or not res.get("ok"):
+                desc = (res or {}).get("description") if isinstance(res, dict) else None
+                raise RuntimeError(f"Telegram API {method} failed: {desc or ('HTTP ' + str(resp.status))}")
+            return res.get("result") or {}
+
+
+def _format_star_amount_obj(obj: dict | None) -> str:
+    obj = obj or {}
+    amount = int(obj.get("amount") or 0)
+    nano = int(obj.get("nanostar_amount") or 0)
+    if nano:
+        frac = f"{nano:09d}".rstrip("0")
+        return f"{amount}.{frac}⭐"
+    return f"{amount}⭐"
+
+
+def _format_unix_ts(ts) -> str:
+    try:
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc) + timedelta(hours=3)
+        return dt.strftime("%d.%m %H:%M")
+    except Exception:
+        return "?"
+
+
+def _star_partner_text(partner: dict | None) -> str:
+    partner = partner or {}
+    ptype = str(partner.get("type") or "other")
+    if ptype == "user":
+        uname = partner.get("username")
+        if uname:
+            return f"@{uname}"
+        name = " ".join(x for x in [partner.get("first_name"), partner.get("last_name")] if x)
+        if name.strip():
+            return name.strip()
+        return f"user {partner.get('id') or '?'}"
+    if ptype == "fragment":
+        ws = partner.get("withdrawal_state")
+        if isinstance(ws, dict):
+            st = str(ws.get("type") or "fragment")
+            return f"Fragment ({st})"
+        return "Fragment"
+    if ptype == "telegram_ads":
+        return "Telegram Ads"
+    if ptype == "telegram_api":
+        return "Telegram API"
+    if ptype == "bot":
+        uname = partner.get("username")
+        return f"bot @{uname}" if uname else "bot"
+    if ptype == "chat":
+        title = partner.get("title")
+        return title or "chat"
+    if ptype == "affiliate_program":
+        return "affiliate"
+    return ptype or "other"
+
+
+async def get_bot_stars_balance() -> dict:
+    return await tg_bot_api_call("getMyStarBalance")
+
+
+async def get_bot_star_transactions(limit: int = 10, offset: int = 0) -> list[dict]:
+    limit = max(1, min(int(limit or 10), 100))
+    res = await tg_bot_api_call("getStarTransactions", {"limit": limit, "offset": int(offset or 0)})
+    txs = res.get("transactions") or []
+    return txs if isinstance(txs, list) else []
+
 # -------------------------
 # MiniApp URL helper + broadcast about new tasks
 # -------------------------
@@ -2819,6 +2901,65 @@ async def cmd_me(message: Message):
         f"Заработано: {ref['earned_rub']:.0f} ₽\n"
         f"Ожидают бонуса: {ref.get('pending', 0)}"
     )
+
+@dp.message(Command("stars"))
+async def cmd_stars(message: Message):
+    if int(message.from_user.id) not in ADMIN_IDS:
+        return await message.answer("⛔ Только для админа")
+    try:
+        bal = await get_bot_stars_balance()
+        txs = await get_bot_star_transactions(limit=10)
+    except Exception as e:
+        log.exception("get stars info failed: %s", e)
+        return await message.answer("❌ Не удалось получить Stars баланс бота")
+
+    lines = [
+        "⭐ Баланс Stars бота",
+        f"Сейчас: {_format_star_amount_obj(bal)}",
+    ]
+    if txs:
+        lines.append("")
+        lines.append("Последние операции:")
+        for tx in txs[:10]:
+            incoming = bool(tx.get("source"))
+            partner = _star_partner_text(tx.get("source") if incoming else tx.get("receiver"))
+            sign = "+" if incoming else "-"
+            lines.append(f"{_format_unix_ts(tx.get('date'))} | {sign}{_format_star_amount_obj(tx)} | {partner}")
+    else:
+        lines.append("")
+        lines.append("Операций пока нет.")
+
+    await message.answer("\n".join(lines))
+
+@dp.message(Command("stars_tx"))
+async def cmd_stars_tx(message: Message):
+    if int(message.from_user.id) not in ADMIN_IDS:
+        return await message.answer("⛔ Только для админа")
+    try:
+        txs = await get_bot_star_transactions(limit=25)
+    except Exception as e:
+        log.exception("get stars tx failed: %s", e)
+        return await message.answer("❌ Не удалось получить транзакции Stars")
+
+    if not txs:
+        return await message.answer("⭐ Транзакций Stars пока нет")
+
+    chunks = []
+    cur = ["⭐ Последние Stars транзакции"]
+    for i, tx in enumerate(txs[:25], start=1):
+        incoming = bool(tx.get("source"))
+        partner = _star_partner_text(tx.get("source") if incoming else tx.get("receiver"))
+        sign = "+" if incoming else "-"
+        row = f"{i}. {_format_unix_ts(tx.get('date'))} | {sign}{_format_star_amount_obj(tx)} | {partner}"
+        if sum(len(x) + 1 for x in cur) + len(row) > 3500:
+            chunks.append("\n".join(cur))
+            cur = ["⭐ Последние Stars транзакции"]
+        cur.append(row)
+    if cur:
+        chunks.append("\n".join(cur))
+
+    for chunk in chunks:
+        await message.answer(chunk)
 
 # Stars платежи: Telegram требует PreCheckout ok=True
 @dp.pre_checkout_query()
