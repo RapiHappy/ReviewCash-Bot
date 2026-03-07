@@ -3010,6 +3010,11 @@ async def cb_starspay_toggle(cq: CallbackQuery):
         except Exception:
             pass
 
+    try:
+        await cq.answer(f"Stars {'включены' if enabled else 'выключены'}")
+    except Exception:
+        pass
+
     await cq.answer("Сохранено")
 
 
