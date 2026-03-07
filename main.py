@@ -1044,19 +1044,41 @@ async def touch_limit(uid: int, key: str):
 # -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
 FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
-FEATURE_FLAGS_USER_ID = 0
+
+
+def _feature_flags_user_id() -> int:
+    try:
+        return int(MAIN_ADMIN_ID or 0)
+    except Exception:
+        return 0
+
 
 async def is_stars_payments_enabled() -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return True
     try:
-        r = await sb_select(T_LIMITS, {"user_id": FEATURE_FLAGS_USER_ID, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY}, limit=1)
+        r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY}, limit=1)
         return not bool(r.data)
     except Exception:
         return True
 
+
 async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None) -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return bool(enabled)
+
+    # user_limits.user_id -> users.user_id FK: before writing a feature flag,
+    # make sure the owner row exists.
+    try:
+        await sb_upsert(T_USERS, {"user_id": ff_uid}, on_conflict="user_id")
+    except Exception:
+        pass
+
     if enabled:
         try:
-            await sb_delete(T_LIMITS, {"user_id": FEATURE_FLAGS_USER_ID, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY})
+            await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY})
         except Exception:
             pass
         return True
@@ -1064,7 +1086,7 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
     await sb_upsert(
         T_LIMITS,
         {
-            "user_id": FEATURE_FLAGS_USER_ID,
+            "user_id": ff_uid,
             "limit_key": FEATURE_STARS_PAY_DISABLED_KEY,
             "last_at": _now().isoformat(),
         },
