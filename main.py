@@ -1043,6 +1043,35 @@ async def touch_limit(uid: int, key: str):
 # user notifications (mute/unmute) via user_limits
 # -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
+FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
+FEATURE_FLAGS_USER_ID = 0
+
+async def is_stars_payments_enabled() -> bool:
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": FEATURE_FLAGS_USER_ID, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY}, limit=1)
+        return not bool(r.data)
+    except Exception:
+        return True
+
+async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None) -> bool:
+    if enabled:
+        try:
+            await sb_delete(T_LIMITS, {"user_id": FEATURE_FLAGS_USER_ID, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY})
+        except Exception:
+            pass
+        return True
+
+    await sb_upsert(
+        T_LIMITS,
+        {
+            "user_id": FEATURE_FLAGS_USER_ID,
+            "limit_key": FEATURE_STARS_PAY_DISABLED_KEY,
+            "last_at": _now().isoformat(),
+        },
+        on_conflict="user_id,limit_key"
+    )
+    return False
+
 
 async def is_notify_muted(uid: int) -> bool:
     try:
@@ -1612,6 +1641,7 @@ async def api_sync(req: web.Request):
         "task_ban_until": banned_until.isoformat() if banned_until else None,
         "config": {
             "stars_rub_rate": STARS_RUB_RATE,
+            "stars_payments_enabled": await is_stars_payments_enabled(),
         },
     })
 
@@ -1766,6 +1796,8 @@ async def api_task_create(req: web.Request):
     charged_currency = "rub"
 
     if pay_currency == "star":
+        if not await is_stars_payments_enabled():
+            return web.json_response({"ok": False, "error": "Оплата Stars временно отключена администратором"}, status=403)
         charged_currency = "star"
         charged_amount = max(1, int(round(total_cost / max(STARS_RUB_RATE, 0.000001))))
         ok = await sub_stars(uid, charged_amount)
@@ -2072,6 +2104,8 @@ async def api_tbank_claim(req: web.Request):
 async def api_stars_link(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    if not await is_stars_payments_enabled():
+        return web.json_response({"ok": False, "error": "Оплата Stars временно отключена администратором"}, status=403)
     rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
 
@@ -2337,6 +2371,9 @@ async def api_admin_summary(req: web.Request):
     return web.json_response({
         "ok": True,
         "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"]),
+        "features": {
+            "stars_payments_enabled": await is_stars_payments_enabled(),
+        },
         "counts": {
             "proofs": len(proofs.data or []),
             "withdrawals": len(wds.data or []),
@@ -2344,6 +2381,28 @@ async def api_admin_summary(req: web.Request):
             "tasks": len(tasks_active),
         }
     })
+
+async def api_admin_stars_pay_set(req: web.Request):
+    admin = await require_main_admin(req)
+    body = await safe_json(req)
+
+    raw_enabled = body.get("enabled")
+    if isinstance(raw_enabled, bool):
+        enabled = raw_enabled
+    elif isinstance(raw_enabled, (int, float)):
+        enabled = bool(raw_enabled)
+    else:
+        enabled = str(raw_enabled).strip().lower() in ("1", "true", "yes", "y", "on", "enable", "enabled")
+
+    enabled = await set_stars_payments_enabled(enabled, int(admin["id"]))
+    status_text = "включена" if enabled else "выключена"
+    try:
+        await notify_admin(f"⭐ Оплата Stars {status_text} главным админом {int(admin['id'])}")
+    except Exception:
+        pass
+
+    return web.json_response({"ok": True, "enabled": enabled})
+
 
 async def api_admin_balance_credit(req: web.Request):
     admin = await require_admin(req)
@@ -2902,6 +2961,58 @@ async def cmd_me(message: Message):
         f"Ожидают бонуса: {ref.get('pending', 0)}"
     )
 
+def _stars_pay_toggle_kb(enabled: bool):
+    kb = InlineKeyboardBuilder()
+    if enabled:
+        kb.button(text="🔴 Выключить Stars", callback_data="starspay:off")
+    else:
+        kb.button(text="🟢 Включить Stars", callback_data="starspay:on")
+    kb.button(text="🔄 Обновить", callback_data="starspay:status")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+@dp.message(Command("stars_pay"))
+async def cmd_stars_pay(message: Message):
+    if int(message.from_user.id) != int(MAIN_ADMIN_ID or 0):
+        return await message.answer("⛔ Только для главного админа")
+    enabled = await is_stars_payments_enabled()
+    status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
+    await message.answer(
+        f"⭐ Оплата Stars сейчас: {status}",
+        reply_markup=_stars_pay_toggle_kb(enabled)
+    )
+
+
+@dp.callback_query(F.data.startswith("starspay:"))
+async def cb_starspay_toggle(cq: CallbackQuery):
+    if int(cq.from_user.id) != int(MAIN_ADMIN_ID or 0):
+        return await cq.answer("Только для главного админа", show_alert=True)
+
+    action = str(cq.data or "").split(":", 1)[1].strip().lower()
+    current = await is_stars_payments_enabled()
+
+    if action == "on":
+        enabled = await set_stars_payments_enabled(True, int(cq.from_user.id))
+    elif action == "off":
+        enabled = await set_stars_payments_enabled(False, int(cq.from_user.id))
+    else:
+        enabled = current
+
+    status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
+    text = f"⭐ Оплата Stars сейчас: {status}"
+
+    try:
+        await cq.message.edit_text(text, reply_markup=_stars_pay_toggle_kb(enabled))
+    except Exception:
+        try:
+            await cq.message.edit_reply_markup(reply_markup=_stars_pay_toggle_kb(enabled))
+        except Exception:
+            pass
+
+    await cq.answer("Сохранено")
+
+
 @dp.message(Command("stars"))
 async def cmd_stars(message: Message):
     if int(message.from_user.id) not in ADMIN_IDS:
@@ -3133,6 +3244,7 @@ def make_app():
 
     # admin
     app.router.add_post("/api/admin/summary", api_admin_summary)
+    app.router.add_post("/api/admin/stars-pay/set", api_admin_stars_pay_set)
     app.router.add_post("/api/admin/balance/credit", api_admin_balance_credit)
     app.router.add_post("/api/admin/user/punish", api_admin_user_punish)
     app.router.add_post("/api/admin/proof/list", api_admin_proof_list)
