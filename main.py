@@ -1044,8 +1044,6 @@ async def touch_limit(uid: int, key: str):
 # -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
 FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
-DELAYED_YA_REPORT_NOTIFY_DAYS = 3
-YA_REPORT_NOTIFY_KEY_PREFIX = "ya_report_notify_sent:"
 
 
 def _feature_flags_user_id() -> int:
@@ -1095,103 +1093,6 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
         on_conflict="user_id,limit_key"
     )
     return False
-
-
-async def has_ya_report_admin_notification(proof_id: str) -> bool:
-    ff_uid = _feature_flags_user_id()
-    if ff_uid <= 0:
-        return False
-    key = f"{YA_REPORT_NOTIFY_KEY_PREFIX}{str(proof_id or '').strip()}"
-    if not key.strip():
-        return False
-    try:
-        r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": key}, limit=1)
-        return bool(r.data)
-    except Exception:
-        return False
-
-
-async def mark_ya_report_admin_notification(proof_id: str):
-    ff_uid = _feature_flags_user_id()
-    if ff_uid <= 0:
-        return
-    key = f"{YA_REPORT_NOTIFY_KEY_PREFIX}{str(proof_id or '').strip()}"
-    if not key.strip():
-        return
-    try:
-        await sb_upsert(T_USERS, {"user_id": ff_uid}, on_conflict="user_id")
-    except Exception:
-        pass
-    try:
-        await sb_upsert(
-            T_LIMITS,
-            {"user_id": ff_uid, "limit_key": key, "last_at": _now().isoformat()},
-            on_conflict="user_id,limit_key"
-        )
-    except Exception:
-        pass
-
-
-async def pending_ya_reports_ready_for_notify(limit: int = 100) -> list[dict]:
-    try:
-        r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=False, limit=max(1, int(limit or 100)))
-        comps = r.data or []
-    except Exception:
-        return []
-
-    task_ids = list({c.get("task_id") for c in comps if c.get("task_id")})
-    tasks_map = {}
-    if task_ids:
-        try:
-            tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,type", limit=500)
-            for t in (tr.data or []):
-                tasks_map[str(t.get("id"))] = t
-        except Exception:
-            tasks_map = {}
-
-    threshold = _now() - timedelta(days=DELAYED_YA_REPORT_NOTIFY_DAYS)
-    out = []
-    for c in comps:
-        tid = str(c.get("task_id") or "")
-        task = tasks_map.get(tid) or {}
-        if str(task.get("type") or "").lower() != "ya":
-            continue
-        proof_id = str(c.get("id") or "").strip()
-        if not proof_id:
-            continue
-        try:
-            created_at = datetime.fromisoformat(str(c.get("created_at") or "").replace("Z", "+00:00"))
-        except Exception:
-            continue
-        if created_at > threshold:
-            continue
-        if await has_ya_report_admin_notification(proof_id):
-            continue
-        out.append({"proof": c, "task": task})
-    return out
-
-
-async def delayed_ya_report_notify_loop():
-    while True:
-        try:
-            ready = await pending_ya_reports_ready_for_notify(limit=200)
-            for item in ready:
-                proof = item.get("proof") or {}
-                task = item.get("task") or {}
-                proof_id = str(proof.get("id") or "").strip()
-                if not proof_id:
-                    continue
-                await notify_admin(
-                    f"🧾 Отчёт Яндекс готов к проверке (через {DELAYED_YA_REPORT_NOTIFY_DAYS} дня)\n"
-                    f"Task: {task.get('title') or 'Задание'}\n"
-                    f"User: {proof.get('user_id')}\n"
-                    f"TaskID: {proof.get('task_id')}"
-                )
-                await mark_ya_report_admin_notification(proof_id)
-                await asyncio.sleep(0.2)
-        except Exception as e:
-            log.warning("delayed_ya_report_notify_loop failed: %s", e)
-        await asyncio.sleep(600)
 
 
 async def is_notify_muted(uid: int) -> bool:
@@ -2112,10 +2013,7 @@ async def api_task_submit(req: web.Request):
     if task.get("type") == "gm":
         await touch_limit(uid, "gm_review")
 
-    if task.get("type") == "ya":
-        log.info("Yandex report queued for delayed admin notification after %s days: task=%s user=%s", DELAYED_YA_REPORT_NOTIFY_DAYS, task_id, uid)
-    else:
-        await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
+    await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     xp_expected = task_xp(task)
     return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
 
@@ -3404,8 +3302,6 @@ async def on_startup(app: web.Application):
     else:
         asyncio.create_task(dp.start_polling(bot))
         log.info("Polling started")
-
-    asyncio.create_task(delayed_ya_report_notify_loop())
 
 async def on_cleanup(app: web.Application):
     if crypto:
