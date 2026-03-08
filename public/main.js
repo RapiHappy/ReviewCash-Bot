@@ -115,15 +115,15 @@ function showConnectHint() {
   if (existing) return;
   const wrap = document.createElement("div");
   wrap.id = "connect-hint";
-  wrap.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:99999;padding:14px 14px;border-radius:18px;background:var(--toast-bg);border:1px solid rgba(255,77,79,.32);backdrop-filter:blur(12px);box-shadow:var(--toast-shadow);color:var(--text-main);";
+  wrap.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:99999;padding:12px 12px;border-radius:14px;background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.35);backdrop-filter:blur(8px);";
   wrap.innerHTML = `
     <div style="font-weight:700;margin-bottom:6px">Нет initData (Telegram)</div>
-    <div style="opacity:.92;font-size:13px;line-height:1.35;margin-bottom:12px;color:var(--text-main)">
+    <div style="opacity:.9;font-size:13px;line-height:1.25;margin-bottom:10px">
       Открой MiniApp кнопкой <b>/app</b> внутри чата с ботом или через кнопку меню — тогда Telegram пришлёт initData и профиль загрузится.
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button id="btn-open-bot-app" style="padding:8px 12px;border-radius:12px;border:0;background:#2ea6ff;color:#001018;font-weight:700">Открыть через бота</button>
-      <button id="btn-hide-hint" style="padding:8px 12px;border-radius:12px;border:1px solid var(--glass-border);background:var(--glass);color:var(--text-main);font-weight:700">Скрыть</button>
+      <button id="btn-hide-hint" style="padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;color:#fff;font-weight:600">Скрыть</button>
     </div>
   `;
   document.body.appendChild(wrap);
@@ -2316,7 +2316,7 @@ if (!list.length) {
       const t = p.task || {};
       const taskLink = t.target_url ? normalizeUrl(t.target_url) : "";
       const proofUrl = p.proof_url ? normalizeUrl(p.proof_url) : "";
-      const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:var(--glass);" />` : "";
+      const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
       const isReview = ["ya", "gm"].includes(String(t.type || "").toLowerCase());
 
@@ -2559,7 +2559,7 @@ async function loadAdminTasks() {
       const um = adminCard(`
         <div style="font-weight:900; margin-bottom:8px;">⚠️ Санкции пользователю</div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <input id="admin-user-id" placeholder="User ID" inputmode="numeric" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid var(--glass-border); background:var(--glass); color:var(--text-main);" />
+          <input id="admin-user-id" placeholder="User ID" inputmode="numeric" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text);" />
           <button class="btn btn-secondary" data-um-ban="1" style="padding:10px 12px;">⛔ Бан 1д</button>
           <button class="btn btn-secondary" data-um-unban="1" style="padding:10px 12px;">✅ Разбан</button>
           <button class="btn btn-secondary" data-um-fine="1" style="padding:10px 12px;">💸 Штраф</button>
