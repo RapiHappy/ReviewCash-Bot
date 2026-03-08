@@ -917,11 +917,26 @@ async function syncAll() {
     }
   }
 
+  function xpNeededForLevel(lvl) {
+    const base = 100;
+    const multiplier = 2;
+    const level = Math.max(1, Number(lvl || 1));
+    return Math.round(base * Math.pow(multiplier, Math.max(0, level - 1)));
+  }
+
   function levelFromXp(xp) {
-    const x = Number(xp || 0);
-    const lvl = Math.floor(x / 100) + 1;
-    const cur = x % 100;
-    return { lvl, cur, next: 100 };
+    const x = Math.max(0, Number(xp || 0));
+    let lvl = 1;
+    let spent = 0;
+    let next = xpNeededForLevel(lvl);
+    while (x >= spent + next) {
+      spent += next;
+      lvl += 1;
+      next = xpNeededForLevel(lvl);
+    }
+    const cur = x - spent;
+    const remaining = Math.max(0, next - cur);
+    return { lvl, cur, next, remaining, totalNext: spent + next };
   }
 
   function renderProfile() {
@@ -940,11 +955,15 @@ async function syncAll() {
     if ($("u-bal-star")) $("u-bal-star").textContent = fmtStars(b.stars_balance || 0);
 
     const xpInfo = levelFromXp(b.xp || 0);
-    if ($("u-lvl-badge")) $("u-lvl-badge").textContent = "LVL " + (b.level || xpInfo.lvl);
-    if ($("u-xp-cur")) $("u-xp-cur").textContent = `${Math.round(b.xp || 0)} XP`;
-    if ($("u-xp-next")) $("u-xp-next").textContent = `${xpInfo.next} XP`;
+    const currentLevel = Number(b.level || xpInfo.lvl || 1);
+    const remainingXp = Number(b.xp_remaining != null ? b.xp_remaining : xpInfo.remaining || 0);
+    const nextNeedXp = Number(b.xp_next_level != null ? b.xp_next_level : xpInfo.next || 0);
+    const currentProgressXp = Number(b.xp_current_level != null ? b.xp_current_level : xpInfo.cur || 0);
+    if ($("u-lvl-badge")) $("u-lvl-badge").textContent = "LVL " + currentLevel;
+    if ($("u-xp-cur")) $("u-xp-cur").textContent = `До LVL ${currentLevel + 1}: ${remainingXp} XP`;
+    if ($("u-xp-next")) $("u-xp-next").textContent = `Нужно на уровень: ${nextNeedXp} XP`;
     const fill = $("u-xp-fill");
-    if (fill) fill.style.width = clamp((xpInfo.cur / xpInfo.next) * 100, 0, 100) + "%";
+    if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
   }
 
   function renderInvite() {
