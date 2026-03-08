@@ -162,7 +162,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
 
 # Build tag for diagnostics (to ensure Render runs the expected version)
-BUILD_TAG = 'rc_backend_release4_lvlcompat'
+BUILD_TAG = 'rc_backend_release5_lvldouble'
 try:
     log.warning('[BUILD] %s', BUILD_TAG)
 except Exception:
@@ -219,7 +219,8 @@ PROOF_BUCKET = os.getenv("PROOF_BUCKET", "proofs").strip() or "proofs"
 MAX_PROOF_MB = int(os.getenv("MAX_PROOF_MB", "8").strip())
 
 # Levels / XP
-XP_PER_LEVEL = int(os.getenv("XP_PER_LEVEL", "100").strip())          # 100 xp = +1 lvl
+XP_PER_LEVEL = int(os.getenv("XP_PER_LEVEL", "100").strip())          # базовый XP для LVL 1 -> 2
+XP_LEVEL_STEP = int(os.getenv("XP_LEVEL_STEP", "2").strip())     # множитель роста XP на каждый следующий уровень
 XP_PER_TASK_PAID = int(os.getenv("XP_PER_TASK_PAID", "10").strip())   # за оплаченный отзыв/задачу
 XP_PER_TOPUP_100 = int(os.getenv("XP_PER_TOPUP_100", "2").strip())    # за каждые 100₽ пополнения
 
@@ -805,10 +806,33 @@ async def anti_fraud_check_and_touch(
 # -------------------------
 # levels / balances
 # -------------------------
+def xp_needed_for_levelup(level: int) -> int:
+    level = max(1, int(level or 1))
+    base = max(1, int(XP_PER_LEVEL))
+    mult = max(1, int(XP_LEVEL_STEP or 2))
+    return int(base * (mult ** (level - 1)))
+
+def calc_level_progress(xp: int) -> dict:
+    x = max(0, int(xp or 0))
+    lvl = 1
+    spent = 0
+    need = xp_needed_for_levelup(lvl)
+    while x >= spent + need:
+        spent += need
+        lvl += 1
+        need = xp_needed_for_levelup(lvl)
+    current = max(0, x - spent)
+    remaining = max(0, need - current)
+    return {
+        "level": lvl,
+        "current_xp": current,
+        "next_need": need,
+        "remaining": remaining,
+        "total_next_level": spent + need,
+    }
+
 def calc_level(xp: int) -> int:
-    if XP_PER_LEVEL <= 0:
-        return 1
-    return max(1, (int(xp) // int(XP_PER_LEVEL)) + 1)
+    return int(calc_level_progress(xp).get("level") or 1)
 
 async def get_balance(uid: int):
     r = await sb_select(T_BAL, {"user_id": uid}, limit=1)
@@ -827,8 +851,13 @@ async def get_balance(uid: int):
         # if DB stored wrong level - fix silently
         if lvl != calc_lvl:
             lvl = calc_lvl
+        progress = calc_level_progress(xp)
         row["xp"] = xp
         row["level"] = lvl
+        row["xp_current_level"] = int(progress.get("current_xp") or 0)
+        row["xp_next_level"] = int(progress.get("next_need") or 0)
+        row["xp_remaining"] = int(progress.get("remaining") or 0)
+        row["xp_total_next_level"] = int(progress.get("total_next_level") or 0)
         # best-effort persist fixes
         try:
             await balances_update(uid, {"xp": xp, "level": lvl, "updated_at": _now().isoformat()})
@@ -840,7 +869,7 @@ async def get_balance(uid: int):
         await sb_upsert(T_BAL, {"user_id": uid, "xp": 0, "rub_balance": 0, "stars_balance": 0}, on_conflict="user_id")
     except Exception:
         pass
-    return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1}
+    return {"user_id": uid, "rub_balance": 0, "stars_balance": 0, "xp": 0, "level": 1, "xp_current_level": 0, "xp_next_level": xp_needed_for_levelup(1), "xp_remaining": xp_needed_for_levelup(1), "xp_total_next_level": xp_needed_for_levelup(1)}
 
 async def set_xp_level(uid: int, xp: int):
     xp = int(max(0, xp))
@@ -2973,7 +3002,7 @@ async def cmd_start(message: Message):
 async def cb_help(cq: CallbackQuery):
     await cq.answer()
     await cq.message.answer(
-        '📌 *Инструкция новичку — ReviewCash*\n\n🚀 *Как зарабатывать:*\n1️⃣ Нажми «🚀 Открыть приложение»\n2️⃣ Выбери задание\n3️⃣ Обязательно нажми «Перейти к выполнению»\n4️⃣ Выполни задание\n5️⃣ Вернись и нажми «Отправить отчёт»\n6️⃣ Дождись проверки — получи ₽ на баланс\n\n💰 *Начисление денег*\n— Деньги приходят после проверки администратором  \n— TG-задания могут проверяться автоматически\n\n🏆 *Уровни (LVL)*\n— За одобренные задания начисляется XP  \n— Кол-во XP зависит от сложности задания  \n— 100 XP = +1 уровень  \nЧем выше уровень — тем выше доверие\n\n🎁 *Рефералка*\n— 50₽ за каждого друга  \n— Бонус начисляется, когда друг выполнит первое задание\n\n⏳ *Лимиты*\nНекоторые задания можно выполнять:\n— 1 раз\n— или с интервалом (1–3 дня)\nЕсли задание не видно — лимит ещё не прошёл\n\n⚡ *Режимы приложения*\nВ профиле есть переключатель «⚡ Режим»:\n— *Слабое устройство* — меньше эффектов и реже авто-обновление\n— *Нормальное* — плавнее анимации и обновление чаще\n\n🚫 *Важно!*\nЗапрещено:\n— фейковые скриншоты\n— отзывы не со своего аккаунта\n— поддельные доказательства\n\nЕсли админ нажмёт «Фейк»:\n— блокировка на 3 дня по этому заданию\n— возможны штрафы (заморозка выплат/снятие бонусов) при повторных нарушениях\n\n❓ *Проблемы?*\nЕсли не отправляется отчёт —\nты не нажал «Перейти к выполнению».\n\nРаботай честно — и выплаты будут без проблем 💎',
+        '📌 *Инструкция новичку — ReviewCash*\n\n🚀 *Как зарабатывать:*\n1️⃣ Нажми «🚀 Открыть приложение»\n2️⃣ Выбери задание\n3️⃣ Обязательно нажми «Перейти к выполнению»\n4️⃣ Выполни задание\n5️⃣ Вернись и нажми «Отправить отчёт»\n6️⃣ Дождись проверки — получи ₽ на баланс\n\n💰 *Начисление денег*\n— Деньги приходят после проверки администратором  \n— TG-задания могут проверяться автоматически\n\n🏆 *Уровни (LVL)*\n— За одобренные задания начисляется XP  \n— Кол-во XP зависит от сложности задания  \n— Каждый следующий уровень требует в 2 раза больше XP  \nЧем выше уровень — тем выше доверие\n\n🎁 *Рефералка*\n— 50₽ за каждого друга  \n— Бонус начисляется, когда друг выполнит первое задание\n\n⏳ *Лимиты*\nНекоторые задания можно выполнять:\n— 1 раз\n— или с интервалом (1–3 дня)\nЕсли задание не видно — лимит ещё не прошёл\n\n⚡ *Режимы приложения*\nВ профиле есть переключатель «⚡ Режим»:\n— *Слабое устройство* — меньше эффектов и реже авто-обновление\n— *Нормальное* — плавнее анимации и обновление чаще\n\n🚫 *Важно!*\nЗапрещено:\n— фейковые скриншоты\n— отзывы не со своего аккаунта\n— поддельные доказательства\n\nЕсли админ нажмёт «Фейк»:\n— блокировка на 3 дня по этому заданию\n— возможны штрафы (заморозка выплат/снятие бонусов) при повторных нарушениях\n\n❓ *Проблемы?*\nЕсли не отправляется отчёт —\nты не нажал «Перейти к выполнению».\n\nРаботай честно — и выплаты будут без проблем 💎',
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -3027,7 +3056,8 @@ async def cmd_me(message: Message):
         "👤 Профиль\n"
         f"Баланс: {float(bal.get('rub_balance') or 0):.0f} ₽\n"
         f"Stars: {int(float(bal.get('stars_balance') or 0))} ⭐\n"
-        f"XP: {int(bal.get('xp') or 0)} | LVL: {int(bal.get('level') or 1)}\n\n"
+        f"XP: {int(bal.get('xp') or 0)} | LVL: {int(bal.get('level') or 1)}\n"
+        f"До следующего уровня: {int(bal.get('xp_remaining') or 0)} XP\n\n"
         "👥 Рефералы\n"
         f"Друзей: {ref['count']}\n"
         f"Заработано: {ref['earned_rub']:.0f} ₽\n"
