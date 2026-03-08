@@ -2100,6 +2100,8 @@ if (!list.length) {
       const kind = String(op.kind || "");
       let title = "";
       let sub = "";
+      let amountText = fmtRub(op.amount_rub || 0);
+      let amountStyle = "font-weight:900;";
       if (kind === "topup") {
         if (String(op.status || "paid") !== "paid") return;
         title = "Пополнение";
@@ -2111,6 +2113,10 @@ if (!list.length) {
         else if (src === "admin") title = "Начисление админом";
         else title = "Начисление";
         sub = String(op.title || "") || src;
+      } else if (kind === "fine") {
+        title = "Штраф";
+        sub = String(op.title || "") || "Списание администратором";
+        amountStyle = "font-weight:900; color:var(--danger);";
       } else if (kind === "payment") {
         title = "Пополнение (" + safeText(op.provider || "") + ")";
         sub = (op.status === "paid") ? "✅ Оплачено" : (op.status === "rejected" ? "❌ Отклонено" : "⏳ В ожидании");
@@ -2128,7 +2134,7 @@ if (!list.length) {
           <div style="font-weight:900;">${title}</div>
           <div style="font-size:12px; color:var(--text-dim);">${sub}</div>
         </div>
-        <div style="font-weight:900;">${fmtRub(op.amount_rub || 0)}</div>
+        <div style="${amountStyle}">${amountText}</div>
       `;
       box.appendChild(row);
     });
