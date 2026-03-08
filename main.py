@@ -2343,16 +2343,33 @@ async def api_ops_list(req: web.Request):
                     "created_at": p.get("created_at"),
                     "id": p.get("id"),
                 })
-        elif provider == "admin_credit":
-            ops.append({
-                "kind": "earning",
-                "source": "admin",
-                "status": status,
-                "amount_rub": amount,
-                "title": str(meta.get("reason") or "Ручное начисление"),
-                "created_at": p.get("created_at"),
-                "id": p.get("id"),
-            })
+        elif provider in ("admin_credit", "admin"):
+            admin_kind = str(meta.get("kind") or "").lower()
+            if provider == "admin_credit":
+                admin_kind = admin_kind or "credit"
+            elif not admin_kind:
+                admin_kind = "fine" if amount < 0 else "credit"
+
+            if admin_kind == "fine" or amount < 0:
+                ops.append({
+                    "kind": "fine",
+                    "source": "admin",
+                    "status": status or "paid",
+                    "amount_rub": amount,
+                    "title": str(meta.get("reason") or "Штраф от администратора"),
+                    "created_at": p.get("created_at"),
+                    "id": p.get("id"),
+                })
+            else:
+                ops.append({
+                    "kind": "earning",
+                    "source": "admin",
+                    "status": status,
+                    "amount_rub": amount,
+                    "title": str(meta.get("reason") or "Ручное начисление"),
+                    "created_at": p.get("created_at"),
+                    "id": p.get("id"),
+                })
         else:
             # unknown payment provider -> treat as topup
             ops.append({
