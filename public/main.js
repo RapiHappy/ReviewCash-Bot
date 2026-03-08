@@ -169,7 +169,22 @@ function tgAlert(msg, kind = "info", title = "") {
     t = t.replace(/\s*\(POST\s+[^\)]+\)\s*$/i, "");
     // strip status prefix "400: "
     t = t.replace(/^\s*\d{3}\s*:\s*/g, "");
+    if (/server got itself in trouble|internal server error/i.test(t)) {
+      return "Сервер временно ответил с ошибкой. Попробуй ещё раз через пару секунд.";
+    }
     return t.trim();
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function isRetryableBootError(err) {
+    const status = Number(err && err.status || 0);
+    const raw = String((err && (err.raw || err.message)) || "");
+    if (status === 0 || status === 408 || status === 425 || status === 429) return true;
+    if (status >= 500 && status < 600) return true;
+    return /server got itself in trouble|internal server error|timeout|temporar/i.test(raw);
   }
 
   function escapeHtml(str) {
@@ -874,6 +889,22 @@ async function syncAll() {
   await checkAdmin();
   }
 
+  async function syncAllWithRetry() {
+    const delays = [0, 700, 1600];
+    let lastErr = null;
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i] > 0) await sleep(delays[i]);
+      try {
+        await syncAll();
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (!isRetryableBootError(e) || i === delays.length - 1) throw e;
+      }
+    }
+    throw lastErr || new Error("Ошибка подключения");
+  }
+
   function renderHeader() {
     const u = state.user || {};
     const name = (u.first_name || u.username || "Пользователь");
@@ -1435,8 +1466,7 @@ if (!list.length) {
       });
 
       if (res && res.ok) {
-        // Make the task disappear right away for this user
-        markTaskCompleted(task.id);
+        // Hide the task right away locally; server sync will keep it hidden while report is pending
         state.tasks = state.tasks.filter(t => String(t.id) !== String(task.id));
         renderTasks();
         // save nickname per platform so user doesn't type every time
@@ -2709,7 +2739,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     recalc();
 
       try {
-    await syncAll();
+    await syncAllWithRetry();
     startTasksAutoRefresh();
   } catch (e) {
     tgAlert(String(e.message || e), "error", "Подключение");
