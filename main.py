@@ -1633,14 +1633,40 @@ async def api_sync(req: web.Request):
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
-        tasks = [t for t in raw if int(t.get("qty_left") or 0) > 0 and (t.get("type") != "tg" or t.get("check_type") == "auto")]
+
+        pending_task_counts = {}
+        try:
+            psel = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=1000)
+            for x in (psel.data or []):
+                tid = x.get("task_id")
+                if tid is None:
+                    continue
+                k = str(tid)
+                pending_task_counts[k] = int(pending_task_counts.get(k, 0) or 0) + 1
+        except Exception:
+            pending_task_counts = {}
+
+        tasks = [
+            t for t in raw
+            if int(t.get("qty_left") or 0) > 0
+            and (t.get("type") != "tg" or t.get("check_type") == "auto")
+            and not (
+                int(t.get("owner_id") or 0) != uid
+                and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
+            )
+        ]
 
     reopen_task_ids = []
     try:
-        rr = await sb_select(T_COMP, {"user_id": uid, "status": "rework"}, order="moderated_at", desc=True, limit=200)
+        rr = await sb_select(T_COMP, {"user_id": uid}, order="moderated_at", desc=True, limit=300)
         if rr.data:
             active_ids = {str(t.get('id')) for t in tasks}
-            reopen_task_ids = [str(x.get('task_id')) for x in (rr.data or []) if str(x.get('task_id')) in active_ids]
+            reopen_statuses = {"rework", "rejected"}
+            reopen_task_ids = [
+                str(x.get('task_id'))
+                for x in (rr.data or [])
+                if str(x.get('status') or '').lower() in reopen_statuses and str(x.get('task_id')) in active_ids
+            ]
             reopen_task_ids = list(dict.fromkeys(reopen_task_ids))
     except Exception:
         reopen_task_ids = []
@@ -1948,6 +1974,14 @@ async def api_task_submit(req: web.Request):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
+
+    if not is_auto:
+        # reserve only available slots: allow parallel pending reports while free places remain
+        pending_any = await sb_select(T_COMP, {"task_id": task_id_db, "status": "pending"}, order="created_at", desc=True, limit=1000)
+        pending_count = len(pending_any.data or [])
+        qty_left = int(task.get("qty_left") or 0)
+        if pending_count >= qty_left:
+            return web.json_response({"ok": False, "error": "Свободных мест сейчас нет: все места уже заняты отчётами на проверке. Дождись решения модератора."}, status=400)
 
     # require that user opened the task link (anti-fake) for manual checks
     if not is_auto:
@@ -3184,6 +3218,21 @@ def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
     resp.headers["Access-Control-Max-Age"] = "86400"
 
 @web.middleware
+async def api_error_middleware(req: web.Request, handler):
+    try:
+        return await handler(req)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        try:
+            log.exception("unhandled api error on %s %s: %s", req.method, req.path, e)
+        except Exception:
+            pass
+        if req.path.startswith("/api/"):
+            return web.json_response({"ok": False, "error": "Временная ошибка сервера"}, status=500)
+        raise
+
+@web.middleware
 async def cors_middleware(req: web.Request, handler):
     if req.method == "OPTIONS":
         resp = web.Response(status=204)
@@ -3210,7 +3259,7 @@ async def tg_webhook(req: web.Request):
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)
-    app = web.Application(middlewares=[cors_middleware], client_max_size=10 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware, api_error_middleware, no_cache_mw], client_max_size=10 * 1024 * 1024)
 
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
