@@ -444,7 +444,7 @@
   </nav>
 
   <!-- FAB -->
-  <div id="fab-wrap" class="fab-wrap" onclick="openModal('m-create')"><div class="fab-btn">+</div></div>
+  <div id="fab-wrap" class="fab-wrap" onclick="openModal('m-create')"><div class="fab-btn" role="button" aria-label="Создать новое задание"><span class="fab-icon">✨</span><span class="fab-text">Создать</span><span class="fab-shine"></span></div></div>
 
   <!-- CREATE MODAL -->
   <div id="m-create" class="overlay">
@@ -503,7 +503,7 @@
         <span id="t-total" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0 ₽</span>
       </div>
 
-      <button class="btn btn-main" style="width:100%; margin-top:25px;" onclick="createTask()">Оплатить и запустить</button>
+      <button class="btn btn-main create-cta" style="width:100%; margin-top:25px;" onclick="createTask()"><span>⚡ Оплатить и запустить</span></button>
     </div>
   </div>
 

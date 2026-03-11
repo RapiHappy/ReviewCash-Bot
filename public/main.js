@@ -348,7 +348,7 @@ function tgAlert(msg, kind = "info", title = "") {
     { id: "bot_start", title: "Запуск бота /start", reward: 12, desc: "Нажать /start в боте" },
     { id: "bot_msg", title: "Сообщение боту", reward: 4, desc: "Отправить сообщение боту" },
     { id: "open_miniapp", title: "Открыть Mini App", reward: 10, desc: "Открыть приложение" },
-    { id: "sub_24h", title: "Подписка + 24ч", reward: 30, desc: "Подписка и не отписываться 24 часа" },
+    { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
     { id: "invite_friends", title: "Инвайт друзей", reward: 50, desc: "Пригласить друзей" },
   ];
 
@@ -1423,6 +1423,13 @@ if (!list.length) {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
+        if (String(res.status || "") === "hold_24h") {
+          tgHaptic("success");
+          tgAlert(String(res.message || "Подтверждено. Повтори проверку через 24 часа."), "info", "Промежуточная проверка");
+          closeAllOverlays();
+          await syncAll();
+          return;
+        }
         // Make the task disappear right away for this user
         markTaskCompleted(task.id);
         state.tasks = state.tasks.filter(t => String(t.id) !== String(task.id));
@@ -1564,7 +1571,7 @@ if (!list.length) {
     return null;
   }
 
-  const TG_MANUAL_ONLY = new Set(["bot_start", "bot_msg", "open_miniapp", "view_react", "poll"]);
+  const TG_MANUAL_ONLY = new Set([]);
 
   function tgIsBotTarget(rawTarget, tgChat) {
     const raw = String(rawTarget || "").trim();
@@ -1595,7 +1602,7 @@ if (!list.length) {
 
   function tgAutoPossible(subType, tgKind) {
     if (tgKind !== "chat") return false;
-    return subType === "sub_channel" || subType === "join_group";
+    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h";
   }
 
   function setTargetStatus(kind, title, desc) {
@@ -1670,7 +1677,9 @@ if (!list.length) {
       } catch (e) {}
     } else {
       titleEl.textContent = "⚡ Автоматическая проверка:";
-      textEl.textContent = "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
+      textEl.textContent = (currentTgSubtype() === "sub_24h")
+        ? "Для этого типа: проверка подписки сейчас и повторно через 24 часа. Выплата только после второй проверки."
+        : "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
@@ -1728,7 +1737,7 @@ if (!list.length) {
         state._tgCheck.valid = true;
         state._tgCheck.chat = chat;
         state._tgCheck.forceManual = true;
-        setTargetStatus("ok", `TG: ${chat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+        setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
         updateTgHint();
       }
     } catch (e) {
@@ -1736,7 +1745,7 @@ if (!list.length) {
       state._tgCheck.valid = true;
       state._tgCheck.chat = chat;
       state._tgCheck.forceManual = true;
-      setTargetStatus("ok", `TG: ${chat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+      setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
       updateTgHint();
     }
   }
@@ -1886,21 +1895,20 @@ if (!list.length) {
         scheduleTgCheck();
         return;
       }
-      // If we checked and it failed, we will fallback to manual check (no hard block)
-
       // TG check:
-      // - For bots and manual-only subtypes: no membership check, manual proof.
-      // - For membership subtypes: try auto-check; if not possible, fallback to manual (no hard error).
+      // - TG tasks are auto-check only in backend.
+      // - If auto check is not possible, block creation and show guidance.
       const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind);
 
       if (manualOnly) {
         const label = tgKind === "bot" ? `Бот: ${tgChat}` : `TG: ${tgChat}`;
-        setTargetStatus("ok", label, "Ручная проверка (нужен скрин) ✅");
-        state._tgCheck.valid = true;
+        setTargetStatus("err", label, "Создание невозможно: для TG доступна только авто-проверка.");
+        state._tgCheck.valid = false;
         state._tgCheck.chat = tgChat;
         state._tgCheck.forceManual = true;
-        checkType = "manual";
         updateTgHint();
+        tgAlert("Для TG задания доступна только авто-проверка. Укажи канал/группу, где бот может проверить подписку.", "error", "Проверка Telegram");
+        return;
       } else {
         try {
           setTargetStatus("loading", "Проверяем…", "Проверяем доступ бота для авто-проверки");
@@ -1916,22 +1924,21 @@ if (!list.length) {
             updateTgHint();
           } else {
             const msg = (chk && (chk.message || chk.error)) ? String(chk.message || chk.error) : "Авто-проверка недоступна";
-            checkType = "manual";
-            state._tgCheck.forceManual = true;
-            setTargetStatus("ok", `TG: ${tgChat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
             updateTgHint();
-            tgAlert(msg + "\nЗадание будет создано с ручной проверкой.", "info", "Проверка Telegram");
+            tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
+            return;
           }
         } catch (e) {
           const msg = prettifyErrText(String(e.message || e));
-          checkType = "manual";
-          state._tgCheck.forceManual = true;
-          setTargetStatus("ok", `TG: ${tgChat}`, "Авто недоступно → будет ручная проверка (скрин) ✅");
+          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
           updateTgHint();
-          tgAlert(msg + "\nЗадание будет создано с ручной проверкой.", "info", "Проверка Telegram");
+          tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
+          return;
         }
       }
     }
+
     const neededRub = Number(cost || 0);
     const neededStars = rubToStars(neededRub);
     const bal = state.balance || {};
