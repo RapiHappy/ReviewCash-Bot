@@ -310,6 +310,11 @@ def strip_meta_tags(text: str) -> str:
         out.append(line)
     return "\n".join(out).strip()
 
+def get_tg_subtype(task: dict | None) -> str:
+    ins = str((task or {}).get("instructions") or "")
+    m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_\-]+)\s*$", ins)
+    return str(m.group(1)).strip().lower() if m else ""
+
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
 
@@ -329,6 +334,7 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
+TG_HOLD_WORKER_TASK: asyncio.Task | None = None
 
 
 async def setup_menu_button(bot: Bot):
@@ -1310,6 +1316,150 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
         log.warning("get_chat_member failed: %s", e)
         return False
 
+TG_HOLD_PREFIX = "tg_hold:"
+TG_SUB_24H_KEY = "sub_24h"
+TG_SUB_24H_DELAY_SEC = 24 * 3600
+TG_HOLD_SCAN_INTERVAL_SEC = int(os.getenv("TG_HOLD_SCAN_INTERVAL_SEC", "60").strip())
+
+
+def tg_hold_key(task_id: str, user_id: int) -> str:
+    return f"{TG_HOLD_PREFIX}{task_id}:{int(user_id)}"
+
+
+def tg_hold_parse_key(limit_key: str) -> tuple[str, int] | None:
+    try:
+        s = str(limit_key or "")
+        if not s.startswith(TG_HOLD_PREFIX):
+            return None
+        rest = s[len(TG_HOLD_PREFIX):]
+        task_id, user_id_s = rest.split(":", 1)
+        return str(task_id), int(user_id_s)
+    except Exception:
+        return None
+
+
+async def tg_hold_get(task_id: str, user_id: int) -> datetime | None:
+    key = tg_hold_key(task_id, user_id)
+    r = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": key}, limit=1)
+    if not r.data:
+        return None
+    return _parse_dt(r.data[0].get("last_at"))
+
+
+async def tg_hold_set(task_id: str, user_id: int, due_at: datetime):
+    key = tg_hold_key(task_id, user_id)
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": key, "last_at": due_at.isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+
+async def tg_hold_clear(task_id: str, user_id: int):
+    try:
+        await sb_delete(T_LIMITS, {"user_id": int(user_id), "limit_key": tg_hold_key(task_id, user_id)})
+    except Exception:
+        pass
+
+
+async def tg_hold_list_due(now_dt: datetime, limit: int = 500) -> list[dict]:
+    def _f():
+        return (
+            sb.table(T_LIMITS)
+            .select("user_id,limit_key,last_at")
+            .like("limit_key", f"{TG_HOLD_PREFIX}%")
+            .limit(int(limit))
+            .execute()
+        )
+    r = await sb_exec(_f)
+    out = []
+    for row in (r.data or []):
+        due_at = _parse_dt(row.get("last_at"))
+        if due_at and due_at <= now_dt:
+            out.append(row)
+    return out
+
+
+async def process_tg_24h_holds_once():
+    now_dt = _now()
+    due_rows = await tg_hold_list_due(now_dt)
+    for row in due_rows:
+        parsed = tg_hold_parse_key(row.get("limit_key"))
+        if not parsed:
+            continue
+        task_id, user_id = parsed
+        task_id_db = cast_id(task_id)
+        try:
+            t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
+            task = (t.data or [None])[0]
+            if not task or str(task.get("type") or "") != "tg":
+                await tg_hold_clear(task_id, user_id)
+                continue
+
+            chat = str(task.get("tg_chat") or "").strip()
+            if not chat:
+                await tg_hold_clear(task_id, user_id)
+                continue
+
+            reward = float(task.get("reward_rub") or 0)
+            ok_member = await tg_is_member(chat, user_id)
+            if ok_member:
+                await add_rub(user_id, reward)
+                await stats_add("payouts_rub", reward)
+                xp_added = task_xp(task)
+                await add_xp(user_id, xp_added)
+                await maybe_pay_referral_bonus(user_id)
+
+                try:
+                    left = int(task.get("qty_left") or 0)
+                    if left > 0:
+                        upd = {"qty_left": max(0, left - 1)}
+                        if int(upd["qty_left"]) <= 0:
+                            upd["status"] = "closed"
+                        await sb_update(T_TASKS, {"id": task_id_db}, upd)
+                except Exception:
+                    pass
+
+                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_24h"}, order="created_at", desc=True, limit=1)
+                if c.data:
+                    await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
+                        "status": "paid",
+                        "proof_text": "AUTO_TG_24H_OK",
+                        "moderated_at": _now().isoformat(),
+                    })
+                else:
+                    await sb_insert(T_COMP, {
+                        "task_id": task_id_db,
+                        "user_id": int(user_id),
+                        "status": "paid",
+                        "proof_text": "AUTO_TG_24H_OK",
+                        "proof_url": None,
+                        "moderated_at": _now().isoformat(),
+                    })
+                await notify_user(user_id, f"✅ Проверка через 24 часа пройдена. Начислено +{reward:.2f}₽")
+            else:
+                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_24h"}, order="created_at", desc=True, limit=1)
+                if c.data:
+                    await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
+                        "status": "rejected",
+                        "proof_text": "AUTO_TG_24H_FAIL",
+                        "moderated_at": _now().isoformat(),
+                    })
+                await notify_user(user_id, "❌ Проверка через 24 часа не пройдена: подписка не найдена. Выплата отменена.")
+        except Exception as e:
+            log.warning("tg hold process failed task=%s user=%s err=%s", task_id, user_id, e)
+        finally:
+            await tg_hold_clear(task_id, user_id)
+
+
+async def tg_hold_worker():
+    while True:
+        try:
+            await process_tg_24h_holds_once()
+        except Exception as e:
+            log.warning("tg hold worker tick failed: %s", e)
+        await asyncio.sleep(max(10, int(TG_HOLD_SCAN_INTERVAL_SEC)))
+
 # -------------------------
 # notify helpers
 # -------------------------
@@ -1998,7 +2148,7 @@ async def api_task_submit(req: web.Request):
 
     # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
     dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
-    blocking_statuses = {"pending", "paid", "fake"}
+    blocking_statuses = {"pending", "pending_24h", "paid", "fake"}
     if any(str(x.get("status") or "").lower() in blocking_statuses for x in (dup.data or [])):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
@@ -2022,11 +2172,57 @@ async def api_task_submit(req: web.Request):
         if not chat:
             return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
 
+        task_subtype = get_tg_subtype(task)
+        reward = float(task.get("reward_rub") or 0)
+
+        # Special flow for "Подписка +24ч":
+        # 1) verify membership now
+        # 2) schedule automatic re-check after 24 hours
+        # 3) payout is done by background worker only after second successful check
+        if task_subtype == TG_SUB_24H_KEY:
+            existing_hold = await tg_hold_get(task_id, uid)
+            if existing_hold:
+                left_raw = int((existing_hold - _now()).total_seconds())
+                # If hold is already expired (e.g., worker restart lag), do not block user forever.
+                # Clear stale hold and let user start a fresh 24h cycle.
+                if left_raw <= 0:
+                    await tg_hold_clear(task_id, uid)
+                else:
+                    left = max(1, left_raw)
+                    hours = max(1, int(round(left / 3600)))
+                    return web.json_response({
+                        "ok": False,
+                        "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.",
+                        "code": "TG_SUB_24H_WAIT",
+                        "retry_after": left,
+                    }, status=400)
+
+            ok_member = await tg_is_member(chat, uid)
+            if not ok_member:
+                return web.json_response({"ok": False, "error": "Бот не видит подписку сейчас. Подпишись и отправь на проверку снова."}, status=400)
+
+            due_at = _now() + timedelta(seconds=TG_SUB_24H_DELAY_SEC)
+            await tg_hold_set(task_id, uid, due_at)
+            await sb_insert(T_COMP, {
+                "task_id": task_id_db,
+                "user_id": uid,
+                "status": "pending_24h",
+                "proof_text": "AUTO_TG_24H_WAIT",
+                "proof_url": None,
+            })
+
+            due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
+            return web.json_response({
+                "ok": True,
+                "status": "hold_24h",
+                "message": f"Подписка подтверждена. Бот автоматически проверит повторно через 24 часа ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
+                "retry_after": max(1, int((due_at - _now()).total_seconds())),
+            })
+
         ok_member = await tg_is_member(chat, uid)
         if not ok_member:
             return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
 
-        reward = float(task.get("reward_rub") or 0)
         await add_rub(uid, reward)
         await stats_add("payouts_rub", reward)
 
@@ -3383,6 +3579,7 @@ def make_app():
     return app
 
 async def on_startup(app: web.Application):
+    global TG_HOLD_WORKER_TASK
     await setup_menu_button(bot)
     # diagnostics: confirm which bot token is running
     try:
@@ -3391,6 +3588,9 @@ async def on_startup(app: web.Application):
     except Exception as e:
         log.error(f"[SYNC_DIAG] Bot identity check failed: {e}")
     hook_base = SERVER_BASE_URL or BASE_URL
+    if TG_HOLD_WORKER_TASK is None or TG_HOLD_WORKER_TASK.done():
+        TG_HOLD_WORKER_TASK = asyncio.create_task(tg_hold_worker())
+
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
         await bot.set_webhook(wh_url)
@@ -3400,6 +3600,17 @@ async def on_startup(app: web.Application):
         log.info("Polling started")
 
 async def on_cleanup(app: web.Application):
+    global TG_HOLD_WORKER_TASK
+    if TG_HOLD_WORKER_TASK and not TG_HOLD_WORKER_TASK.done():
+        TG_HOLD_WORKER_TASK.cancel()
+        try:
+            await TG_HOLD_WORKER_TASK
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        TG_HOLD_WORKER_TASK = None
+
     if crypto:
         try:
             await crypto.close()
