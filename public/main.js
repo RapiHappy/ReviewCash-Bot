@@ -342,9 +342,15 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-    { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Подписка на Telegram-канал" },
-    { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Вступление в Telegram-группу" },
+    { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
+    { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Проверка участия через getChatMember" },
     { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
+    { id: "bot_start", title: "Запуск бота (/start)", reward: 4, desc: "Бот проверяет факт запуска пользователем" },
+    { id: "bot_callback", title: "Нажатие inline-кнопки", reward: 4, desc: "Проверяется callback_query от пользователя" },
+    { id: "bot_message", title: "Сообщение боту", reward: 4, desc: "Проверяется входящее сообщение от пользователя" },
+    { id: "miniapp_open", title: "Открыть Mini App", reward: 3, desc: "Фиксируется вход пользователя в мини-приложение" },
+    { id: "invite_friends", title: "Пригласить друзей", reward: 15, desc: "Проверяются оплаченные реферальные приглашения" },
+    { id: "poll_vote", title: "Голосование в опросе", reward: 3, desc: "Проверяется poll_answer от пользователя" },
   ];
 
   // Reviews payouts you asked for
@@ -1617,9 +1623,14 @@ if (!list.length) {
     return normalizeUrl(s);
   }
 
-  function tgAutoPossible(subType, tgKind) {
-    if (tgKind !== "chat") return false;
+  function tgNeedsChat(subType) {
     return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h";
+  }
+
+  function tgAutoPossible(subType, tgKind) {
+    if (!tgNeedsChat(subType)) return true;
+    if (tgKind !== "chat") return false;
+    return true;
   }
 
   function setTargetStatus(kind, title, desc) {
@@ -1845,17 +1856,24 @@ if (!list.length) {
     const txt = String(($("t-text") && $("t-text").value) || "").trim();
 
     if (!target) {
-      if (type === "tg") return tgAlert("Укажи @канал или @группу (пример: @MyChannel)", "error", "Нужно указать чат");
-      return tgAlert("Укажи ссылку на карточку места (Яндекс/Google)", "error", "Нужна ссылка");
+      if (type === "tg") {
+        const sid = currentTgSubtype();
+        if (tgNeedsChat(sid)) return tgAlert("Укажи @канал или @группу (пример: @MyChannel)", "error", "Нужно указать чат");
+      } else {
+        return tgAlert("Укажи ссылку на карточку места (Яндекс/Google)", "error", "Нужна ссылка");
+      }
     }
 
     // При создании задания допускаются только ссылки и @юзернеймы
     if (type === "tg") {
-      const tgChatTry = normalizeTgChatInput(target);
-      if (!tgChatTry) {
-        tgAlert("Можно только @юзернейм или ссылка t.me.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Некорректный Telegram");
-        scheduleTgCheck();
-        return;
+      const sid = currentTgSubtype();
+      if (tgNeedsChat(sid)) {
+        const tgChatTry = normalizeTgChatInput(target);
+        if (!tgChatTry) {
+          tgAlert("Можно только @юзернейм или ссылка t.me.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Некорректный Telegram");
+          scheduleTgCheck();
+          return;
+        }
       }
     } else {
       if (!isProbablyUrl(target)) {
@@ -1899,34 +1917,32 @@ if (!list.length) {
       subType = conf.id;
 
       tgChat = normalizeTgChatInput(target);
-      tgKind = tgIsBotTarget(target, tgChat) ? "bot" : "chat";
-      const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType);
+      tgKind = tgNeedsChat(subType) ? (tgIsBotTarget(target, tgChat) ? "bot" : "chat") : "bot";
+      const manualOnly = (tgKind === "bot" && tgNeedsChat(subType)) || TG_MANUAL_ONLY.has(subType);
       checkType = manualOnly ? "manual" : (tgAutoPossible(subType, tgKind) ? "auto" : "manual");
     }
 
-
     // Nice TG validation before sending request (so user doesn't see raw 400)
     if (type === "tg") {
-      if (!tgChat) {
-        tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Укажи чат");
-        scheduleTgCheck();
-        return;
-      }
-      // TG check:
-      // - TG tasks are auto-check only in backend.
-      // - If auto check is not possible, block creation and show guidance.
-      const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind);
+      if (tgNeedsChat(subType)) {
+        if (!tgChat) {
+          tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Укажи чат");
+          scheduleTgCheck();
+          return;
+        }
 
-      if (manualOnly) {
-        const label = tgKind === "bot" ? `Бот: ${tgChat}` : `TG: ${tgChat}`;
-        setTargetStatus("err", label, "Создание невозможно: для TG доступна только авто-проверка.");
-        state._tgCheck.valid = false;
-        state._tgCheck.chat = tgChat;
-        state._tgCheck.forceManual = true;
-        updateTgHint();
-        tgAlert("Для TG задания доступна только авто-проверка. Укажи канал/группу, где бот может проверить подписку.", "error", "Проверка Telegram");
-        return;
-      } else {
+        const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind);
+        if (manualOnly) {
+          const label = tgKind === "bot" ? `Бот: ${tgChat}` : `TG: ${tgChat}`;
+          setTargetStatus("err", label, "Создание невозможно: для TG доступна только авто-проверка.");
+          state._tgCheck.valid = false;
+          state._tgCheck.chat = tgChat;
+          state._tgCheck.forceManual = true;
+          updateTgHint();
+          tgAlert("Для TG задания доступна только авто-проверка. Укажи канал/группу, где бот может проверить подписку.", "error", "Проверка Telegram");
+          return;
+        }
+
         try {
           setTargetStatus("loading", "Проверяем…", "Проверяем доступ бота для авто-проверки");
           const chk = await apiPost("/api/tg/check_chat", { target: tgChat });
@@ -1953,6 +1969,8 @@ if (!list.length) {
           tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
           return;
         }
+      } else {
+        checkType = "auto";
       }
     }
 
