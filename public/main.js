@@ -446,12 +446,25 @@ function tgAlert(msg, kind = "info", title = "") {
     try { localStorage.setItem(THEME_KEY, v); } catch (e) {}
     document.documentElement.classList.toggle("theme-light", v === "light");
     const btn = document.getElementById("theme-toggle");
-    if (btn) btn.textContent = (v === "light") ? "☀️" : "🌙";
+    if (btn) {
+      const isLight = (v === "light");
+      btn.textContent = isLight ? "☀️" : "🌙";
+      btn.classList.toggle("is-sun", isLight);
+      btn.classList.toggle("is-moon", !isLight);
+      btn.setAttribute("aria-label", isLight ? "Светлая тема" : "Тёмная тема");
+    }
   }
 
   function toggleTheme() {
     const isLight = document.documentElement.classList.contains("theme-light");
     applyTheme(isLight ? "dark" : "light");
+    const btn = document.getElementById("theme-toggle");
+    if (btn) {
+      btn.classList.remove("theme-toggle-pop");
+      void btn.offsetWidth;
+      btn.classList.add("theme-toggle-pop");
+      setTimeout(() => btn.classList.remove("theme-toggle-pop"), 450);
+    }
     tgHaptic("impact");
   }
   window.toggleTheme = toggleTheme;

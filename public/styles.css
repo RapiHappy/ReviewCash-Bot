@@ -611,19 +611,47 @@ html.perf-low .qa-perf:hover{
   position:absolute;
   top:12px;
   right:12px;
-  width:34px;
-  height:34px;
-  border-radius:12px;
-  border:1px solid var(--glass-border);
-  background: var(--glass);
+  width:42px;
+  height:42px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,0.22);
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35), transparent 55%),
+    linear-gradient(140deg, rgba(0,234,255,0.22), rgba(79,127,255,0.20));
   color: var(--text-main);
-  font-size:16px;
+  font-size:18px;
   display:flex;
   align-items:center;
   justify-content:center;
   cursor:pointer;
+  box-shadow: 0 10px 20px rgba(3, 10, 24, 0.38), inset 0 1px 0 rgba(255,255,255,0.36);
+  backdrop-filter: blur(8px);
+  transition: transform .2s ease, box-shadow .25s ease, filter .25s ease, border-color .25s ease;
 }
-.theme-toggle:active{ transform: scale(0.98); }
+.theme-toggle::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  border:1px solid rgba(255,255,255,0.12);
+  pointer-events:none;
+}
+.theme-toggle:hover{
+  transform: translateY(-1px) scale(1.03);
+  border-color: rgba(0,234,255,0.4);
+  box-shadow: 0 14px 26px rgba(3,10,24,0.45), 0 0 0 1px rgba(0,234,255,0.14), inset 0 1px 0 rgba(255,255,255,0.42);
+  filter: brightness(1.06);
+}
+.theme-toggle:active{ transform: translateY(0) scale(0.97); }
+.theme-toggle.is-sun{ color:#ffcf5c; text-shadow: 0 0 10px rgba(255,207,92,.45); }
+.theme-toggle.is-moon{ color:#cde8ff; text-shadow: 0 0 8px rgba(99,184,255,.35); }
+.theme-toggle.theme-toggle-pop{ animation: themeTogglePop .42s cubic-bezier(.2,.9,.2,1); }
+
+@keyframes themeTogglePop {
+  0% { transform: scale(1) rotate(0deg); }
+  45% { transform: scale(1.16) rotate(14deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
 .ops-filter{
   display:flex;
   gap:8px;
@@ -689,6 +717,15 @@ html.theme-light .copy-box,
 body.light-mode .copy-box{
   background: rgba(37,99,235,0.06);
   border-color: rgba(37,99,235,0.22);
+}
+
+html.theme-light .theme-toggle,
+body.light-mode .theme-toggle{
+  border-color: rgba(2,6,23,0.12);
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,0.95), rgba(255,255,255,0.2) 58%),
+    linear-gradient(140deg, rgba(37,99,235,0.16), rgba(14,165,233,0.14));
+  box-shadow: 0 10px 20px rgba(2,6,23,0.12), inset 0 1px 0 rgba(255,255,255,0.9);
 }
 
 html.theme-light input,
