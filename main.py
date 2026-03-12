@@ -198,6 +198,13 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o
 
 # anti-fraud
 MAX_ACCOUNTS_PER_DEVICE = int(os.getenv("MAX_ACCOUNTS_PER_DEVICE", "2").strip())
+MAX_SUBMITS_10M = int(os.getenv("MAX_SUBMITS_10M", "10").strip())
+SUBMIT_WINDOW_SEC = int(os.getenv("SUBMIT_WINDOW_SEC", "600").strip())
+SUBMIT_WINDOW_BLOCK_SEC = int(os.getenv("SUBMIT_WINDOW_BLOCK_SEC", "1800").strip())
+MIN_TASK_SUBMIT_SEC = int(os.getenv("MIN_TASK_SUBMIT_SEC", "8").strip())
+EXPENSIVE_TASK_REWARD_RUB = float(os.getenv("EXPENSIVE_TASK_REWARD_RUB", "25").strip())
+NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS = int(os.getenv("NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS", "3").strip())
+FIRST_WITHDRAW_MIN_PAID_TASKS = int(os.getenv("FIRST_WITHDRAW_MIN_PAID_TASKS", "3").strip())
 
 # limits
 YA_COOLDOWN_SEC = int(os.getenv("YA_COOLDOWN_SEC", str(3 * 24 * 3600)).strip())
@@ -1152,6 +1159,9 @@ async def set_notify_muted(uid: int, muted: bool):
 # Task access bans + "must click link" tracking
 # -------------------------
 TASK_BAN_KEY = "task_ban_until"
+SUBMIT_WINDOW_KEY = "task_submit_window"
+SUBMIT_BLOCK_KEY = "task_submit_block_until"
+FIRST_WITHDRAW_DONE_KEY = "first_withdraw_done"
 CLICK_PREFIX = "clicked_task:"
 CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())  # must click within 6h
 
@@ -1189,6 +1199,101 @@ async def set_task_ban(uid: int, days: int = 3):
         on_conflict="user_id,limit_key"
     )
     return until
+
+async def get_submit_block_until(uid: int):
+    return await get_limit_until(uid, SUBMIT_BLOCK_KEY)
+
+async def mark_submit_attempt(uid: int, ok: bool = False):
+    """Track submit attempts in 10m window; optionally clear on successful completion."""
+    if ok:
+        try:
+            await clear_limit(uid, SUBMIT_WINDOW_KEY)
+            await clear_limit(uid, SUBMIT_BLOCK_KEY)
+        except Exception:
+            pass
+        return 0
+
+    row = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
+    count = 0
+    started_at = _now()
+    if row.data:
+        raw = str((row.data[0] or {}).get("last_at") or "")
+        try:
+            payload = json.loads(raw) if raw else {}
+        except Exception:
+            payload = {}
+        count = int(payload.get("count") or 0)
+        started_at = _parse_dt(payload.get("started_at")) or started_at
+        if (_now() - started_at).total_seconds() > max(60, SUBMIT_WINDOW_SEC):
+            count = 0
+            started_at = _now()
+
+    count += 1
+    await sb_upsert(
+        T_LIMITS,
+        {
+            "user_id": int(uid),
+            "limit_key": SUBMIT_WINDOW_KEY,
+            "last_at": json.dumps({"started_at": started_at.isoformat(), "count": count}),
+        },
+        on_conflict="user_id,limit_key",
+    )
+
+    if count > max(1, MAX_SUBMITS_10M):
+        await set_limit_until(uid, SUBMIT_BLOCK_KEY, max(60, SUBMIT_WINDOW_BLOCK_SEC))
+    return count
+
+async def can_access_expensive_tasks(uid: int) -> tuple[bool, str | None]:
+    rows = await sb_select(T_USERS, {"user_id": int(uid)}, limit=1)
+    if not rows.data:
+        return True, None
+    u = rows.data[0] or {}
+    created = _parse_dt(u.get("created_at") or u.get("last_seen_at"))
+    if not created:
+        return True, None
+    age_days = max(0, int((_now() - created).total_seconds() // 86400))
+    if age_days < max(0, NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS):
+        return False, f"Дорогие задания доступны через {max(0, NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS - age_days)} дн."
+    return True, None
+
+async def calc_user_risk_score(uid: int) -> int:
+    score = 0
+    rows = await sb_select(T_USERS, {"user_id": int(uid)}, limit=1)
+    u = (rows.data or [None])[0] or {}
+    created = _parse_dt(u.get("created_at") or u.get("last_seen_at"))
+    if created:
+        age_days = max(0, int((_now() - created).total_seconds() // 86400))
+        if age_days <= 1:
+            score += 20
+
+    try:
+        c = await sb_select(T_COMP, {"user_id": int(uid)}, order="created_at", desc=True, limit=20)
+        rows = c.data or []
+        failed = sum(1 for x in rows if str(x.get("status") or "").lower() in {"rejected", "fake", "fraud"})
+        pending = sum(1 for x in rows if str(x.get("status") or "").lower() in {"pending", "pending_24h", "checking"})
+        if failed >= 3:
+            score += 15
+        if pending >= 10:
+            score += 10
+    except Exception:
+        pass
+
+    try:
+        d = await sb_select(T_DEV, {"tg_user_id": int(uid)}, limit=20)
+        hashes = {str(x.get("device_hash") or "") for x in (d.data or []) if x.get("device_hash")}
+        if hashes:
+            cnt = set()
+            for h in hashes:
+                rr = await sb_exec(lambda h=h: sb.table(T_DEV).select("tg_user_id").eq("device_hash", h).execute())
+                for r in (rr.data or []):
+                    if r.get("tg_user_id") is not None:
+                        cnt.add(int(r.get("tg_user_id")))
+            if len(cnt) >= 3:
+                score += 35
+    except Exception:
+        pass
+
+    return min(100, max(0, int(score)))
 
 # Global / feature bans (admin)
 GLOBAL_BAN_KEY = "global_ban_until"      # blocks any paid actions
@@ -1283,19 +1388,25 @@ async def touch_task_click(uid: int, task_id: str):
         on_conflict="user_id,limit_key"
     )
 
-async def require_recent_task_click(uid: int, task_id: str) -> bool:
-    """Returns True if user clicked task link recently."""
+async def task_click_elapsed_sec(uid: int, task_id: str) -> float | None:
     key = CLICK_PREFIX + str(task_id)
     try:
         r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": key}, limit=1)
         if not r.data:
-            return False
+            return None
         dt = _parse_dt(r.data[0].get("last_at"))
         if not dt:
-            return False
-        return (_now() - dt).total_seconds() <= CLICK_WINDOW_SEC
+            return None
+        return float((_now() - dt).total_seconds())
     except Exception:
+        return None
+
+async def require_recent_task_click(uid: int, task_id: str) -> bool:
+    """Returns True if user clicked task link recently."""
+    elapsed = await task_click_elapsed_sec(uid, task_id)
+    if elapsed is None:
         return False
+    return elapsed <= CLICK_WINDOW_SEC
 
 async def clear_task_click(uid: int, task_id: str):
     key = CLICK_PREFIX + str(task_id)
@@ -1807,6 +1918,10 @@ async def api_sync(req: web.Request):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
     bal = await get_balance(uid)
+    risk_score = await calc_user_risk_score(uid)
+    trust_level = "high" if risk_score < 30 else ("medium" if risk_score < 60 else "low")
+    expensive_ok, expensive_reason = await can_access_expensive_tasks(uid)
+
     banned_until = await get_task_ban_until(uid)
     tasks = []
     if not banned_until:
@@ -1833,6 +1948,7 @@ async def api_sync(req: web.Request):
                 int(t.get("owner_id") or 0) != uid
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
             )
+            and (expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
         ]
 
     reopen_task_ids = []
@@ -1866,6 +1982,12 @@ async def api_sync(req: web.Request):
         "tasks": tasks,
         "reopen_task_ids": reopen_task_ids,
         "task_ban_until": banned_until.isoformat() if banned_until else None,
+        "risk": {
+            "score": risk_score,
+            "trust_level": trust_level,
+            "expensive_tasks_locked": (not expensive_ok),
+            "expensive_tasks_reason": expensive_reason,
+        },
         "config": {
             "stars_rub_rate": STARS_RUB_RATE,
             "stars_payments_enabled": await is_stars_payments_enabled(),
@@ -2116,6 +2238,12 @@ async def api_task_submit(req: web.Request):
     if banned_until:
         return web.json_response({"ok": False, "error": f"Доступ к заданиям временно ограничен до {banned_until.strftime('%d.%m %H:%M')}"}, status=403)
 
+    blocked_until = await get_submit_block_until(uid)
+    if blocked_until:
+        return web.json_response({"ok": False, "error": f"Слишком много проверок. Повтори после {blocked_until.strftime('%d.%m %H:%M')} UTC"}, status=429)
+
+    await mark_submit_attempt(uid, ok=False)
+
     task_id = str(body.get("task_id") or "").strip()
     proof_text = str(body.get("proof_text") or "").strip()
     proof_url = str(body.get("proof_url") or "").strip() or None
@@ -2167,6 +2295,9 @@ async def api_task_submit(req: web.Request):
         ok_clicked = await require_recent_task_click(uid, task_id)
         if not ok_clicked:
             return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
+        elapsed = await task_click_elapsed_sec(uid, task_id)
+        if elapsed is not None and elapsed < max(1, MIN_TASK_SUBMIT_SEC):
+            return web.json_response({"ok": False, "error": "Слишком быстрое выполнение. Подожди немного и отправь снова."}, status=400)
     if is_auto:
         chat = task.get("tg_chat") or ""
         if not chat:
@@ -2212,6 +2343,7 @@ async def api_task_submit(req: web.Request):
             })
 
             due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
+            await mark_submit_attempt(uid, ok=True)
             return web.json_response({
                 "ok": True,
                 "status": "hold_24h",
@@ -2251,6 +2383,7 @@ async def api_task_submit(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
 
+        await mark_submit_attempt(uid, ok=True)
         return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
     # manual proof: обязательно нужен proof_url
@@ -2274,6 +2407,7 @@ async def api_task_submit(req: web.Request):
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     xp_expected = task_xp(task)
+    await mark_submit_attempt(uid, ok=True)
     return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
 
 # -------------------------
@@ -2310,6 +2444,13 @@ async def api_withdraw_create(req: web.Request):
         return web.json_response({"ok": False, "error": "Минимум 300₽"}, status=400)
     if not details:
         return web.json_response({"ok": False, "error": "Укажи реквизиты"}, status=400)
+
+    first_withdraw_done = await get_limit_until(uid, FIRST_WITHDRAW_DONE_KEY)
+    if not first_withdraw_done:
+        paid = await sb_select(T_COMP, {"user_id": uid, "status": "paid"}, limit=FIRST_WITHDRAW_MIN_PAID_TASKS)
+        paid_count = len(paid.data or [])
+        if paid_count < max(1, FIRST_WITHDRAW_MIN_PAID_TASKS):
+            return web.json_response({"ok": False, "error": f"Первый вывод доступен после {FIRST_WITHDRAW_MIN_PAID_TASKS} выполненных и оплаченных заданий."}, status=400)
 
     ok = await sub_rub(uid, amount)
     if not ok:
