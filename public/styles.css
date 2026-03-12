@@ -681,12 +681,11 @@ html.perf-low .qa-perf:hover{
 
 
 /* --- PERF chip size tweak (v2) --- */
-html, body{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 .qa-perf .qa-chip{ height:18px !important; font-size:10px !important; padding:0 8px !important; border-radius:999px !important; }
 .qa-perf .qa-right{ gap:8px !important; }
 
 
-/* Light theme: only contrast fixes, no redesign */
+/* Light theme visual refresh */
 html.theme-light .btn-secondary,
 body.light-mode .btn-secondary,
 html.theme-light .menu-item,
