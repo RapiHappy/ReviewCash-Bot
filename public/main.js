@@ -448,10 +448,12 @@ function tgAlert(msg, kind = "info", title = "") {
     const btn = document.getElementById("theme-toggle");
     if (btn) {
       const isLight = (v === "light");
-      btn.textContent = isLight ? "☀️" : "🌙";
+      const iconEl = btn.querySelector(".theme-toggle-icon") || btn;
+      iconEl.textContent = isLight ? "☀️" : "🌙";
       btn.classList.toggle("is-sun", isLight);
       btn.classList.toggle("is-moon", !isLight);
       btn.setAttribute("aria-label", isLight ? "Светлая тема" : "Тёмная тема");
+      btn.setAttribute("aria-pressed", String(isLight));
     }
   }
 
@@ -2727,6 +2729,13 @@ function extractTgWebAppDataFromUrl() {
     initDeviceHash();
     // init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
+
+    const themeBtn = document.getElementById("theme-toggle");
+    if (themeBtn && !themeBtn.dataset.bound) {
+      themeBtn.dataset.bound = "1";
+      themeBtn.addEventListener("click", toggleTheme);
+    }
+
     // init theme
     try {
       const savedTheme = (localStorage.getItem(THEME_KEY) || "").trim();
