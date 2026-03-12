@@ -2228,10 +2228,12 @@ async def api_task_create(req: web.Request):
             )
 
         chat_type = str(getattr(tg_obj, "type", "") or "").lower()
-        if sub_type in (TG_SUB_CHANNEL_KEY, TG_SUB_24H_KEY, TG_SUB_48H_KEY) and chat_type != "channel":
+        if sub_type in (TG_SUB_CHANNEL_KEY, TG_SUB_24H_KEY) and chat_type != "channel":
             return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-канал.", code="TG_CHANNEL_REQUIRED")
         if sub_type == TG_JOIN_GROUP_KEY and chat_type not in ("group", "supergroup"):
             return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-группу.", code="TG_GROUP_REQUIRED")
+        if sub_type == TG_SUB_48H_KEY and chat_type not in ("channel", "group", "supergroup"):
+            return json_error(400, "Для этого типа задания нужна ссылка на Telegram-канал или группу.", code="TG_CHANNEL_OR_GROUP_REQUIRED")
 
         desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
         tg_kind = desired_kind
