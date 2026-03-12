@@ -342,10 +342,9 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Авто-проверка подписки на канал через getChatMember" },
-  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Авто-проверка вступления в группу через getChatMember" },
+  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
+  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Проверка участия через getChatMember" },
   { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-  { id: "sub_48h", title: "Подписка на ТГ канал/группу +48ч", reward: 15, desc: "Проверка подписки сразу и повторно через 48 часов для канала или группы" },
 ];
 
   // Reviews payouts you asked for
@@ -1434,12 +1433,9 @@ if (!list.length) {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
-        if (String(res.status || "") === "hold_24h" || String(res.status || "") === "hold_48h") {
+        if (String(res.status || "") === "hold_24h") {
           tgHaptic("success");
-          const fallback = String(res.status || "") === "hold_48h"
-            ? "Подтверждено. Повтори проверку через 48 часов."
-            : "Подтверждено. Повтори проверку через 24 часа.";
-          tgAlert(String(res.message || fallback), "info", "Промежуточная проверка");
+          tgAlert(String(res.message || "Подтверждено. Повтори проверку через 24 часа."), "info", "Промежуточная проверка");
           closeAllOverlays();
           await syncAll();
           return;
@@ -1621,12 +1617,26 @@ if (!list.length) {
     return normalizeUrl(s);
   }
 
+  function tgIsPrivateTarget(rawTarget) {
+    const raw = String(rawTarget || "").trim().toLowerCase();
+    if (!raw) return false;
+    return raw.includes("t.me/+") || raw.includes("t.me/joinchat/") || /https?:\/\/t\.me\/c\/\d+/i.test(raw);
+  }
+
+  function tgIsPublicTarget(rawTarget) {
+    const raw = String(rawTarget || "").trim();
+    if (!raw || tgIsPrivateTarget(raw)) return false;
+    if (/^@[A-Za-z0-9_]{4,}$/.test(raw)) return true;
+    if (/^https?:\/\/t\.me\/[A-Za-z0-9_]{4,}(\?.*)?$/i.test(raw)) return true;
+    return false;
+  }
+
   function tgNeedsChat(subType) {
-    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h" || subType === "sub_48h";
+    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h";
   }
 
   function tgAutoPossible(subType, tgKind) {
-    if (!tgNeedsChat(subType)) return false;
+    if (!tgNeedsChat(subType)) return true;
     if (tgKind !== "chat") return false;
     return true;
   }
@@ -1705,9 +1715,7 @@ if (!list.length) {
       titleEl.textContent = "⚡ Автоматическая проверка:";
       textEl.textContent = (currentTgSubtype() === "sub_24h")
         ? "Для этого типа: проверка подписки сейчас и повторно через 24 часа. Выплата только после второй проверки."
-        : (currentTgSubtype() === "sub_48h")
-          ? "Для этого типа: проверка подписки сейчас и повторно через 48 часов. Выплата только после второй проверки."
-          : "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
+        : "Бот сможет проверить выполнение автоматически, только если это публичный канал/группа и бот уже добавлен в чат/канал (для канала — админ).";
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
@@ -1765,7 +1773,7 @@ if (!list.length) {
         state._tgCheck.valid = true;
         state._tgCheck.chat = chat;
         state._tgCheck.forceManual = true;
-        setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
+        setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
         updateTgHint();
       }
     } catch (e) {
@@ -1773,7 +1781,7 @@ if (!list.length) {
       state._tgCheck.valid = true;
       state._tgCheck.chat = chat;
       state._tgCheck.forceManual = true;
-      setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
+      setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
       updateTgHint();
     }
   }
@@ -1957,14 +1965,14 @@ if (!list.length) {
             updateTgHint();
           } else {
             const msg = (chk && (chk.message || chk.error)) ? String(chk.message || chk.error) : "Авто-проверка недоступна";
-            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
+            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
             updateTgHint();
             tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
             return;
           }
         } catch (e) {
           const msg = prettifyErrText(String(e.message || e));
-          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
+          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
           updateTgHint();
           tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
           return;
