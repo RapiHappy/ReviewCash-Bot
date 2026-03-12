@@ -342,9 +342,14 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
-  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Проверка участия через getChatMember" },
-  { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
+  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Авто-проверка через getChatMember. Нужен публичный @username и бот в канале." },
+  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Авто-проверка через getChatMember. Нужен публичный @username и бот в группе." },
+  { id: "sub_24h", title: "Тг подписка +24ч", reward: 10, desc: "Только публичный @username. Бот должен быть в канале, повторная проверка через 24 часа." },
+  { id: "sub_48h", title: "Тг подписка +48ч", reward: 15, desc: "Только публичный @username. Бот должен быть в канале, повторная проверка через 48 часов." },
+  { id: "sub_72h", title: "Тг подписка +72ч", reward: 20, desc: "Только публичный @username. Бот должен быть в канале, повторная проверка через 72 часа." },
+  { id: "join_group_24h", title: "Вступление в группу +24ч", reward: 10, desc: "Только публичный @username. Бот должен быть в группе, повторная проверка через 24 часа." },
+  { id: "join_group_48h", title: "Вступление в группу +48ч", reward: 15, desc: "Только публичный @username. Бот должен быть в группе, повторная проверка через 48 часов." },
+  { id: "join_group_72h", title: "Вступление в группу +72ч", reward: 20, desc: "Только публичный @username. Бот должен быть в группе, повторная проверка через 72 часа." },
 ];
 
   // Reviews payouts you asked for
@@ -1433,9 +1438,12 @@ if (!list.length) {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
-        if (String(res.status || "") === "hold_24h") {
+        if (String(res.status || "") === "hold_24h" || String(res.status || "") === "hold_48h") {
           tgHaptic("success");
-          tgAlert(String(res.message || "Подтверждено. Повтори проверку через 24 часа."), "info", "Промежуточная проверка");
+          const fallback = String(res.status || "") === "hold_48h"
+            ? "Подтверждено. Повтори проверку через 48 часов."
+            : "Подтверждено. Повтори проверку через 24 часа.";
+          tgAlert(String(res.message || fallback), "info", "Промежуточная проверка");
           closeAllOverlays();
           await syncAll();
           return;
@@ -1617,26 +1625,12 @@ if (!list.length) {
     return normalizeUrl(s);
   }
 
-  function tgIsPrivateTarget(rawTarget) {
-    const raw = String(rawTarget || "").trim().toLowerCase();
-    if (!raw) return false;
-    return raw.includes("t.me/+") || raw.includes("t.me/joinchat/") || /https?:\/\/t\.me\/c\/\d+/i.test(raw);
-  }
-
-  function tgIsPublicTarget(rawTarget) {
-    const raw = String(rawTarget || "").trim();
-    if (!raw || tgIsPrivateTarget(raw)) return false;
-    if (/^@[A-Za-z0-9_]{4,}$/.test(raw)) return true;
-    if (/^https?:\/\/t\.me\/[A-Za-z0-9_]{4,}(\?.*)?$/i.test(raw)) return true;
-    return false;
-  }
-
   function tgNeedsChat(subType) {
-    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h";
+    return ["sub_channel","join_group","sub_24h","sub_48h","sub_72h","join_group_24h","join_group_48h","join_group_72h"].includes(subType);
   }
 
   function tgAutoPossible(subType, tgKind) {
-    if (!tgNeedsChat(subType)) return true;
+    if (!tgNeedsChat(subType)) return false;
     if (tgKind !== "chat") return false;
     return true;
   }
@@ -1713,13 +1707,36 @@ if (!list.length) {
       } catch (e) {}
     } else {
       titleEl.textContent = "⚡ Автоматическая проверка:";
-      textEl.textContent = (currentTgSubtype() === "sub_24h")
-        ? "Для этого типа: проверка подписки сейчас и повторно через 24 часа. Выплата только после второй проверки."
-        : "Бот сможет проверить выполнение автоматически, только если это публичный канал/группа и бот уже добавлен в чат/канал (для канала — админ).";
+      const sidNow = currentTgSubtype();
+      const holdHoursMap = {
+        sub_24h: 24,
+        sub_48h: 48,
+        sub_72h: 72,
+        join_group_24h: 24,
+        join_group_48h: 48,
+        join_group_72h: 72,
+      };
+      textEl.textContent = holdHoursMap[sidNow]
+        ? `Для этого типа: проверка участия сейчас и повторно через ${holdHoursMap[sidNow]} часов. Выплата только после второй проверки.`
+        : "Публичный @username обязателен. Бот должен быть добавлен в канал/группу, а для канала — ещё и быть админом.";
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
       } catch (e) {}
+    }
+
+    let warnEl = $("tg-retention-warning");
+    if (!warnEl) {
+      warnEl = document.createElement("div");
+      warnEl.id = "tg-retention-warning";
+      warnEl.style.cssText = "margin-top:8px;font-size:13px;line-height:1.35;color:#ffb74d;background:rgba(255,183,77,.08);border:1px solid rgba(255,183,77,.18);padding:8px 10px;border-radius:10px;";
+      wrap.appendChild(warnEl);
+    }
+    if (sid === "sub_channel" || sid === "join_group") {
+      warnEl.textContent = "⚠️ Внимание: мы не гарантируем, что пользователи останутся в вашем канале или группе. После выполнения задания они могут отписаться или выйти.";
+      warnEl.style.display = "block";
+    } else {
+      warnEl.style.display = "none";
     }
   }
 
@@ -1733,6 +1750,16 @@ if (!list.length) {
     }
 
     const sid = currentTgSubtype();
+
+    if (/t\.me\/(\+|joinchat\/)/i.test(value)) {
+      state._tgCheck.valid = false;
+      state._tgCheck.chat = "";
+      state._tgCheck.forceManual = false;
+      setTargetStatus("err", "Приватная ссылка запрещена", "Укажи публичный @username канала или группы. Инвайт-ссылки t.me/+... и joinchat не подходят.");
+      updateTgHint();
+      return;
+    }
+
     const chat = normalizeTgChatInput(value);
 
     if (!chat) {
@@ -1769,19 +1796,18 @@ if (!list.length) {
         setTargetStatus("ok", `${tp}: ${name}`, "Авто-проверка доступна ✅");
         updateTgHint();
       } else {
-        // fallback to manual
-        state._tgCheck.valid = true;
+        state._tgCheck.valid = false;
         state._tgCheck.chat = chat;
-        state._tgCheck.forceManual = true;
-        setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
+        state._tgCheck.forceManual = false;
+        setTargetStatus("err", `TG: ${chat}`, (res && res.message) ? String(res.message) : "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
         updateTgHint();
       }
     } catch (e) {
       if (seq !== _tgCheckSeq) return;
-      state._tgCheck.valid = true;
+      state._tgCheck.valid = false;
       state._tgCheck.chat = chat;
-      state._tgCheck.forceManual = true;
-      setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
+      state._tgCheck.forceManual = false;
+      setTargetStatus("err", `TG: ${chat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
       updateTgHint();
     }
   }
@@ -1965,14 +1991,14 @@ if (!list.length) {
             updateTgHint();
           } else {
             const msg = (chk && (chk.message || chk.error)) ? String(chk.message || chk.error) : "Авто-проверка недоступна";
-            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
+            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
             updateTgHint();
             tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
             return;
           }
         } catch (e) {
           const msg = prettifyErrText(String(e.message || e));
-          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Нужен публичный канал/группа, куда добавлен бот. Для канала бот должен быть админом.");
+          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
           updateTgHint();
           tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
           return;
