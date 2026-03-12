@@ -342,22 +342,16 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-    { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
-    { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Проверка участия через getChatMember" },
-    { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-    { id: "bot_start", title: "Запуск бота (/start)", reward: 4, desc: "Бот проверяет факт запуска пользователем" },
- codex/add-new-task-types-for-bot-verification-4b5ftx
-    { id: "bot_button", title: "Нажать кнопку", reward: 4, desc: "Проверяется callback_query от пользователя" },
-    { id: "bot_callback", title: "Нажатие inline-кнопки", reward: 4, desc: "Проверяется callback_query от пользователя" },
-    { id: "bot_message", title: "Сообщение боту", reward: 4, desc: "Проверяется входящее сообщение от пользователя" },
-=======
-    { id: "bot_callback", title: "Нажатие inline-кнопки", reward: 4, desc: "Проверяется callback_query от пользователя" },
-    { id: "bot_message", title: "Сообщение боту", reward: 4, desc: "Проверяется входящее сообщение от пользователя" },
-    { id: "miniapp_open", title: "Открыть Mini App", reward: 3, desc: "Фиксируется вход пользователя в мини-приложение" },
-    { id: "invite_friends", title: "Пригласить друзей", reward: 15, desc: "Проверяются оплаченные реферальные приглашения" },
-    { id: "poll_vote", title: "Голосование в опросе", reward: 3, desc: "Проверяется poll_answer от пользователя" },
- main
-  ];
+  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
+  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Проверка участия через getChatMember" },
+  { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
+  { id: "bot_start", title: "Запуск бота (/start)", reward: 4, desc: "Бот проверяет факт запуска пользователем" },
+  { id: "bot_callback", title: "Нажатие inline-кнопки", reward: 4, desc: "Проверяется callback_query от пользователя" },
+  { id: "bot_message", title: "Сообщение боту", reward: 4, desc: "Проверяется входящее сообщение от пользователя" },
+  { id: "miniapp_open", title: "Открыть Mini App", reward: 3, desc: "Фиксируется вход пользователя в мини-приложение" },
+  { id: "invite_friends", title: "Пригласить друзей", reward: 15, desc: "Проверяются оплаченные реферальные приглашения" },
+  { id: "poll_vote", title: "Голосование в опросе", reward: 3, desc: "Проверяется poll_answer от пользователя" },
+];
 
   // Reviews payouts you asked for
   const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
