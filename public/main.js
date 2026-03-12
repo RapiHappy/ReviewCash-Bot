@@ -340,16 +340,11 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // Config: payouts (executor reward)
   // --------------------
+  // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
     { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Подписка на Telegram-канал" },
     { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Вступление в Telegram-группу" },
-    { id: "view_react", title: "Просмотр + реакция", reward: 5, desc: "Просмотр поста и реакция" },
-    { id: "poll", title: "Участие в опросе", reward: 3, desc: "Голосование в опросе" },
-    { id: "bot_start", title: "Запуск бота /start", reward: 12, desc: "Нажать /start в боте" },
-    { id: "bot_msg", title: "Сообщение боту", reward: 4, desc: "Отправить сообщение боту" },
-    { id: "open_miniapp", title: "Открыть Mini App", reward: 10, desc: "Открыть приложение" },
     { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-    { id: "invite_friends", title: "Инвайт друзей", reward: 50, desc: "Пригласить друзей" },
   ];
 
   // Reviews payouts you asked for
@@ -1523,8 +1518,12 @@ if (!list.length) {
   function initTgSubtypeSelect() {
     const sel = $("t-tg-subtype");
     if (!sel) return;
+
+    const prevValue = String(sel.value || "");
+    const available = TG_TASK_TYPES.filter(t => !TG_MANUAL_ONLY.has(t.id));
+
     sel.innerHTML = "";
-    TG_TASK_TYPES.filter(t => !TG_MANUAL_ONLY.has(t.id)).forEach(t => {
+    available.forEach(t => {
       const opt = document.createElement("option");
       opt.value = t.id;
       opt.textContent = `${t.title} — ${t.reward}₽`;
@@ -1532,6 +1531,9 @@ if (!list.length) {
       opt.dataset.desc = t.desc;
       sel.appendChild(opt);
     });
+
+    if (!available.length) return;
+    sel.value = available.some(t => t.id === prevValue) ? prevValue : available[0].id;
   }
 
   function currentCreateType() {
