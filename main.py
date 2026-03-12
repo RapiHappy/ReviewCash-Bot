@@ -314,6 +314,14 @@ def strip_meta_tags(text: str) -> str:
         # old helper tag
         if re.match(r"(?im)^\s*TG_SUBTYPE\s*:", line):
             continue
+        if re.match(r"(?im)^\s*TG_EXPECT_TEXT\s*:", line):
+            continue
+        if re.match(r"(?im)^\s*TG_CALLBACK_DATA\s*:", line):
+            continue
+        if re.match(r"(?im)^\s*TG_REF_COUNT\s*:", line):
+            continue
+        if re.match(r"(?im)^\s*TG_POLL_ID\s*:", line):
+            continue
         out.append(line)
     return "\n".join(out).strip()
 
@@ -321,6 +329,11 @@ def get_tg_subtype(task: dict | None) -> str:
     ins = str((task or {}).get("instructions") or "")
     m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_\-]+)\s*$", ins)
     return str(m.group(1)).strip().lower() if m else ""
+
+def get_tg_meta(task: dict | None, key: str) -> str:
+    ins = str((task or {}).get("instructions") or "")
+    m = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$", ins)
+    return str(m.group(1)).strip() if m else ""
 
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
@@ -1428,7 +1441,67 @@ async def tg_is_member(chat: str, user_id: int) -> bool:
         return False
 
 TG_HOLD_PREFIX = "tg_hold:"
+TG_SUB_CHANNEL_KEY = "sub_channel"
+TG_JOIN_GROUP_KEY = "join_group"
 TG_SUB_24H_KEY = "sub_24h"
+TG_BOT_START_KEY = "bot_start"
+TG_BOT_CALLBACK_KEY = "bot_callback"
+TG_BOT_MESSAGE_KEY = "bot_message"
+TG_MINIAPP_OPEN_KEY = "miniapp_open"
+TG_INVITE_FRIENDS_KEY = "invite_friends"
+TG_POLL_VOTE_KEY = "poll_vote"
+
+TG_MEMBER_SUBTYPES = {TG_SUB_CHANNEL_KEY, TG_JOIN_GROUP_KEY, TG_SUB_24H_KEY}
+TG_EVENT_SUBTYPES = {TG_BOT_START_KEY, TG_BOT_CALLBACK_KEY, TG_BOT_MESSAGE_KEY, TG_MINIAPP_OPEN_KEY, TG_INVITE_FRIENDS_KEY, TG_POLL_VOTE_KEY}
+
+TG_EVT_PREFIX = "tg_evt:"
+
+def _evt_hash(v: str) -> str:
+    return hashlib.sha1(str(v or "").encode("utf-8")).hexdigest()[:20]
+
+def tg_evt_key(event: str, value: str | None = None) -> str:
+    base = f"{TG_EVT_PREFIX}{str(event or '').strip().lower()}"
+    if value:
+        return f"{base}:{_evt_hash(value)}"
+    return base
+
+async def tg_evt_touch(user_id: int, event: str, value: str | None = None):
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": tg_evt_key(event, value), "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+async def tg_evt_get(user_id: int, event: str, value: str | None = None) -> datetime | None:
+    r = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": tg_evt_key(event, value)}, limit=1)
+    if not r.data:
+        return None
+    return _parse_dt(r.data[0].get("last_at"))
+
+def _task_created_at(task: dict | None) -> datetime:
+    return _parse_dt((task or {}).get("created_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+def _dt_after_task(event_dt: datetime | None, task: dict | None) -> bool:
+    if not event_dt:
+        return False
+    return event_dt >= _task_created_at(task)
+
+async def tg_referrals_paid_since(uid: int, since_dt: datetime) -> int:
+    r = await sb_select(T_REF, {"referrer_id": int(uid), "status": "paid"}, columns="id,created_at", limit=5000)
+    cnt = 0
+    for row in (r.data or []):
+        dt = _parse_dt(row.get("created_at"))
+        if dt and dt >= since_dt:
+            cnt += 1
+    return cnt
+
+async def tg_poll_answer_seen_since(uid: int, since_dt: datetime, poll_id: str | None = None) -> bool:
+    if poll_id:
+        dt = await tg_evt_get(uid, "poll_answer", poll_id)
+        return bool(dt and dt >= since_dt)
+    dt = await tg_evt_get(uid, "poll_answer")
+    return bool(dt and dt >= since_dt)
+
 TG_SUB_24H_DELAY_SEC = 24 * 3600
 TG_HOLD_SCAN_INTERVAL_SEC = int(os.getenv("TG_HOLD_SCAN_INTERVAL_SEC", "60").strip())
 
@@ -1827,6 +1900,10 @@ async def require_init(req: web.Request):
             if gban:
                 raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
 
+            try:
+                await tg_evt_touch(uid, "miniapp_open")
+            except Exception:
+                pass
             return parsed, merged
 
     # 2) Fallback: session token (for Telegram Desktop, where initData can be missing)
@@ -1850,6 +1927,10 @@ async def require_init(req: web.Request):
         if gban:
             raise web.HTTPForbidden(text=json.dumps({"ok": False, "error": f"Временная блокировка до {gban.strftime('%Y-%m-%d %H:%M')} UTC"}), content_type="application/json")
 
+        try:
+            await tg_evt_touch(int(user.get("id") or uid), "miniapp_open")
+        except Exception:
+            pass
         return parsed, user
 
     raise web.HTTPUnauthorized(text="No initData/session")
@@ -2083,8 +2164,10 @@ async def api_task_create(req: web.Request):
 
     if ttype not in ("tg", "ya", "gm"):
         raise web.HTTPBadRequest(text="Bad type")
-    if not title or not target_url:
-        raise web.HTTPBadRequest(text="Missing title/target_url")
+    if not title:
+        raise web.HTTPBadRequest(text="Missing title")
+    if ttype != "tg" and not target_url:
+        raise web.HTTPBadRequest(text="Missing target_url")
 
     # Only links/@usernames allowed. For YA/GM: validate + ensure URL is reachable.
     if ttype in ("ya", "gm"):
@@ -2102,39 +2185,43 @@ async def api_task_create(req: web.Request):
     # - принимаем только @юзернейм или ссылку t.me/...
     # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
-        raw_tg = (tg_chat or target_url or "").strip()
-        raw_low = raw_tg.lower()
+        sub_type = (sub_type or TG_SUB_CHANNEL_KEY).strip().lower()
+        if sub_type not in (TG_MEMBER_SUBTYPES | TG_EVENT_SUBTYPES):
+            return json_error(400, "Неизвестный TG подтип задания", code="TG_BAD_SUBTYPE")
 
-        if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
-            return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
+        if sub_type in TG_MEMBER_SUBTYPES:
+            raw_tg = (tg_chat or target_url or "").strip()
+            raw_low = raw_tg.lower()
 
-        tg_chat_n = normalize_tg_chat(raw_tg)
-        if not tg_chat_n:
-            return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
-        tg_chat = tg_chat_n
+            if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
+                return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
 
-        # Определяем тип TG-цели.
-        # Для bot задач (например /start) Telegram Bot API часто НЕ даёт getChat,
-        # поэтому не блокируем создание, а делаем ручную проверку.
-        kind_guess = tg_detect_kind(tg_chat, target_url)
-        if kind_guess == "chat":
-            # Проверим что цель существует (best-effort). Для приватных чатов это может не работать — тогда нужно добавить бота.
-            try:
-                await bot.get_chat(tg_chat)
-            except Exception:
-                return json_error(
-                    400,
-                    "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
-                    code="TG_BAD_TARGET",
-                )
+            tg_chat_n = normalize_tg_chat(raw_tg)
+            if not tg_chat_n:
+                return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
+            tg_chat = tg_chat_n
 
-        desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
-        tg_kind = desired_kind
-        check_type = desired_check_type
+            kind_guess = tg_detect_kind(tg_chat, target_url)
+            if kind_guess == "chat":
+                try:
+                    await bot.get_chat(tg_chat)
+                except Exception:
+                    return json_error(
+                        400,
+                        "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
+                        code="TG_BAD_TARGET",
+                    )
 
-        # Telegram tasks: only automatic checks are allowed
-        if check_type != "auto":
-            return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
+            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+            tg_kind = desired_kind
+            check_type = desired_check_type
+            if check_type != "auto":
+                return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
+        else:
+            tg_kind = "bot"
+            check_type = "auto"
+            if not target_url:
+                target_url = "https://t.me/ReviewCashOrg_Bot"
 
 
     if cost_rub <= 0:
@@ -2299,92 +2386,135 @@ async def api_task_submit(req: web.Request):
         if elapsed is not None and elapsed < max(1, MIN_TASK_SUBMIT_SEC):
             return web.json_response({"ok": False, "error": "Слишком быстрое выполнение. Подожди немного и отправь снова."}, status=400)
     if is_auto:
-        chat = task.get("tg_chat") or ""
-        if not chat:
-            return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
-
-        task_subtype = get_tg_subtype(task)
-        reward = float(task.get("reward_rub") or 0)
-
-        # Special flow for "Подписка +24ч":
-        # 1) verify membership now
-        # 2) schedule automatic re-check after 24 hours
-        # 3) payout is done by background worker only after second successful check
-        if task_subtype == TG_SUB_24H_KEY:
-            existing_hold = await tg_hold_get(task_id, uid)
-            if existing_hold:
-                left_raw = int((existing_hold - _now()).total_seconds())
-                # If hold is already expired (e.g., worker restart lag), do not block user forever.
-                # Clear stale hold and let user start a fresh 24h cycle.
-                if left_raw <= 0:
-                    await tg_hold_clear(task_id, uid)
-                else:
-                    left = max(1, left_raw)
-                    hours = max(1, int(round(left / 3600)))
-                    return web.json_response({
-                        "ok": False,
-                        "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.",
-                        "code": "TG_SUB_24H_WAIT",
-                        "retry_after": left,
-                    }, status=400)
-
-            ok_member = await tg_is_member(chat, uid)
-            if not ok_member:
-                return web.json_response({"ok": False, "error": "Бот не видит подписку сейчас. Подпишись и отправь на проверку снова."}, status=400)
-
-            due_at = _now() + timedelta(seconds=TG_SUB_24H_DELAY_SEC)
-            await tg_hold_set(task_id, uid, due_at)
+        async def _auto_pay(ok_code: str):
+            reward = float(task.get("reward_rub") or 0)
+            await add_rub(uid, reward)
+            await stats_add("payouts_rub", reward)
+            xp_added = task_xp(task)
+            await add_xp(uid, xp_added)
+            await maybe_pay_referral_bonus(uid)
+            try:
+                left = int(task.get("qty_left") or 0)
+                if left > 0:
+                    new_left = max(0, left - 1)
+                    upd = {"qty_left": new_left}
+                    if new_left <= 0:
+                        upd["status"] = "closed"
+                    await sb_update(T_TASKS, {"id": task_id_db}, upd)
+            except Exception:
+                pass
             await sb_insert(T_COMP, {
                 "task_id": task_id_db,
                 "user_id": uid,
-                "status": "pending_24h",
-                "proof_text": "AUTO_TG_24H_WAIT",
+                "status": "paid",
+                "proof_text": ok_code,
                 "proof_url": None,
+                "moderated_at": _now().isoformat(),
             })
-
-            due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
             await mark_submit_attempt(uid, ok=True)
-            return web.json_response({
-                "ok": True,
-                "status": "hold_24h",
-                "message": f"Подписка подтверждена. Бот автоматически проверит повторно через 24 часа ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
-                "retry_after": max(1, int((due_at - _now()).total_seconds())),
-            })
+            return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
-        ok_member = await tg_is_member(chat, uid)
-        if not ok_member:
-            return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
+        task_subtype = get_tg_subtype(task) or TG_SUB_CHANNEL_KEY
+        reward = float(task.get("reward_rub") or 0)
+        chat = task.get("tg_chat") or ""
+        task_created_at = _task_created_at(task)
 
-        await add_rub(uid, reward)
-        await stats_add("payouts_rub", reward)
+        if task_subtype in TG_MEMBER_SUBTYPES:
+            if not chat:
+                return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
 
-        # XP + maybe referral payout
-        xp_added = task_xp(task)
-        await add_xp(uid, xp_added)
-        await maybe_pay_referral_bonus(uid)
+            if task_subtype == TG_SUB_24H_KEY:
+                existing_hold = await tg_hold_get(task_id, uid)
+                if existing_hold:
+                    left_raw = int((existing_hold - _now()).total_seconds())
+                    if left_raw <= 0:
+                        await tg_hold_clear(task_id, uid)
+                    else:
+                        left = max(1, left_raw)
+                        hours = max(1, int(round(left / 3600)))
+                        return web.json_response({
+                            "ok": False,
+                            "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.",
+                            "code": "TG_SUB_24H_WAIT",
+                            "retry_after": left,
+                        }, status=400)
 
-        try:
-            left = int(task.get("qty_left") or 0)
-            if left > 0:
-                new_left = max(0, left - 1)
-                upd = {"qty_left": new_left}
-                if new_left <= 0:
-                    upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
-        except Exception:
-            pass
+                ok_member = await tg_is_member(chat, uid)
+                if not ok_member:
+                    return web.json_response({"ok": False, "error": "Бот не видит подписку сейчас. Подпишись и отправь на проверку снова."}, status=400)
 
-        await sb_insert(T_COMP, {
-            "task_id": task_id_db,
-            "user_id": uid,
-            "status": "paid",
-            "proof_text": "AUTO_TG_OK",
-            "proof_url": None,
-            "moderated_at": _now().isoformat(),
-        })
+                due_at = _now() + timedelta(seconds=TG_SUB_24H_DELAY_SEC)
+                await tg_hold_set(task_id, uid, due_at)
+                await sb_insert(T_COMP, {
+                    "task_id": task_id_db,
+                    "user_id": uid,
+                    "status": "pending_24h",
+                    "proof_text": "AUTO_TG_24H_WAIT",
+                    "proof_url": None,
+                })
 
-        await mark_submit_attempt(uid, ok=True)
-        return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
+                due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
+                await mark_submit_attempt(uid, ok=True)
+                return web.json_response({
+                    "ok": True,
+                    "status": "hold_24h",
+                    "message": f"Подписка подтверждена. Бот автоматически проверит повторно через 24 часа ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
+                    "retry_after": max(1, int((due_at - _now()).total_seconds())),
+                })
+
+            ok_member = await tg_is_member(chat, uid)
+            if not ok_member:
+                return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
+            return await _auto_pay("AUTO_TG_OK")
+
+        if task_subtype == TG_BOT_START_KEY:
+            dt = await tg_evt_get(uid, "bot_start")
+            if not _dt_after_task(dt, task):
+                return web.json_response({"ok": False, "error": "Нажми /start у бота и попробуй снова."}, status=400)
+            return await _auto_pay("AUTO_TG_BOT_START")
+
+        if task_subtype == TG_BOT_CALLBACK_KEY:
+            expected_cb = get_tg_meta(task, "TG_CALLBACK_DATA")
+            dt = await tg_evt_get(uid, "callback_data", expected_cb) if expected_cb else await tg_evt_get(uid, "callback_any")
+            if not _dt_after_task(dt, task):
+                return web.json_response({"ok": False, "error": "Нажми нужную inline-кнопку в боте и попробуй снова."}, status=400)
+            return await _auto_pay("AUTO_TG_CALLBACK")
+
+        if task_subtype == TG_BOT_MESSAGE_KEY:
+            expected_text = get_tg_meta(task, "TG_EXPECT_TEXT").lower()
+            dt = await tg_evt_get(uid, "message_text", expected_text) if expected_text else await tg_evt_get(uid, "message_any")
+            if not _dt_after_task(dt, task):
+                err = "Отправь сообщение боту и попробуй снова."
+                if expected_text:
+                    err = f"Отправь боту текст: {expected_text}"
+                return web.json_response({"ok": False, "error": err}, status=400)
+            return await _auto_pay("AUTO_TG_MESSAGE")
+
+        if task_subtype == TG_MINIAPP_OPEN_KEY:
+            dt = await tg_evt_get(uid, "miniapp_open")
+            if not _dt_after_task(dt, task):
+                return web.json_response({"ok": False, "error": "Открой Mini App бота и попробуй снова."}, status=400)
+            return await _auto_pay("AUTO_TG_MINIAPP")
+
+        if task_subtype == TG_INVITE_FRIENDS_KEY:
+            need_cnt_raw = get_tg_meta(task, "TG_REF_COUNT")
+            try:
+                need_cnt = max(1, int(need_cnt_raw or "1"))
+            except Exception:
+                need_cnt = 1
+            paid_refs = await tg_referrals_paid_since(uid, task_created_at)
+            if paid_refs < need_cnt:
+                return web.json_response({"ok": False, "error": f"Нужно приглашений с выполнением: {need_cnt}. Сейчас: {paid_refs}."}, status=400)
+            return await _auto_pay("AUTO_TG_REFERRAL")
+
+        if task_subtype == TG_POLL_VOTE_KEY:
+            poll_id = get_tg_meta(task, "TG_POLL_ID")
+            ok_vote = await tg_poll_answer_seen_since(uid, task_created_at, poll_id=poll_id or None)
+            if not ok_vote:
+                return web.json_response({"ok": False, "error": "Голос не найден. Проголосуй в опросе от бота и попробуй снова."}, status=400)
+            return await _auto_pay("AUTO_TG_POLL")
+
+        return web.json_response({"ok": False, "error": "Неподдерживаемый TG подтип задания"}, status=400)
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
@@ -3297,10 +3427,21 @@ async def cmd_start(message: Message):
     uid = message.from_user.id
     args = (message.text or "").split(maxsplit=1)
     ref = None
-    if len(args) == 2 and args[1].isdigit():
-        ref = int(args[1])
+    start_arg = ""
+    if len(args) == 2:
+        start_arg = str(args[1] or "").strip()
+    if start_arg.isdigit():
+        ref = int(start_arg)
+    else:
+        m_ref = re.match(r"(?i)^ref[_:\-]?(\d+)$", start_arg)
+        if m_ref:
+            ref = int(m_ref.group(1))
 
     await ensure_user(message.from_user.model_dump(), referrer_id=ref)
+    try:
+        await tg_evt_touch(uid, "bot_start")
+    except Exception:
+        pass
 
     kb = InlineKeyboardBuilder()
 
@@ -3518,6 +3659,39 @@ async def cmd_stars_tx(message: Message):
         await message.answer(chunk)
 
 # Stars платежи: Telegram требует PreCheckout ok=True
+@dp.callback_query()
+async def track_any_callback(cq: CallbackQuery):
+    try:
+        uid = int(cq.from_user.id)
+        await tg_evt_touch(uid, "callback_any")
+        data = str(cq.data or "").strip()
+        if data:
+            await tg_evt_touch(uid, "callback_data", data)
+    except Exception:
+        pass
+
+@dp.message()
+async def track_any_message(message: Message):
+    try:
+        uid = int(message.from_user.id)
+        await tg_evt_touch(uid, "message_any")
+        txt = str(message.text or message.caption or "").strip()
+        if txt:
+            await tg_evt_touch(uid, "message_text", txt.lower())
+    except Exception:
+        pass
+
+@dp.poll_answer()
+async def track_poll_answer(answer):
+    try:
+        uid = int(answer.user.id)
+        await tg_evt_touch(uid, "poll_answer")
+        pid = str(answer.poll_id or "").strip()
+        if pid:
+            await tg_evt_touch(uid, "poll_answer", pid)
+    except Exception:
+        pass
+
 @dp.pre_checkout_query()
 async def on_pre_checkout_query(pre_checkout: PreCheckoutQuery):
     try:
