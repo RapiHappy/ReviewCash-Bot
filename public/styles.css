@@ -133,7 +133,8 @@ body {
 }
 
 /* --- FAB BUTTON --- */
-.fab-wrap { position: fixed; right: 20px; bottom: 98px; z-index: 1000; }
+/* NOTE: canonical FAB placement for the refreshed app UI. */
+.fab-wrap { position: fixed; right: 18px; bottom: 96px; z-index: 1000; }
 .fab-btn {
   position: relative;
   min-width: 146px;
