@@ -339,13 +339,12 @@ function tgAlert(msg, kind = "info", title = "") {
 
   // --------------------
   // Config: payouts (executor reward)
-  // --------------------
+
   // NOTE(merge): keep only active Telegram task subtypes to avoid legacy options in UI.
   const TG_TASK_TYPES = [
-    { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Подписка на Telegram-канал" },
-    { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Вступление в Telegram-группу" },
-    { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-    { id: "invite_friends", title: "Инвайт друзей", reward: 50, desc: "Пригласить друзей" },
+    { id: 'sub_channel', title: 'Подписка на канал', reward: 5, desc: 'Подписка на Telegram-канал' },
+    { id: 'join_group', title: 'Вступление в группу', reward: 3, desc: 'Вступление в Telegram-группу' },
+    { id: 'sub_24h', title: 'Подписка на ТГ канал +24ч', reward: 10, desc: 'Проверка подписки сразу и повторно через 24 часа' },
   ];
 
   // Reviews payouts you asked for
