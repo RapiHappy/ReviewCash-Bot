@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
+TG_ALLOWED_HOST = ("t.me", "telegram.me")
 
 def _norm_url(raw: str) -> str:
     s = (raw or "").strip()
@@ -66,6 +67,11 @@ def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
                 return False, "", "Разрешены только ссылки Google Maps"
             if ("/maps" not in path) and (not host.startswith("maps.")):
                 return False, "", "Нужна ссылка именно на Google Maps (место/организация)"
+        elif ttype == "tg":
+            if not _host_allowed(host, TG_ALLOWED_HOST):
+                return False, "", "Для Telegram задания нужна ссылка вида https://t.me/..."
+            if not path or path in ("/", ""):
+                return False, "", "Нужна ссылка именно на Telegram канал/группу/бота"
         return True, url, ""
     except Exception:
         return False, "", "Некорректная ссылка"
@@ -457,8 +463,20 @@ def normalize_tg_chat(s: str | None) -> str | None:
     t = str(s).strip()
     if not t:
         return None
-    # accept https://t.me/name or @name or name
-    t = re.sub(r"^https?://t\.me/", "", t)
+    low = t.lower()
+    if low.startswith(("http://", "https://")):
+        try:
+            u = urlparse(t)
+            host = (u.hostname or "").lower()
+            if not _host_allowed(host, TG_ALLOWED_HOST):
+                return None
+            t = (u.path or "").strip("/")
+        except Exception:
+            return None
+    else:
+        # For task creation we now require a Telegram link, but this helper
+        # still tolerates raw usernames for internal/service calls.
+        t = re.sub(r"^https?://t\.me/", "", t, flags=re.I)
     t = t.split("?")[0].split("/")[0]
     if not t.startswith("@"):
         t = "@" + t
@@ -2182,7 +2200,7 @@ async def api_task_create(req: web.Request):
         raise web.HTTPBadRequest(text="Bad reward/qty")
 
     # TG task:
-    # - принимаем только @юзернейм или ссылку t.me/...
+    # - принимаем только ссылку t.me/...
     # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
         sub_type = (sub_type or TG_SUB_CHANNEL_KEY).strip().lower()
@@ -2190,15 +2208,15 @@ async def api_task_create(req: web.Request):
             return json_error(400, "Неизвестный TG подтип задания", code="TG_BAD_SUBTYPE")
 
         if sub_type in TG_MEMBER_SUBTYPES:
-            raw_tg = (tg_chat or target_url or "").strip()
-            raw_low = raw_tg.lower()
+            raw_tg = (target_url or tg_chat or "").strip()
+            ok_tg, norm_tg, err_tg = validate_target_url("tg", raw_tg)
+            if not ok_tg:
+                return json_error(400, err_tg, code="TG_LINK_REQUIRED")
+            target_url = norm_tg
 
-            if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
-                return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
-
-            tg_chat_n = normalize_tg_chat(raw_tg)
+            tg_chat_n = normalize_tg_chat(target_url)
             if not tg_chat_n:
-                return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
+                return json_error(400, "Некорректная ссылка Telegram. Пример: https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
             tg_chat = tg_chat_n
 
             kind_guess = tg_detect_kind(tg_chat, target_url)
