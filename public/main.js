@@ -342,15 +342,10 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Проверка подписки через getChatMember" },
-  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Проверка участия через getChatMember" },
+  { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Авто-проверка подписки на канал через getChatMember" },
+  { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Авто-проверка вступления в группу через getChatMember" },
   { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-  { id: "bot_start", title: "Запуск бота (/start)", reward: 4, desc: "Бот проверяет факт запуска пользователем" },
-  { id: "bot_callback", title: "Нажатие inline-кнопки", reward: 4, desc: "Проверяется callback_query от пользователя" },
-  { id: "bot_message", title: "Сообщение боту", reward: 4, desc: "Проверяется входящее сообщение от пользователя" },
-  { id: "miniapp_open", title: "Открыть Mini App", reward: 3, desc: "Фиксируется вход пользователя в мини-приложение" },
-  { id: "invite_friends", title: "Пригласить друзей", reward: 15, desc: "Проверяются оплаченные реферальные приглашения" },
-  { id: "poll_vote", title: "Голосование в опросе", reward: 3, desc: "Проверяется poll_answer от пользователя" },
+  { id: "sub_48h", title: "Подписка на ТГ канал +48ч", reward: 15, desc: "Проверка подписки сразу и повторно через 48 часов" },
 ];
 
   // Reviews payouts you asked for
@@ -1304,14 +1299,6 @@ if (!list.length) {
       return p.includes("/maps") || h.startsWith("maps.");
     } catch (e) { return false; }
   }
-  function isTelegramTaskUrl(u) {
-    try {
-      const url = new URL(normalizeUrl(u));
-      const h = url.hostname.toLowerCase();
-      const p = url.pathname.toLowerCase();
-      return (h === "t.me" || h === "telegram.me") && !!p && p !== "/";
-    } catch (e) { return false; }
-  }
   function isTaskOwner(task) {
     const uid = state.user ? state.user.user_id : null;
     if (!uid || !task) return false;
@@ -1447,9 +1434,12 @@ if (!list.length) {
       tgHaptic("impact");
       const res = await apiPost("/api/task/submit", { task_id: String(task.id) });
       if (res && res.ok) {
-        if (String(res.status || "") === "hold_24h") {
+        if (String(res.status || "") === "hold_24h" || String(res.status || "") === "hold_48h") {
           tgHaptic("success");
-          tgAlert(String(res.message || "Подтверждено. Повтори проверку через 24 часа."), "info", "Промежуточная проверка");
+          const fallback = String(res.status || "") === "hold_48h"
+            ? "Подтверждено. Повтори проверку через 48 часов."
+            : "Подтверждено. Повтори проверку через 24 часа.";
+          tgAlert(String(res.message || fallback), "info", "Промежуточная проверка");
           closeAllOverlays();
           await syncAll();
           return;
@@ -1593,8 +1583,11 @@ if (!list.length) {
   function normalizeTgChatInput(v) {
     const s = String(v || "").trim();
     if (!s) return null;
-    // For task creation require Telegram link, not plain @username.
-    const m = s.match(/(?:https?:\/\/)?(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{3,})/i);
+    // @username
+    const at = s.match(/^@([A-Za-z0-9_]{3,})$/);
+    if (at && at[1]) return "@" + at[1];
+    // t.me/username
+    const m = s.match(/(?:https?:\/\/)?t\.me\/(?:s\/)?([A-Za-z0-9_]{3,})/i);
     if (m && m[1]) return "@" + m[1];
     return null;
   }
@@ -1629,11 +1622,11 @@ if (!list.length) {
   }
 
   function tgNeedsChat(subType) {
-    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h";
+    return subType === "sub_channel" || subType === "join_group" || subType === "sub_24h" || subType === "sub_48h";
   }
 
   function tgAutoPossible(subType, tgKind) {
-    if (!tgNeedsChat(subType)) return true;
+    if (!tgNeedsChat(subType)) return false;
     if (tgKind !== "chat") return false;
     return true;
   }
@@ -1712,7 +1705,9 @@ if (!list.length) {
       titleEl.textContent = "⚡ Автоматическая проверка:";
       textEl.textContent = (currentTgSubtype() === "sub_24h")
         ? "Для этого типа: проверка подписки сейчас и повторно через 24 часа. Выплата только после второй проверки."
-        : "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
+        : (currentTgSubtype() === "sub_48h")
+          ? "Для этого типа: проверка подписки сейчас и повторно через 48 часов. Выплата только после второй проверки."
+          : "Бот сможет проверить выполнение автоматически, если добавлен в чат/канал (для канала — админ).";
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
@@ -1733,7 +1728,7 @@ if (!list.length) {
     const chat = normalizeTgChatInput(value);
 
     if (!chat) {
-      setTargetStatus("err", "Нужна ссылка Telegram", "Пример: https://t.me/MyChannel");
+      setTargetStatus("err", "Нужен @юзернейм или ссылка t.me", "Пример: @MyChannel или https://t.me/MyChannel");
       return;
     }
 
@@ -1824,19 +1819,15 @@ if (!list.length) {
     let reward = 0;
     let costPer = 0;
 
-    const targetInput = $("t-target");
     if (type === "ya") {
-      if (targetInput) targetInput.placeholder = "https://yandex.ru/maps/...";
       reward = YA.reward;
       costPer = YA.costPer;
       total = costPer * qty;
     } else if (type === "gm") {
-      if (targetInput) targetInput.placeholder = "https://maps.google.com/...";
       reward = GM.reward;
       costPer = GM.costPer;
       total = costPer * qty;
     } else {
-      if (targetInput) targetInput.placeholder = "https://t.me/...";
       // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
@@ -1867,24 +1858,19 @@ if (!list.length) {
     if (!target) {
       if (type === "tg") {
         const sid = currentTgSubtype();
-        if (tgNeedsChat(sid)) return tgAlert("Укажи ссылку Telegram вида https://t.me/MyChannel", "error", "Нужна ссылка Telegram");
+        if (tgNeedsChat(sid)) return tgAlert("Укажи @канал или @группу (пример: @MyChannel)", "error", "Нужно указать чат");
       } else {
         return tgAlert("Укажи ссылку на карточку места (Яндекс/Google)", "error", "Нужна ссылка");
       }
     }
 
-    // При создании задания допускаются только корректные ссылки нужной платформы.
+    // При создании задания допускаются только ссылки и @юзернеймы
     if (type === "tg") {
       const sid = currentTgSubtype();
-      if (!isTelegramTaskUrl(target)) {
-        tgAlert("Для Telegram-задания нужна ссылка Telegram вида https://t.me/...", "error", "Некорректная ссылка Telegram");
-        scheduleTgCheck();
-        return;
-      }
       if (tgNeedsChat(sid)) {
         const tgChatTry = normalizeTgChatInput(target);
         if (!tgChatTry) {
-          tgAlert("Можно только ссылка Telegram вида https://t.me/...\nПример: https://t.me/MyChannel", "error", "Некорректная ссылка Telegram");
+          tgAlert("Можно только @юзернейм или ссылка t.me.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Некорректный Telegram");
           scheduleTgCheck();
           return;
         }
@@ -1940,7 +1926,7 @@ if (!list.length) {
     if (type === "tg") {
       if (tgNeedsChat(subType)) {
         if (!tgChat) {
-          tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.\nПример: https://t.me/MyChannel", "error", "Укажи чат");
+          tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Укажи чат");
           scheduleTgCheck();
           return;
         }
@@ -2007,7 +1993,7 @@ if (!list.length) {
       const res = await apiPost("/api/task/create", {
         type: type,
         title: title,
-        target_url: normalizeUrl(target),
+        target_url: (type === "tg") ? tgTargetToUrl(target) : normalizeUrl(target),
         instructions: txt,
         reward_rub: reward,
         cost_rub: cost,
