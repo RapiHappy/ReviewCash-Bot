@@ -139,6 +139,7 @@ body {
 }
 
 /* --- FAB BUTTON --- */
+/* NOTE(merge): this is the canonical FAB variant used in current app UI. */
 .fab-wrap { position: fixed; right: 18px; bottom: 96px; z-index: 1000; }
 .fab-btn {
   position: relative;

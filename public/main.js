@@ -340,6 +340,7 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // Config: payouts (executor reward)
   // --------------------
+  // NOTE(merge): keep only active Telegram task subtypes to avoid legacy options in UI.
   const TG_TASK_TYPES = [
     { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Подписка на Telegram-канал" },
     { id: "join_group", title: "Вступление в группу", reward: 3, desc: "Вступление в Telegram-группу" },
