@@ -1,0 +1,3 @@
+# Keep app-branch UI sources on merge to avoid repeated manual conflict resolution
+public/main.js merge=ours
+public/styles.css merge=ours
