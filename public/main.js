@@ -345,7 +345,7 @@ function tgAlert(msg, kind = "info", title = "") {
   { id: "sub_channel", title: "Подписка на канал", reward: 5, desc: "Авто-проверка подписки на канал через getChatMember" },
   { id: "join_group", title: "Вступление в группу", reward: 5, desc: "Авто-проверка вступления в группу через getChatMember" },
   { id: "sub_24h", title: "Подписка на ТГ канал +24ч", reward: 10, desc: "Проверка подписки сразу и повторно через 24 часа" },
-  { id: "sub_48h", title: "Подписка на ТГ канал +48ч", reward: 15, desc: "Проверка подписки сразу и повторно через 48 часов" },
+  { id: "sub_48h", title: "Подписка на ТГ канал/группу +48ч", reward: 15, desc: "Проверка подписки сразу и повторно через 48 часов для канала или группы" },
 ];
 
   // Reviews payouts you asked for
