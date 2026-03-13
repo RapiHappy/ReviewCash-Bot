@@ -476,7 +476,7 @@
         </div>
       </div>
 
-      <label class="input-label">Ссылка (Канал/Бот/Пост)</label>
+      <label class="input-label">Ссылка (Канал/Группа/Место)</label>
       <input type="text" id="t-target" placeholder="https://t.me/..." style="margin-top:5px;">
       <div id="t-target-status" class="input-status"></div>
 
@@ -497,10 +497,21 @@
         </div>
       </div>
 
+      <div style="margin-top:14px; padding:12px; border-radius:16px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);">
+        <label style="display:flex; gap:10px; align-items:flex-start; cursor:pointer;">
+          <input type="checkbox" id="t-promote-top" style="margin-top:2px;">
+          <span>
+            <span style="font-weight:800; display:block;">🔥 Поднять в топ</span>
+            <span style="font-size:12px; color:var(--text-dim);">Показывать задание выше остальных. Доплата 20₽ на 24 часа.</span>
+          </span>
+        </label>
+      </div>
+
       <div class="total-badge">
         <div style="display:flex; flex-direction:column; gap:2px;">
           <span style="font-weight:800; opacity:0.7;">Итого к оплате:</span>
           <span style="font-size:11px; color:var(--text-dim);">Включая комиссию сервиса</span>
+          <span id="t-budget-note" style="font-size:11px; color:var(--text-dim);">Минимальный бюджет: 50 ₽</span>
         </div>
         <span id="t-total" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0 ₽</span>
       </div>
