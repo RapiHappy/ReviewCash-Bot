@@ -1322,7 +1322,7 @@ if (!list.length) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + (task.instructions || "Выполните задание и отправьте отчёт.");
+    $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + getTaskInstructionText(task);
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
@@ -1392,6 +1392,27 @@ if (!list.length) {
     }
 
     openOverlay("m-task-details");
+  }
+
+
+  function getTaskInstructionText(task) {
+    const subtype = String((task && task.tg_subtype) || "").trim();
+    const map = {
+      sub_channel: "Подпишитесь на Telegram-канал и нажмите кнопку проверки.",
+      sub_24h: "Подпишитесь на Telegram-канал. Награда будет начислена после повторной проверки через 24 часа.",
+      sub_48h: "Подпишитесь на Telegram-канал. Награда будет начислена после повторной проверки через 48 часов.",
+      sub_72h: "Подпишитесь на Telegram-канал. Награда будет начислена после повторной проверки через 72 часа.",
+      join_group: "Вступите в Telegram-группу и нажмите кнопку проверки.",
+      join_group_24h: "Вступите в Telegram-группу. Награда будет начислена после повторной проверки через 24 часа.",
+      join_group_48h: "Вступите в Telegram-группу. Награда будет начислена после повторной проверки через 48 часа.",
+      join_group_72h: "Вступите в Telegram-группу. Награда будет начислена после повторной проверки через 72 часа.",
+    };
+    const raw = String((task && task.instructions) || "");
+    const cleaned = raw
+      .replace(/(^|\n)\s*TG_SUBTYPE\s*:\s*[a-z0-9_\-]+\s*(?=\n|$)/ig, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return map[subtype] || cleaned || "Выполните задание и нажмите кнопку проверки.";
   }
 
   window.copyLink = function () {
