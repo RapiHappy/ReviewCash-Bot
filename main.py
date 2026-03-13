@@ -465,6 +465,17 @@ def normalize_tg_chat(s: str | None) -> str | None:
     # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
+def tg_task_identity(task: dict | None) -> str:
+    """Stable identity for TG task target to suppress duplicates by same link/chat."""
+    task = task or {}
+    tg_chat = normalize_tg_chat((task.get("tg_chat") or task.get("target_url") or ""))
+    if tg_chat:
+        return tg_chat.lower()
+    raw = str(task.get("target_url") or "").strip().lower()
+    raw = re.sub(r"^https?://", "", raw)
+    raw = raw.split("?")[0].rstrip("/")
+    return raw
+
 def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     u = (tg_chat or "").lower().lstrip("@")
     tu = (target_url or "").lower()
@@ -2056,6 +2067,33 @@ async def api_sync(req: web.Request):
         except Exception:
             pending_task_counts = {}
 
+        completed_tg_keys: set[tuple[str, str]] = set()
+        try:
+            user_comp = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
+            done_statuses = {"pending", "pending_hold", "paid", "fake", "approved"}
+            done_task_ids = list({
+                cast_id(x.get("task_id"))
+                for x in (user_comp.data or [])
+                if str(x.get("status") or "").lower() in done_statuses and x.get("task_id") is not None
+            })
+            if done_task_ids:
+                done_tasks = await sb_select_in(
+                    T_TASKS,
+                    "id",
+                    done_task_ids,
+                    columns="id,type,target_url,tg_chat,instructions",
+                    limit=max(len(done_task_ids), 1),
+                )
+                for dt in (done_tasks.data or []):
+                    if str(dt.get("type") or "") != "tg":
+                        continue
+                    subtype = tg_subtype(dt)
+                    identity = tg_task_identity(dt)
+                    if subtype and identity:
+                        completed_tg_keys.add((subtype, identity))
+        except Exception:
+            completed_tg_keys = set()
+
         tasks = [
             t for t in raw
             if int(t.get("qty_left") or 0) > 0
@@ -2065,6 +2103,10 @@ async def api_sync(req: web.Request):
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
             )
             and (expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
+            and not (
+                str(t.get("type") or "") == "tg"
+                and (tg_subtype(t), tg_task_identity(t)) in completed_tg_keys
+            )
         ]
 
     reopen_task_ids = []
