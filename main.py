@@ -330,6 +330,20 @@ def get_tg_subtype(task: dict | None) -> str:
     m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_\-]+)\s*$", ins)
     return str(m.group(1)).strip().lower() if m else ""
 
+def tg_subtype(task: dict | None) -> str:
+    return get_tg_subtype(task)
+
+def tg_stack_key(task: dict | None) -> str:
+    """One canonical TG target key for stacking all member tasks by the same link/chat.
+    If user already did any TG member task on this target, hide all other TG member tasks
+    for the same public @username regardless of subtype (+24h/+48h/+72h etc.).
+    """
+    task = task or {}
+    subtype = get_tg_subtype(task)
+    if subtype and subtype not in TG_MEMBER_SUBTYPES:
+        return ""
+    return tg_task_identity(task)
+
 def get_tg_meta(task: dict | None, key: str) -> str:
     ins = str((task or {}).get("instructions") or "")
     m = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$", ins)
@@ -512,8 +526,8 @@ async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
         if status in ("left", "kicked"):
             TG_CHAT_CACHE[key] = (now, False, "Добавь бота в группу/канал, иначе TG-задание создать нельзя.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
-        if ctype == "channel" and status != "administrator":
-            TG_CHAT_CACHE[key] = (now, False, "Для канала нужно добавить бота и сделать админом.")
+        if ctype == "channel" and status not in ("administrator", "creator"):
+            TG_CHAT_CACHE[key] = (now, False, "Для канала бот должен быть админом перед созданием задания.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
         TG_CHAT_CACHE[key] = (now, True, "")
         return True, ""
@@ -2067,7 +2081,7 @@ async def api_sync(req: web.Request):
         except Exception:
             pending_task_counts = {}
 
-        completed_tg_keys: set[tuple[str, str]] = set()
+        completed_tg_stack_keys: set[str] = set()
         try:
             user_comp = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
             done_statuses = {"pending", "pending_hold", "paid", "fake", "approved"}
@@ -2087,12 +2101,11 @@ async def api_sync(req: web.Request):
                 for dt in (done_tasks.data or []):
                     if str(dt.get("type") or "") != "tg":
                         continue
-                    subtype = tg_subtype(dt)
-                    identity = tg_task_identity(dt)
-                    if subtype and identity:
-                        completed_tg_keys.add((subtype, identity))
+                    stack_key = tg_stack_key(dt)
+                    if stack_key:
+                        completed_tg_stack_keys.add(stack_key)
         except Exception:
-            completed_tg_keys = set()
+            completed_tg_stack_keys = set()
 
         tasks = [
             t for t in raw
@@ -2105,7 +2118,7 @@ async def api_sync(req: web.Request):
             and (expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
             and not (
                 str(t.get("type") or "") == "tg"
-                and (tg_subtype(t), tg_task_identity(t)) in completed_tg_keys
+                and tg_stack_key(t) in completed_tg_stack_keys
             )
         ]
 
