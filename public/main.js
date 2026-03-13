@@ -356,8 +356,7 @@ function tgAlert(msg, kind = "info", title = "") {
   const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
   const GM = { costPer: 75, reward: 60, title: "Google Maps — отзыв" };
   const MIN_TASK_BUDGET_RUB = 50;
-  const TOP_PROMOTE_RUB = 20;
-  const TOP_PROMOTE_HOURS = 24;
+  const TOP_PROMO_PCT = 0.10;
 
   // --------------------
   // State
@@ -1181,10 +1180,6 @@ async function syncAll() {
     return type.toUpperCase();
   }
 
-  function isTopTask(task) {
-    return !!(task && task.is_top);
-  }
-
   function renderTasks() {
     const box = $("tasks-list");
     if (!box) return;
@@ -1222,7 +1217,7 @@ if (!list.length) {
 
       const isOwner = (state.filter === "my" && uid && Number(t.owner_id) === Number(uid));
 
-      const topBadge = isTopTask(t) ? ` • 🔥 В топе` : "";
+      const topBadge = t && t.is_top ? " • 🔥 В топе" : "";
       const metaLine = isOwner
         ? `${taskTypeLabel(t)}${topBadge} • выполнено ${done}/${total} • осталось ${left}/${total}`
         : `${taskTypeLabel(t)}${topBadge}`;
@@ -1328,7 +1323,7 @@ if (!list.length) {
     $("td-reward").textContent = "+" + fmtRub(task.reward_rub || 0);
     const _ico = $("td-icon");
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
-    $("td-type-badge").textContent = taskTypeLabel(task) + (isTopTask(task) ? " • 🔥 В топе" : "");
+    $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
     $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + getTaskInstructionText(task);
 
@@ -1418,6 +1413,7 @@ if (!list.length) {
     const raw = String((task && task.instructions) || "");
     const cleaned = raw
       .replace(/(^|\n)\s*TG_SUBTYPE\s*:\s*[a-z0-9_\-]+\s*(?=\n|$)/ig, "\n")
+      .replace(/(^|\n)\s*TOP_UNTIL\s*:\s*.+?(?=\n|$)/ig, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
     return map[subtype] || cleaned || "Выполните задание и нажмите кнопку проверки.";
@@ -1867,51 +1863,64 @@ if (!list.length) {
     // Also recheck when TG subtype changes (doesn't change chat, but keeps status visible)
     const sub = $("t-tg-subtype");
     if (sub) sub.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
-    const top = $("t-promote-top");
-    if (top) top.addEventListener("change", () => { recalc(); });
   }
   function recalc() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
     const cur = $("t-cur") ? $("t-cur").value : "rub";
+    const promoteTop = !!($("t-top") && $("t-top").checked);
 
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
     if (tgWrap) tgWrap.classList.toggle("hidden", type !== "tg");
     if (tgOpt) tgOpt.classList.toggle("hidden", type !== "tg");
 
-    let total = 0;
     let reward = 0;
-    let costPer = 0;
+    let unitBase = 0;
 
     if (type === "ya") {
       reward = YA.reward;
-      costPer = YA.costPer;
-      total = costPer * qty;
+      unitBase = YA.costPer;
     } else if (type === "gm") {
       reward = GM.reward;
-      costPer = GM.costPer;
-      total = costPer * qty;
+      unitBase = GM.costPer;
     } else {
-      // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       reward = conf.reward;
-      total = reward * 2 * qty;
+      unitBase = reward * 2;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
     }
-    if (total > 0 && total < MIN_TASK_BUDGET_RUB) total = MIN_TASK_BUDGET_RUB;
-    if ($("t-promote-top") && $("t-promote-top").checked) total += TOP_PROMOTE_RUB;
+
+    const baseTotal = unitBase * qty;
+    const topExtra = promoteTop ? Math.round(baseTotal * TOP_PROMO_PCT * 100) / 100 : 0;
+    const payable = Math.max(baseTotal + topExtra, MIN_TASK_BUDGET_RUB);
 
     updateTgHint();
 
     const totalEl = $("t-total");
-    if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
-    const budgetEl = $("t-budget-note");
-    if (budgetEl) budgetEl.textContent = `Минимальный бюджет: ${fmtRub(MIN_TASK_BUDGET_RUB)}${($("t-promote-top") && $("t-promote-top").checked) ? ` • В топе +${fmtRub(TOP_PROMOTE_RUB)} на ${TOP_PROMOTE_HOURS}ч` : ""}`;
+    if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(payable) + " ⭐") : fmtRub(payable);
 
-    // target status reset
+    const unitEl = $("t-unit-cost");
+    if (unitEl) unitEl.textContent = `1 шт: ${fmtRub(unitBase)}`;
+
+    const minEl = $("t-min-note");
+    if (minEl) {
+      const extra = baseTotal + topExtra < MIN_TASK_BUDGET_RUB ? ` • к оплате всё равно от ${fmtRub(MIN_TASK_BUDGET_RUB)}` : "";
+      minEl.textContent = `Минимальный бюджет: ${fmtRub(MIN_TASK_BUDGET_RUB)}${extra}`;
+    }
+
+    const chip = $("t-top-chip");
+    const desc = $("t-top-desc");
+    if (chip) {
+      chip.textContent = promoteTop ? `+${fmtRub(topExtra)}` : `+${Math.round(TOP_PROMO_PCT * 100)}%`;
+      chip.style.background = promoteTop ? "linear-gradient(135deg, rgba(255,157,0,.22), rgba(255,95,31,.22))" : "rgba(255,255,255,.05)";
+      chip.style.borderColor = promoteTop ? "rgba(255,166,0,.35)" : "rgba(255,255,255,.1)";
+      chip.style.color = promoteTop ? "#ffd27a" : "var(--text-main)";
+    }
+    if (desc) desc.textContent = `Выше остальных на 24 часа • +${Math.round(TOP_PROMO_PCT * 100)}% к общей сумме`;
+
     const s = $("t-target-status");
     if (s) s.textContent = "";
   }
@@ -1962,12 +1971,12 @@ if (!list.length) {
     let title = "";
     let reward = 0;
     let cost = 0;
+    const promoteTop = !!($("t-top") && $("t-top").checked);
     let checkType = "manual";
     let tgChat = null;
     let tgKind = null;
     let subType = null;
     const payCurrency = $("t-cur") ? String($("t-cur").value || "rub").toLowerCase() : "rub";
-    const promoteTop = !!($("t-promote-top") && $("t-promote-top").checked);
 
     if (type === "ya") {
       title = YA.title;
@@ -2043,9 +2052,8 @@ if (!list.length) {
       }
     }
 
-    let neededRub = Number(cost || 0);
-    if (neededRub > 0 && neededRub < MIN_TASK_BUDGET_RUB) neededRub = MIN_TASK_BUDGET_RUB;
-    if (promoteTop) neededRub += TOP_PROMOTE_RUB;
+    const topExtraRub = promoteTop ? Math.round(Number(cost || 0) * TOP_PROMO_PCT * 100) / 100 : 0;
+    const neededRub = Math.max(Number(cost || 0) + topExtraRub, MIN_TASK_BUDGET_RUB);
     const neededStars = rubToStars(neededRub);
     const bal = state.balance || {};
     if (payCurrency === "star" && !starsPaymentsEnabled()) {
@@ -2082,7 +2090,7 @@ if (!list.length) {
         tgHaptic("success");
         const paidText = (res.charged_currency === "star")
           ? `${Number(res.charged_amount || 0)} ⭐`
-          : fmtRub(res.charged_amount || neededRub);
+          : fmtRub(res.charged_amount || cost);
         tgAlert(`Задание создано ✅\nСписано: ${paidText}`);
         await syncAll();
       } else {
