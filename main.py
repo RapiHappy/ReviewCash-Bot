@@ -1252,10 +1252,11 @@ async def get_submit_block_until(uid: int):
     return await get_limit_until(uid, SUBMIT_BLOCK_KEY)
 
 async def mark_submit_attempt(uid: int, ok: bool = False):
-    """Track submit attempts using only timestamp rows in user_limits.
+    """Track submit attempts safely using only timestamp rows in user_limits.
 
-    user_limits.last_at is a timestamptz column, so we cannot store JSON there.
-    We use one rolling timestamp for the submit window and one block-until timestamp.
+    user_limits.last_at is a timestamptz column, so JSON/counters cannot be stored there.
+    We keep only the latest failed-at timestamp. Fast spam is already handled by
+    rate_limit_enforce(); this helper must never false-ban users on the 2nd attempt.
     """
     uid = int(uid)
     if ok:
@@ -1267,29 +1268,29 @@ async def mark_submit_attempt(uid: int, ok: bool = False):
         return 0
 
     now = _now()
-    row = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
-    count = 1
-    started_at = now
-
-    if row.data:
-        prev = _parse_dt((row.data[0] or {}).get("last_at"))
-        if prev and (now - prev).total_seconds() <= max(60, SUBMIT_WINDOW_SEC):
-            count = max(1, MAX_SUBMITS_10M + 1)
-            started_at = prev
+    prev = None
+    try:
+        row = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
+        if row.data:
+            prev = _parse_dt((row.data[0] or {}).get("last_at"))
+    except Exception:
+        prev = None
 
     await sb_upsert(
         T_LIMITS,
         {
             "user_id": uid,
             "limit_key": SUBMIT_WINDOW_KEY,
-            "last_at": started_at.isoformat(),
+            "last_at": now.isoformat(),
         },
         on_conflict="user_id,limit_key",
     )
 
-    if count > max(1, MAX_SUBMITS_10M):
-        await set_limit_until(uid, SUBMIT_BLOCK_KEY, max(60, SUBMIT_WINDOW_BLOCK_SEC))
-    return count
+    # Extra safety block only for extremely aggressive repeated failures inside a tiny window.
+    if prev and (now - prev).total_seconds() <= 3:
+        await set_limit_until(uid, SUBMIT_BLOCK_KEY, max(60, min(300, SUBMIT_WINDOW_BLOCK_SEC)))
+        return 2
+    return 1
 
 async def can_access_expensive_tasks(uid: int) -> tuple[bool, str | None]:
     rows = await sb_select(T_USERS, {"user_id": int(uid)}, limit=1)
@@ -2071,7 +2072,15 @@ async def api_sync(req: web.Request):
 
         pending_task_counts = {}
         try:
-            psel = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=1000)
+            psel = await sb_select_in(
+                T_COMP,
+                "status",
+                ["pending", "pending_hold"],
+                columns="task_id,status,created_at",
+                order="created_at",
+                desc=True,
+                limit=2000,
+            )
             for x in (psel.data or []):
                 tid = x.get("task_id")
                 if tid is None:
@@ -2110,7 +2119,13 @@ async def api_sync(req: web.Request):
         tasks = [
             t for t in raw
             if int(t.get("qty_left") or 0) > 0
-            and (t.get("type") != "tg" or t.get("check_type") == "auto")
+            and (
+                t.get("type") != "tg"
+                or (
+                    t.get("check_type") == "auto"
+                    and (get_tg_subtype(t) in TG_MEMBER_SUBTYPES)
+                )
+            )
             and not (
                 int(t.get("owner_id") or 0) != uid
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
@@ -2276,7 +2291,7 @@ async def api_task_create(req: web.Request):
     # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
         sub_type = (sub_type or TG_SUB_CHANNEL_KEY).strip().lower()
-        if sub_type not in (TG_MEMBER_SUBTYPES | TG_EVENT_SUBTYPES):
+        if sub_type not in TG_MEMBER_SUBTYPES:
             return json_error(400, "Неизвестный TG подтип задания", code="TG_BAD_SUBTYPE")
 
         if sub_type in TG_MEMBER_SUBTYPES:
@@ -2315,11 +2330,6 @@ async def api_task_create(req: web.Request):
             check_type = desired_check_type
             if check_type != "auto":
                 return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
-        else:
-            tg_kind = "bot"
-            check_type = "auto"
-            if not target_url:
-                target_url = "https://t.me/ReviewCashOrg_Bot"
 
 
     if cost_rub <= 0:
@@ -2467,13 +2477,24 @@ async def api_task_submit(req: web.Request):
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
 
-    if not is_auto:
-        # reserve only available slots: allow parallel pending reports while free places remain
-        pending_any = await sb_select(T_COMP, {"task_id": task_id_db, "status": "pending"}, order="created_at", desc=True, limit=1000)
-        pending_count = len(pending_any.data or [])
+    task_subtype = get_tg_subtype(task) or TG_SUB_CHANNEL_KEY
+    hold_delay = tg_hold_delay_sec(task_subtype) if is_auto else 0
+
+    if (not is_auto) or hold_delay > 0:
+        # reserve only available slots: pending manual reports and delayed TG holds both occupy places
+        reserved_any = await sb_select_in(
+            T_COMP,
+            "status",
+            ["pending", "pending_hold"],
+            columns="id,task_id,status,created_at,user_id",
+            order="created_at",
+            desc=True,
+            limit=2000,
+        )
+        reserved_count = sum(1 for x in (reserved_any.data or []) if cast_id(x.get("task_id")) == task_id_db)
         qty_left = int(task.get("qty_left") or 0)
-        if pending_count >= qty_left:
-            return web.json_response({"ok": False, "error": "Свободных мест сейчас нет: все места уже заняты отчётами на проверке. Дождись решения модератора."}, status=400)
+        if reserved_count >= qty_left:
+            return web.json_response({"ok": False, "error": "Свободных мест сейчас нет: все места уже заняты отчётами на проверке."}, status=400)
 
     # require that user opened the task link (anti-fake) for manual checks
     if not is_auto:
@@ -2512,7 +2533,6 @@ async def api_task_submit(req: web.Request):
             await mark_submit_attempt(uid, ok=True)
             return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
 
-        task_subtype = get_tg_subtype(task) or TG_SUB_CHANNEL_KEY
         reward = float(task.get("reward_rub") or 0)
         chat = task.get("tg_chat") or ""
         task_created_at = _task_created_at(task)
