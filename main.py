@@ -465,20 +465,6 @@ def normalize_tg_chat(s: str | None) -> str | None:
     # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
-
-
-def tg_is_private_target(raw: str | None) -> bool:
-    s = str(raw or "").strip().lower()
-    if not s:
-        return False
-    return (
-        "t.me/+" in s
-        or "/joinchat/" in s
-        or s.startswith("https://telegram.me/+")
-        or s.startswith("telegram.me/+")
-        or s.startswith("https://t.me/+")
-        or s.startswith("t.me/+")
-    )
 def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     u = (tg_chat or "").lower().lstrip("@")
     tu = (target_url or "").lower()
@@ -513,16 +499,26 @@ async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
         status = getattr(member, "status", None)
         ctype = getattr(chat, "type", "")
         if status in ("left", "kicked"):
-            TG_CHAT_CACHE[key] = (now, False, "Бот не найден в этом канале/группе. Добавь бота, иначе автопроверка не сработает.")
+            TG_CHAT_CACHE[key] = (now, False, "Добавь бота в группу/канал, иначе TG-задание создать нельзя.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
         if ctype == "channel" and status != "administrator":
-            TG_CHAT_CACHE[key] = (now, False, "Для канала бот должен быть добавлен и назначен администратором.")
+            TG_CHAT_CACHE[key] = (now, False, "Для канала нужно добавить бота и сделать админом.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
         TG_CHAT_CACHE[key] = (now, True, "")
         return True, ""
     except Exception:
-        TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить канал/группу. Приватные TG-ссылки запрещены. Используй публичный @username и добавь бота (для канала — админом).")
+        TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить чат. Добавь бота в группу/канал (и для канала — админом), затем попробуй снова.")
         return False, TG_CHAT_CACHE[key][2]
+
+
+
+def is_private_tg_target(raw: str | None) -> bool:
+    s = str(raw or '').strip().lower()
+    return ('t.me/+' in s) or ('t.me/joinchat/' in s) or ('telegram.me/+' in s) or ('joinchat/' in s)
+
+async def tg_get_chat_kind(chat_username: str) -> str:
+    chat = await bot.get_chat(chat_username)
+    return str(getattr(chat, 'type', '') or '').strip().lower()
 
 # -------------------------
 # API: TG chat check (for UI animation)
@@ -535,14 +531,6 @@ async def api_tg_check_chat(req: web.Request):
 
     body = await safe_json(req)
     target = str(body.get("target") or body.get("chat") or body.get("target_url") or "").strip()
-
-    if tg_is_private_target(target):
-        return web.json_response({
-            "ok": True,
-            "valid": False,
-            "code": "TG_PRIVATE_FORBIDDEN",
-            "message": "Приватные Telegram-ссылки запрещены. Укажи публичный @username канала или группы.",
-        })
 
     chat = normalize_tg_chat(target)
     if not chat:
@@ -1305,7 +1293,7 @@ async def calc_user_risk_score(uid: int) -> int:
         c = await sb_select(T_COMP, {"user_id": int(uid)}, order="created_at", desc=True, limit=20)
         rows = c.data or []
         failed = sum(1 for x in rows if str(x.get("status") or "").lower() in {"rejected", "fake", "fraud"})
-        pending = sum(1 for x in rows if str(x.get("status") or "").lower() in {"pending", "pending_24h", "pending_48h", "checking"})
+        pending = sum(1 for x in rows if str(x.get("status") or "").lower() in {"pending", "pending_24h", "checking"})
         if failed >= 3:
             score += 15
         if pending >= 10:
@@ -1468,9 +1456,9 @@ TG_JOIN_GROUP_KEY = "join_group"
 TG_SUB_24H_KEY = "sub_24h"
 TG_SUB_48H_KEY = "sub_48h"
 TG_SUB_72H_KEY = "sub_72h"
-TG_JOIN_24H_KEY = "join_group_24h"
-TG_JOIN_48H_KEY = "join_group_48h"
-TG_JOIN_72H_KEY = "join_group_72h"
+TG_JOIN_GROUP_24H_KEY = "join_group_24h"
+TG_JOIN_GROUP_48H_KEY = "join_group_48h"
+TG_JOIN_GROUP_72H_KEY = "join_group_72h"
 TG_BOT_START_KEY = "bot_start"
 TG_BOT_CALLBACK_KEY = "bot_callback"
 TG_BOT_MESSAGE_KEY = "bot_message"
@@ -1478,7 +1466,10 @@ TG_MINIAPP_OPEN_KEY = "miniapp_open"
 TG_INVITE_FRIENDS_KEY = "invite_friends"
 TG_POLL_VOTE_KEY = "poll_vote"
 
-TG_MEMBER_SUBTYPES = {TG_SUB_CHANNEL_KEY, TG_JOIN_GROUP_KEY, TG_SUB_24H_KEY, TG_SUB_48H_KEY, TG_SUB_72H_KEY, TG_JOIN_24H_KEY, TG_JOIN_48H_KEY, TG_JOIN_72H_KEY}
+TG_CHANNEL_SUBTYPES = {TG_SUB_CHANNEL_KEY, TG_SUB_24H_KEY, TG_SUB_48H_KEY, TG_SUB_72H_KEY}
+TG_GROUP_SUBTYPES = {TG_JOIN_GROUP_KEY, TG_JOIN_GROUP_24H_KEY, TG_JOIN_GROUP_48H_KEY, TG_JOIN_GROUP_72H_KEY}
+TG_HOLD_SUBTYPES = {TG_SUB_24H_KEY, TG_SUB_48H_KEY, TG_SUB_72H_KEY, TG_JOIN_GROUP_24H_KEY, TG_JOIN_GROUP_48H_KEY, TG_JOIN_GROUP_72H_KEY}
+TG_MEMBER_SUBTYPES = TG_CHANNEL_SUBTYPES | TG_GROUP_SUBTYPES
 TG_EVENT_SUBTYPES = {TG_BOT_START_KEY, TG_BOT_CALLBACK_KEY, TG_BOT_MESSAGE_KEY, TG_MINIAPP_OPEN_KEY, TG_INVITE_FRIENDS_KEY, TG_POLL_VOTE_KEY}
 
 TG_EVT_PREFIX = "tg_evt:"
@@ -1532,9 +1523,21 @@ async def tg_poll_answer_seen_since(uid: int, since_dt: datetime, poll_id: str |
 TG_SUB_24H_DELAY_SEC = 24 * 3600
 TG_SUB_48H_DELAY_SEC = 48 * 3600
 TG_SUB_72H_DELAY_SEC = 72 * 3600
-TG_JOIN_24H_DELAY_SEC = 24 * 3600
-TG_JOIN_48H_DELAY_SEC = 48 * 3600
-TG_JOIN_72H_DELAY_SEC = 72 * 3600
+
+def tg_hold_delay_sec(subtype: str) -> int:
+    subtype = str(subtype or '').strip().lower()
+    if subtype in (TG_SUB_24H_KEY, TG_JOIN_GROUP_24H_KEY):
+        return TG_SUB_24H_DELAY_SEC
+    if subtype in (TG_SUB_48H_KEY, TG_JOIN_GROUP_48H_KEY):
+        return TG_SUB_48H_DELAY_SEC
+    if subtype in (TG_SUB_72H_KEY, TG_JOIN_GROUP_72H_KEY):
+        return TG_SUB_72H_DELAY_SEC
+    return 0
+
+def tg_hold_delay_hours(subtype: str) -> int:
+    sec = tg_hold_delay_sec(subtype)
+    return max(0, sec // 3600)
+
 TG_HOLD_SCAN_INTERVAL_SEC = int(os.getenv("TG_HOLD_SCAN_INTERVAL_SEC", "60").strip())
 
 
@@ -1618,20 +1621,6 @@ async def process_tg_holds_once():
                 continue
 
             reward = float(task.get("reward_rub") or 0)
-            task_subtype = get_tg_subtype(task) or TG_SUB_CHANNEL_KEY
-            hold_cfg = {
-                TG_SUB_24H_KEY: (24, "pending_24h", "AUTO_TG_24H_OK", "AUTO_TG_24H_FAIL"),
-                TG_SUB_48H_KEY: (48, "pending_48h", "AUTO_TG_48H_OK", "AUTO_TG_48H_FAIL"),
-                TG_SUB_72H_KEY: (72, "pending_72h", "AUTO_TG_72H_OK", "AUTO_TG_72H_FAIL"),
-                TG_JOIN_24H_KEY: (24, "pending_group_24h", "AUTO_TG_GROUP_24H_OK", "AUTO_TG_GROUP_24H_FAIL"),
-                TG_JOIN_48H_KEY: (48, "pending_group_48h", "AUTO_TG_GROUP_48H_OK", "AUTO_TG_GROUP_48H_FAIL"),
-                TG_JOIN_72H_KEY: (72, "pending_group_72h", "AUTO_TG_GROUP_72H_OK", "AUTO_TG_GROUP_72H_FAIL"),
-            }
-            delay_hours, pending_status, proof_ok_text, proof_fail_text = hold_cfg.get(
-                task_subtype,
-                (24, "pending_24h", "AUTO_TG_24H_OK", "AUTO_TG_24H_FAIL"),
-            )
-
             ok_member = await tg_is_member(chat, user_id)
             if ok_member:
                 await add_rub(user_id, reward)
@@ -1650,11 +1639,11 @@ async def process_tg_holds_once():
                 except Exception:
                     pass
 
-                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": pending_status}, order="created_at", desc=True, limit=1)
+                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
                 if c.data:
                     await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
                         "status": "paid",
-                        "proof_text": proof_ok_text,
+                        "proof_text": "AUTO_TG_HOLD_OK",
                         "moderated_at": _now().isoformat(),
                     })
                 else:
@@ -1662,20 +1651,20 @@ async def process_tg_holds_once():
                         "task_id": task_id_db,
                         "user_id": int(user_id),
                         "status": "paid",
-                        "proof_text": proof_ok_text,
+                        "proof_text": "AUTO_TG_HOLD_OK",
                         "proof_url": None,
                         "moderated_at": _now().isoformat(),
                     })
-                await notify_user(user_id, f"✅ Проверка через {delay_hours} часов пройдена. Начислено +{reward:.2f}₽")
+                await notify_user(user_id, f"✅ Повторная проверка пройдена. Начислено +{reward:.2f}₽")
             else:
-                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": pending_status}, order="created_at", desc=True, limit=1)
+                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
                 if c.data:
                     await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
                         "status": "rejected",
-                        "proof_text": proof_fail_text,
+                        "proof_text": "AUTO_TG_HOLD_FAIL",
                         "moderated_at": _now().isoformat(),
                     })
-                await notify_user(user_id, f"❌ Проверка через {delay_hours} часов не пройдена: подписка не найдена. Выплата отменена.")
+                await notify_user(user_id, "❌ Повторная проверка не пройдена: подписка не найдена. Выплата отменена.")
         except Exception as e:
             log.warning("tg hold process failed task=%s user=%s err=%s", task_id, user_id, e)
         finally:
@@ -2232,46 +2221,50 @@ async def api_task_create(req: web.Request):
     # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
         sub_type = (sub_type or TG_SUB_CHANNEL_KEY).strip().lower()
-        if sub_type not in TG_MEMBER_SUBTYPES:
-            return json_error(400, "Оставлены только TG задания для каналов и групп с авто-проверкой.", code="TG_ONLY_CHANNELS_GROUPS")
+        if sub_type not in (TG_MEMBER_SUBTYPES | TG_EVENT_SUBTYPES):
+            return json_error(400, "Неизвестный TG подтип задания", code="TG_BAD_SUBTYPE")
 
-        raw_tg = (tg_chat or target_url or "").strip()
-        raw_low = raw_tg.lower()
+        if sub_type in TG_MEMBER_SUBTYPES:
+            raw_tg = (tg_chat or target_url or "").strip()
+            raw_low = raw_tg.lower()
 
-        if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
-            return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
+            if is_private_tg_target(raw_tg):
+                return json_error(400, "Приватные Telegram-ссылки запрещены. Укажи публичный @username или https://t.me/username", code="TG_PRIVATE_FORBIDDEN")
 
-        tg_chat_n = normalize_tg_chat(raw_tg)
-        if not tg_chat_n:
-            return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
-        tg_chat = tg_chat_n
+            if not (raw_tg.startswith("@") or ("t.me/" in raw_low)):
+                return json_error(400, "Для TG задания можно указывать только @юзернейм или ссылку t.me/...", code="TG_ONLY_AT_OR_LINK")
 
-        kind_guess = tg_detect_kind(tg_chat, target_url)
-        if kind_guess != "chat":
-            return json_error(400, "Задания для ботов отключены. Оставлены только каналы и группы, которые бот реально может проверить.", code="TG_BOT_TASKS_DISABLED")
+            tg_chat_n = normalize_tg_chat(raw_tg)
+            if not tg_chat_n:
+                return json_error(400, "Некорректный @юзернейм/ссылка TG. Пример: @MyChannel или https://t.me/MyChannel", code="TG_CHAT_REQUIRED")
+            if tg_chat_n.lower().endswith('bot'):
+                return json_error(400, "Бот-ссылки запрещены. Для TG заданий можно использовать только каналы и группы.", code="TG_BOT_FORBIDDEN")
+            tg_chat = tg_chat_n
 
-        try:
-            tg_obj = await bot.get_chat(tg_chat)
-        except Exception:
-            return json_error(
-                400,
-                "Не удалось открыть TG-цель. Проверь @/ссылку. Если это приватный чат/канал — добавь бота.",
-                code="TG_BAD_TARGET",
-            )
+            try:
+                actual_kind = await tg_get_chat_kind(tg_chat)
+            except Exception:
+                return json_error(
+                    400,
+                    "Не удалось открыть TG-цель. Проверь @/ссылку. Приватные каналы и группы не поддерживаются.",
+                    code="TG_BAD_TARGET",
+                )
 
-        chat_type = str(getattr(tg_obj, "type", "") or "").lower()
-        channel_only_subtypes = {TG_SUB_CHANNEL_KEY, TG_SUB_24H_KEY, TG_SUB_48H_KEY, TG_SUB_72H_KEY}
-        group_only_subtypes = {TG_JOIN_GROUP_KEY, TG_JOIN_24H_KEY, TG_JOIN_48H_KEY, TG_JOIN_72H_KEY}
-        if sub_type in channel_only_subtypes and chat_type != "channel":
-            return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-канал.", code="TG_CHANNEL_REQUIRED")
-        if sub_type in group_only_subtypes and chat_type not in ("group", "supergroup"):
-            return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-группу.", code="TG_GROUP_REQUIRED")
+            if sub_type in TG_CHANNEL_SUBTYPES and actual_kind != 'channel':
+                return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-канал.", code="TG_NEED_CHANNEL")
+            if sub_type in TG_GROUP_SUBTYPES and actual_kind not in ('group', 'supergroup'):
+                return json_error(400, "Для этого типа задания нужна ссылка именно на Telegram-группу.", code="TG_NEED_GROUP")
 
-        desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
-        tg_kind = desired_kind
-        check_type = desired_check_type
-        if check_type != "auto":
-            return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
+            desired_check_type, desired_kind, reason = await tg_calc_check_type(tg_chat, target_url)
+            tg_kind = actual_kind or desired_kind
+            check_type = desired_check_type
+            if check_type != "auto":
+                return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
+        else:
+            tg_kind = "bot"
+            check_type = "auto"
+            if not target_url:
+                target_url = "https://t.me/ReviewCashOrg_Bot"
 
 
     if cost_rub <= 0:
@@ -2413,7 +2406,7 @@ async def api_task_submit(req: web.Request):
 
     # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
     dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
-    blocking_statuses = {"pending", "pending_24h", "pending_48h", "paid", "fake"}
+    blocking_statuses = {"pending", "pending_24h", "paid", "fake"}
     if any(str(x.get("status") or "").lower() in blocking_statuses for x in (dup.data or [])):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
@@ -2473,16 +2466,8 @@ async def api_task_submit(req: web.Request):
             if not chat:
                 return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
 
-            hold_submit_cfg = {
-                TG_SUB_24H_KEY: (24, TG_SUB_24H_DELAY_SEC, "pending_24h", "TG_SUB_24H_WAIT", "hold_24h", "AUTO_TG_24H_WAIT"),
-                TG_SUB_48H_KEY: (48, TG_SUB_48H_DELAY_SEC, "pending_48h", "TG_SUB_48H_WAIT", "hold_48h", "AUTO_TG_48H_WAIT"),
-                TG_SUB_72H_KEY: (72, TG_SUB_72H_DELAY_SEC, "pending_72h", "TG_SUB_72H_WAIT", "hold_72h", "AUTO_TG_72H_WAIT"),
-                TG_JOIN_24H_KEY: (24, TG_JOIN_24H_DELAY_SEC, "pending_group_24h", "TG_JOIN_24H_WAIT", "hold_group_24h", "AUTO_TG_GROUP_24H_WAIT"),
-                TG_JOIN_48H_KEY: (48, TG_JOIN_48H_DELAY_SEC, "pending_group_48h", "TG_JOIN_48H_WAIT", "hold_group_48h", "AUTO_TG_GROUP_48H_WAIT"),
-                TG_JOIN_72H_KEY: (72, TG_JOIN_72H_DELAY_SEC, "pending_group_72h", "TG_JOIN_72H_WAIT", "hold_group_72h", "AUTO_TG_GROUP_72H_WAIT"),
-            }
-            if task_subtype in hold_submit_cfg:
-                hold_hours, hold_delay_sec, pending_status, hold_code, hold_status, hold_proof = hold_submit_cfg[task_subtype]
+            hold_delay = tg_hold_delay_sec(task_subtype)
+            if hold_delay > 0:
                 existing_hold = await tg_hold_get(task_id, uid)
                 if existing_hold:
                     left_raw = int((existing_hold - _now()).total_seconds())
@@ -2494,7 +2479,7 @@ async def api_task_submit(req: web.Request):
                         return web.json_response({
                             "ok": False,
                             "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.",
-                            "code": hold_code,
+                            "code": "TG_HOLD_WAIT",
                             "retry_after": left,
                         }, status=400)
 
@@ -2502,22 +2487,23 @@ async def api_task_submit(req: web.Request):
                 if not ok_member:
                     return web.json_response({"ok": False, "error": "Бот не видит подписку сейчас. Подпишись и отправь на проверку снова."}, status=400)
 
-                due_at = _now() + timedelta(seconds=hold_delay_sec)
+                due_at = _now() + timedelta(seconds=hold_delay)
                 await tg_hold_set(task_id, uid, due_at)
                 await sb_insert(T_COMP, {
                     "task_id": task_id_db,
                     "user_id": uid,
-                    "status": pending_status,
-                    "proof_text": hold_proof,
+                    "status": "pending_hold",
+                    "proof_text": f"AUTO_TG_WAIT_{tg_hold_delay_hours(task_subtype)}H",
                     "proof_url": None,
                 })
 
                 due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
+                wait_hours = tg_hold_delay_hours(task_subtype)
                 await mark_submit_attempt(uid, ok=True)
                 return web.json_response({
                     "ok": True,
-                    "status": hold_status,
-                    "message": f"Подписка подтверждена. Бот автоматически проверит повторно через {hold_hours} часов ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
+                    "status": f"hold_{wait_hours}h",
+                    "message": f"Подписка подтверждена. Бот автоматически проверит повторно через {wait_hours} ч. ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
                     "retry_after": max(1, int((due_at - _now()).total_seconds())),
                 })
 
