@@ -214,9 +214,6 @@ GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "300").strip())
 # Stars topup minimum (in RUB)
 MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "1").strip())
-MIN_TASK_BUDGET_RUB = float(os.getenv("MIN_TASK_BUDGET_RUB", "50").strip())
-TOP_PROMOTE_RUB = float(os.getenv("TOP_PROMOTE_RUB", "20").strip())
-TOP_PROMOTE_HOURS = int(os.getenv("TOP_PROMOTE_HOURS", "24").strip())
 
 # Stars rate: сколько рублей даёт 1 Star
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
@@ -325,8 +322,6 @@ def strip_meta_tags(text: str) -> str:
             continue
         if re.match(r"(?im)^\s*TG_POLL_ID\s*:", line):
             continue
-        if re.match(r"(?im)^\s*TOP_UNTIL\s*:", line):
-            continue
         out.append(line)
     return "\n".join(out).strip()
 
@@ -339,7 +334,7 @@ def tg_subtype(task: dict | None) -> str:
     return get_tg_subtype(task)
 
 def tg_stack_key(task: dict | None) -> str:
-    """Stable stacking key only for the same TG subtype + same public target."""
+    """Canonical TG key: same public target + same TG subtype."""
     task = task or {}
     subtype = get_tg_subtype(task)
     if subtype and subtype not in TG_MEMBER_SUBTYPES:
@@ -347,17 +342,7 @@ def tg_stack_key(task: dict | None) -> str:
     ident = tg_task_identity(task)
     if not ident:
         return ""
-    return f"{str(subtype or '').strip().lower()}::{ident}"
-
-
-def get_task_top_until(task: dict | None) -> datetime | None:
-    raw = get_tg_meta(task, "TOP_UNTIL") if task else ""
-    return _parse_dt(raw) if raw else None
-
-
-def is_task_top(task: dict | None) -> bool:
-    until = get_task_top_until(task)
-    return bool(until and until > _now())
+    return f"{(subtype or '').lower()}::{ident}"
 
 def get_tg_meta(task: dict | None, key: str) -> str:
     ins = str((task or {}).get("instructions") or "")
@@ -366,6 +351,10 @@ def get_tg_meta(task: dict | None, key: str) -> str:
 
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
+
+MIN_TASK_BUDGET_RUB = float(os.getenv("MIN_TASK_BUDGET_RUB", "50").strip())
+TOP_PROMO_PCT = float(os.getenv("TOP_PROMO_PCT", "0.10").strip())
+TOP_PROMO_HOURS = int(os.getenv("TOP_PROMO_HOURS", "24").strip())
 
 # CryptoBot (optional)
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "").strip()
@@ -504,6 +493,42 @@ def tg_task_identity(task: dict | None) -> str:
     raw = re.sub(r"^https?://", "", raw)
     raw = raw.split("?")[0].rstrip("/")
     return raw
+
+def get_task_top_until(task: dict | None) -> datetime | None:
+    raw = get_tg_meta(task, "TOP_UNTIL")
+    return _parse_dt(raw)
+
+
+def is_task_top_active(task: dict | None, now_dt: datetime | None = None) -> bool:
+    dt = get_task_top_until(task)
+    if not dt:
+        return False
+    return dt > (now_dt or _now())
+
+
+def collapse_duplicate_tg_tasks(tasks: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for t in tasks or []:
+        if str(t.get("type") or "") != "tg":
+            out.append(t)
+            continue
+        key = tg_stack_key(t)
+        if not key:
+            out.append(t)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    return out
+
+
+def task_sort_key(task: dict) -> tuple:
+    created = _parse_dt(task.get("created_at")) or datetime.fromtimestamp(0, tz=timezone.utc)
+    is_top = 1 if is_task_top_active(task) else 0
+    return (is_top, created.timestamp())
+
 
 def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     u = (tg_chat or "").lower().lstrip("@")
@@ -2086,11 +2111,8 @@ async def api_sync(req: web.Request):
 
         pending_task_counts = {}
         try:
-            psel = await sb_select(T_COMP, order="created_at", desc=True, limit=3000)
-            busy_statuses = {"pending", "pending_hold"}
+            psel = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=1000)
             for x in (psel.data or []):
-                if str(x.get("status") or "").lower() not in busy_statuses:
-                    continue
                 tid = x.get("task_id")
                 if tid is None:
                     continue
@@ -2139,39 +2161,13 @@ async def api_sync(req: web.Request):
                 and tg_stack_key(t) in completed_tg_stack_keys
             )
         ]
-
-        deduped = {}
+        tasks = collapse_duplicate_tg_tasks(tasks)
         for t in tasks:
-            key = tg_stack_key(t) if str(t.get("type") or "") == "tg" else f"id::{t.get('id')}"
-            prev = deduped.get(key)
-            if not prev:
-                deduped[key] = t
-                continue
-            prev_top = is_task_top(prev)
-            cur_top = is_task_top(t)
-            if cur_top and not prev_top:
-                deduped[key] = t
-                continue
-            if cur_top == prev_top:
-                prev_reward = float(prev.get("reward_rub") or 0)
-                cur_reward = float(t.get("reward_rub") or 0)
-                if cur_reward > prev_reward:
-                    deduped[key] = t
-                    continue
-                if cur_reward == prev_reward:
-                    prev_dt = _parse_dt(prev.get("created_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)
-                    cur_dt = _parse_dt(t.get("created_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)
-                    if cur_dt > prev_dt:
-                        deduped[key] = t
-        tasks = list(deduped.values())
-        tasks.sort(
-            key=lambda t: (
-                1 if is_task_top(t) else 0,
-                float(t.get("reward_rub") or 0),
-                (_parse_dt(t.get("created_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp(),
-            ),
-            reverse=True,
-        )
+            try:
+                t["is_top"] = is_task_top_active(t)
+            except Exception:
+                t["is_top"] = False
+        tasks = sorted(tasks, key=task_sort_key, reverse=True)
 
     reopen_task_ids = []
     try:
@@ -2187,13 +2183,6 @@ async def api_sync(req: web.Request):
             reopen_task_ids = list(dict.fromkeys(reopen_task_ids))
     except Exception:
         reopen_task_ids = []
-
-    for _t in tasks:
-        try:
-            _t["tg_subtype"] = get_tg_subtype(_t) if str(_t.get("type") or "") == "tg" else _t.get("tg_subtype")
-            _t["is_top"] = is_task_top(_t)
-        except Exception:
-            pass
 
     session_token = _make_session_token(uid)
     return web.json_response({
@@ -2374,25 +2363,15 @@ async def api_task_create(req: web.Request):
             check_type = desired_check_type
             if check_type != "auto":
                 return json_error(400, "TG задания доступны только с автоматической проверкой. Укажи канал/группу, где бот может проверить подписку.", code="TG_AUTO_ONLY", reason=reason)
-        else:
-            tg_kind = "bot"
-            check_type = "auto"
-            if not target_url:
-                target_url = "https://t.me/ReviewCashOrg_Bot"
 
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
 
-    total_cost = float(cost_rub)
-    if total_cost < float(MIN_TASK_BUDGET_RUB):
-        return web.json_response({"ok": False, "error": f"Минимальный бюджет задания — {MIN_TASK_BUDGET_RUB:.0f}₽"}, status=400)
-
-    top_until = None
+    base_cost = float(cost_rub)
     if promote_top:
-        top_until = _now() + timedelta(hours=max(1, int(TOP_PROMOTE_HOURS)))
-        total_cost += float(TOP_PROMOTE_RUB)
-
+        base_cost = round(base_cost * (1.0 + TOP_PROMO_PCT), 2)
+    total_cost = max(float(base_cost), float(MIN_TASK_BUDGET_RUB))
     charged_amount = total_cost
     charged_currency = "rub"
 
@@ -2425,12 +2404,18 @@ async def api_task_create(req: web.Request):
         "status": "active",
     }
 
+    meta_lines = []
     if sub_type:
-        row["instructions"] = (instructions + "\n\nTG_SUBTYPE: " + sub_type).strip()
+        meta_lines.append("TG_SUBTYPE: " + sub_type)
+    if promote_top:
+        top_until = (_now() + timedelta(hours=TOP_PROMO_HOURS)).isoformat()
+        meta_lines.append("TOP_UNTIL: " + top_until)
+    if meta_lines:
+        meta_block = "\n".join(meta_lines)
+        row["instructions"] = (instructions + "\n\n" + meta_block).strip()
 
     ins = await sb_insert(T_TASKS, row)
     task = (ins.data or [row])[0]
-    task["is_top"] = bool(top_until and top_until > _now())
 
     await stats_add("revenue_rub", total_cost)
     pay_text = f"{int(charged_amount)}⭐" if charged_currency == "star" else f"{charged_amount:.2f}₽"
@@ -2446,6 +2431,9 @@ async def api_task_create(req: web.Request):
         "charged_amount": int(charged_amount) if charged_currency == "star" else charged_amount,
         "charged_currency": charged_currency,
         "cost_rub": total_cost,
+        "promote_top": promote_top,
+        "min_task_budget_rub": MIN_TASK_BUDGET_RUB,
+        "top_promo_pct": TOP_PROMO_PCT,
     })
 
 
@@ -2529,25 +2517,9 @@ async def api_task_submit(req: web.Request):
 
     # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
     dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
-    blocking_statuses = {"pending", "pending_24h", "pending_hold", "paid", "fake", "approved"}
+    blocking_statuses = {"pending", "pending_24h", "paid", "fake"}
     if any(str(x.get("status") or "").lower() in blocking_statuses for x in (dup.data or [])):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
-
-    if str(task.get("type") or "") == "tg":
-        stack_key = tg_stack_key(task)
-        if stack_key:
-            try:
-                user_comp = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
-                seen_ids = [cast_id(x.get("task_id")) for x in (user_comp.data or []) if x.get("task_id") is not None and str(x.get("status") or "").lower() in blocking_statuses]
-                if seen_ids:
-                    done_tasks = await sb_select_in(T_TASKS, "id", list(dict.fromkeys(seen_ids)), columns="id,type,target_url,tg_chat,instructions", limit=max(1, len(set(seen_ids))))
-                    for dt in (done_tasks.data or []):
-                        if str(dt.get("type") or "") != "tg":
-                            continue
-                        if tg_stack_key(dt) == stack_key:
-                            return web.json_response({"ok": False, "error": "Похожее Telegram-задание по этой ссылке вы уже выполняли."}, status=400)
-            except Exception:
-                pass
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
 
@@ -2607,15 +2579,6 @@ async def api_task_submit(req: web.Request):
 
             hold_delay = tg_hold_delay_sec(task_subtype)
             if hold_delay > 0:
-                busy_count = int((await sb_select(T_COMP, {"task_id": task_id_db, "status": "pending_hold"}, order="created_at", desc=True, limit=2000)).count or 0)
-                if not busy_count:
-                    try:
-                        busy_count = len((await sb_select(T_COMP, {"task_id": task_id_db, "status": "pending_hold"}, order="created_at", desc=True, limit=2000)).data or [])
-                    except Exception:
-                        busy_count = 0
-                if busy_count >= int(task.get("qty_left") or 0):
-                    return web.json_response({"ok": False, "error": "Свободных мест сейчас нет."}, status=400)
-
                 existing_hold = await tg_hold_get(task_id, uid)
                 if existing_hold:
                     left_raw = int((existing_hold - _now()).total_seconds())
