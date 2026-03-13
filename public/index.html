@@ -497,22 +497,24 @@
         </div>
       </div>
 
-      <div id="t-top-box" style="margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border-radius:18px; background:linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.08);">
-        <div style="min-width:0;">
-          <div style="font-weight:900; font-size:15px; display:flex; align-items:center; gap:8px;"><span style="font-size:16px;">🔥</span><span>Поднять в топ</span></div>
-          <div id="t-top-desc" style="margin-top:4px; font-size:12px; color:var(--text-dim); line-height:1.35;">Выше остальных на 24 часа • +10% к общей сумме</div>
-        </div>
-        <label style="flex:0 0 auto; display:inline-flex; align-items:center; cursor:pointer;">
-          <input id="t-top" type="checkbox" onchange="recalc()" style="display:none;">
-          <span id="t-top-chip" style="display:inline-flex; align-items:center; justify-content:center; min-width:78px; height:34px; padding:0 14px; border-radius:999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); font-weight:900; font-size:13px; color:var(--text-main);">+10%</span>
+      <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+        <label for="t-top" style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:16px; background:linear-gradient(180deg, rgba(255,145,77,0.10), rgba(255,145,77,0.04)); border:1px solid rgba(255,145,77,0.20);">
+          <input type="checkbox" id="t-top" onchange="recalc()" style="width:18px; height:18px; accent-color:#ff9c52; flex:0 0 auto;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;">
+            <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+              <span style="font-weight:900; font-size:14px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🔥 Поднять в топ</span>
+              <span style="font-size:11px; color:var(--text-dim);">Выше остальных в течение 24 часов</span>
+            </div>
+            <span id="t-top-price-text" style="font-size:12px; font-weight:800; color:#ffbf84; white-space:nowrap;">24 часа · 250 ₽</span>
+          </div>
         </label>
       </div>
 
       <div class="total-badge">
         <div style="display:flex; flex-direction:column; gap:2px;">
           <span style="font-weight:800; opacity:0.7;">Итого к оплате:</span>
-          <span id="t-unit-cost" style="font-size:11px; color:var(--text-dim);">1 шт: 0 ₽</span>
-          <span id="t-min-note" style="font-size:11px; color:var(--text-dim);">Минимальный бюджет: 50 ₽</span>
+          <span style="font-size:11px; color:var(--text-dim);">Цена за 1 выполнение: <span id="t-unit-cost">0 ₽</span></span>
+          <span id="t-min-hint" style="font-size:11px; color:var(--text-dim);"></span>
         </div>
         <span id="t-total" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0 ₽</span>
       </div>
