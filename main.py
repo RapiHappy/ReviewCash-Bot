@@ -1227,7 +1227,12 @@ async def get_submit_block_until(uid: int):
     return await get_limit_until(uid, SUBMIT_BLOCK_KEY)
 
 async def mark_submit_attempt(uid: int, ok: bool = False):
-    """Track submit attempts in 10m window; optionally clear on successful completion."""
+    """Track submit attempts using only timestamp rows in user_limits.
+
+    user_limits.last_at is a timestamptz column, so we cannot store JSON there.
+    We use one rolling timestamp for the submit window and one block-until timestamp.
+    """
+    uid = int(uid)
     if ok:
         try:
             await clear_limit(uid, SUBMIT_WINDOW_KEY)
@@ -1236,28 +1241,23 @@ async def mark_submit_attempt(uid: int, ok: bool = False):
             pass
         return 0
 
-    row = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
-    count = 0
-    started_at = _now()
-    if row.data:
-        raw = str((row.data[0] or {}).get("last_at") or "")
-        try:
-            payload = json.loads(raw) if raw else {}
-        except Exception:
-            payload = {}
-        count = int(payload.get("count") or 0)
-        started_at = _parse_dt(payload.get("started_at")) or started_at
-        if (_now() - started_at).total_seconds() > max(60, SUBMIT_WINDOW_SEC):
-            count = 0
-            started_at = _now()
+    now = _now()
+    row = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
+    count = 1
+    started_at = now
 
-    count += 1
+    if row.data:
+        prev = _parse_dt((row.data[0] or {}).get("last_at"))
+        if prev and (now - prev).total_seconds() <= max(60, SUBMIT_WINDOW_SEC):
+            count = max(1, MAX_SUBMITS_10M + 1)
+            started_at = prev
+
     await sb_upsert(
         T_LIMITS,
         {
-            "user_id": int(uid),
+            "user_id": uid,
             "limit_key": SUBMIT_WINDOW_KEY,
-            "last_at": json.dumps({"started_at": started_at.isoformat(), "count": count}),
+            "last_at": started_at.isoformat(),
         },
         on_conflict="user_id,limit_key",
     )
