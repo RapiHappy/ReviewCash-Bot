@@ -358,7 +358,7 @@ def parse_dt_safe(value: str | None):
     if not s:
         return None
     try:
-        return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except Exception:
         return None
 
@@ -367,7 +367,7 @@ def is_top_active(task: dict | None) -> bool:
     return bool(until and until > _now())
 
 def top_bought_at(task: dict | None):
-    return parse_dt_safe(get_top_meta(task, "TOP_BOUGHT_AT")) or dt.datetime.fromtimestamp(0, tz=dt.timezone.utc)
+    return parse_dt_safe(get_top_meta(task, "TOP_BOUGHT_AT")) or datetime.fromtimestamp(0, tz=timezone.utc)
 
 def get_tg_meta(task: dict | None, key: str) -> str:
     ins = str((task or {}).get("instructions") or "")
