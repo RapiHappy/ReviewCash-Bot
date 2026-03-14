@@ -707,6 +707,7 @@ function tgAlert(msg, kind = "info", title = "") {
     // small UX hooks
     try {
       if (id === "m-create") {
+        updateTopUi();
         recalc();
         scheduleTgCheck();
       }
@@ -1183,76 +1184,127 @@ async function syncAll() {
     if (!box) return;
 
     const uid = state.user ? state.user.user_id : null;
+    const isMy = state.filter === "my" && uid;
     let list = state.tasks.slice();
 
-    // Hide tasks that this user already completed
-    list = list.filter(t => !isTaskCompleted(t && t.id));
-
-    // Hide tasks that are fully completed (no slots left)
-    list = list.filter(t => Number(t.qty_left || 0) > 0);
-
-    if (state.filter === "my" && uid) {
+    if (!isMy) {
+      list = list.filter(t => !isTaskCompleted(t && t.id));
+      list = list.filter(t => Number(t.qty_left || 0) > 0);
+    } else {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
     }
-
-    
 
     if (state.platformFilter && state.platformFilter !== "all") {
       list = list.filter(t => String((t.type || t.platform || "")).toLowerCase() === state.platformFilter);
     }
-if (!list.length) {
-      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">Пока нет активных заданий.</div>`;
+
+    if (!list.length) {
+      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
       return;
     }
 
     box.innerHTML = "";
-    
+
     list.forEach(t => {
-      const left = Number(t.qty_left || 0);
-      const total = Number(t.qty_total || 0);
+      const left = Math.max(0, Number(t.qty_left || 0));
+      const total = Math.max(left, Number(t.qty_total || 0));
       const done = Math.max(0, total - left);
       const prog = total > 0 ? Math.round((done / total) * 100) : 0;
+      const reward = Number(t.reward_rub || 0);
+      const budget = Number(t.cost_rub || (reward * total * 2) || 0);
+      const subtypeText = tgSubtypeLabel(t) || taskTypeLabel(t);
+      const topActive = isTaskTopActive(t);
+      const finished = left <= 0 || String(t.status || "") !== "active";
 
-      const isOwner = (state.filter === "my" && uid && Number(t.owner_id) === Number(uid));
-
-      const metaLine = isOwner
-        ? `${taskTypeLabel(t)} • выполнено ${done}/${total} • осталось ${left}/${total}`
-        : `${taskTypeLabel(t)}`;
-
-      const progressHtml = isOwner
-        ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>`
-        : ``;
-
-      const isTop = !!(t && (t.is_top || t.top_until));
-      const topBadge = isTop ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:rgba(255,156,82,.14);border:1px solid rgba(255,156,82,.28);font-size:11px;font-weight:800;color:#ffbf84;">🔥 В топе</span>` : ``;
       const card = document.createElement("div");
       card.className = "card";
-      card.style.cursor = "pointer";
-      card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
-          <div style="flex:1;">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-              <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
-              <div>
+      card.style.padding = "14px";
+      card.style.borderRadius = "18px";
+      card.style.background = isMy ? "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02))" : "";
+      card.style.cursor = isMy ? "default" : "pointer";
+
+      if (isMy) {
+        card.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+            <div style="display:flex;gap:10px;align-items:flex-start;min-width:0;flex:1;">
+              <div class="brand-box" style="width:44px;height:44px;flex:none;">${brandIconHtml(t, 40)}</div>
+              <div style="min-width:0;flex:1;">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                  ${topBadge}
+                  <div style="font-weight:900;font-size:15px;line-height:1.2;">${safeText(t.title || "Задание")}</div>
+                  ${topActive ? `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(255,180,0,.14);color:#ffd36b;">🔥 В топе</span>` : ``}
+                  <span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:${finished ? 'rgba(255,99,132,.14);color:#ff9bb0' : 'rgba(0,234,255,.12);color:var(--accent-cyan)'};">${finished ? "Завершено" : "Активно"}</span>
                 </div>
-                <div style="font-size:12px; color:var(--text-dim);">${metaLine}</div>
+                <div style="margin-top:4px;font-size:12px;color:var(--text-dim);">${safeText(subtypeText)}</div>
               </div>
             </div>
-            ${progressHtml}
+            <div style="text-align:right;flex:none;">
+              <div style="font-size:12px;color:var(--text-dim);">Бюджет</div>
+              <div style="font-weight:900;font-size:16px;color:var(--accent-cyan);">${fmtRub(budget)}</div>
+            </div>
           </div>
-          <div style="text-align:right; min-width:90px;">
-            <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
-            <div style="font-size:11px; opacity:0.6;">за выполнение</div>
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px;">
+            ${metricChip("Выполнено", done, "#86efac")}
+            ${metricChip("Осталось", left, "#93c5fd")}
+            ${metricChip("Всего", total, "#fcd34d")}
+            ${metricChip("Награда", fmtRub(reward), "#f9a8d4")}
           </div>
-        </div>
-      `;
-      card.addEventListener("click", () => openTaskDetails(t));
+          <div style="margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:12px;color:var(--text-dim);">Прогресс</span>
+              <span style="font-size:12px;font-weight:800;color:var(--text);">${prog}%</span>
+            </div>
+            <div class="xp-track" style="height:10px;border-radius:999px;overflow:hidden;"><div class="xp-fill" style="width:${clamp(prog,0,100)}%"></div></div>
+          </div>
+        `;
+      } else {
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
+                <div style="min-width:0;">
+                  <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
+                  <div style="font-size:12px; color:var(--text-dim);">${safeText(subtypeText)}</div>
+                </div>
+              </div>
+            </div>
+            <div style="font-weight:900; color:var(--accent-green); white-space:nowrap;">+${fmtRub(reward)}</div>
+          </div>`;
+        card.addEventListener("click", () => openTaskDetails(t));
+      }
+
       box.appendChild(card);
     });
-}
+  }
+
+  function metricChip(label, value, tint) {
+    return `<div style="background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:10px 8px;min-width:0;">
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">${label}</div>
+      <div style="font-size:14px;font-weight:900;color:${tint || 'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+    </div>`;
+  }
+
+  function tgSubtypeLabel(task) {
+    const map = {
+      sub_channel: "Telegram · Подписка на канал",
+      sub_24h: "Telegram · Подписка на канал +24ч",
+      sub_48h: "Telegram · Подписка на канал +48ч",
+      sub_72h: "Telegram · Подписка на канал +72ч",
+      join_group: "Telegram · Вступление в группу",
+      join_group_24h: "Telegram · Вступление в группу +24ч",
+      join_group_48h: "Telegram · Вступление в группу +48ч",
+      join_group_72h: "Telegram · Вступление в группу +72ч",
+    };
+    const sid = String((task && task.tg_subtype) || "").trim();
+    return map[sid] || "";
+  }
+
+  function isTaskTopActive(task) {
+    const raw = String((task && (task.top_active_until || task._top_active_until)) || "").trim();
+    if (!raw) return false;
+    const ts = Date.parse(raw);
+    return Number.isFinite(ts) && ts > Date.now();
+  }
 
   function normalizeUrl(u) {
     let s = String(u || "").trim();
@@ -1865,12 +1917,35 @@ if (!list.length) {
     const sub = $("t-tg-subtype");
     if (sub) sub.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
   }
+
+  const TASK_MIN_BUDGET_RUB = 50;
+  const TOP_FIXED_PRICE_RUB = 250;
+
+  function isTopWanted() { return !!state.createTopWanted; }
+  function setTopWanted(v) {
+    state.createTopWanted = !!v;
+    updateTopUi();
+    recalc();
+  }
+  function toggleTopWanted() { setTopWanted(!state.createTopWanted); }
+  window.toggleTopWanted = toggleTopWanted;
+
+  function updateTopUi() {
+    const card = $("top-option-card");
+    const badge = $("top-option-badge");
+    const hint = $("top-option-hint");
+    if (!card) return;
+    const on = !!state.createTopWanted;
+    card.classList.toggle("selected", on);
+    card.setAttribute("aria-pressed", on ? "true" : "false");
+    if (badge) badge.textContent = on ? "Выбрано" : "Не выбрано";
+    if (hint) hint.textContent = on ? `К сумме добавится ${TOP_FIXED_PRICE_RUB} ₽ за 24 часа.` : `Поднимет задание выше остальных на 24 часа.`;
+  }
+
   function recalc() {
     const type = currentCreateType();
-    const qtyInput = $("t-qty");
-    const qty = clamp(Number((qtyInput && qtyInput.value) || 1), 1, 1000000);
+    const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
     const cur = $("t-cur") ? $("t-cur").value : "rub";
-    const topChecked = !!($("t-top") && $("t-top").checked);
 
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
@@ -1880,50 +1955,52 @@ if (!list.length) {
     let total = 0;
     let reward = 0;
     let costPer = 0;
+    let baseTotal = 0;
 
     if (type === "ya") {
       reward = YA.reward;
       costPer = YA.costPer;
       total = costPer * qty;
+      baseTotal = total;
+      baseTotal = total;
     } else if (type === "gm") {
       reward = GM.reward;
       costPer = GM.costPer;
       total = costPer * qty;
     } else {
+      // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       reward = conf.reward;
+      // customer pays ~2x (like your backend default); total = reward*2*qty
       costPer = reward * 2;
       total = costPer * qty;
+      baseTotal = total;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
     }
 
-    const baseTotal = total;
-    const minBudget = 50;
-    const topPrice = 250;
-    if (topChecked) total += topPrice;
+    updateTgHint();
+
+    const perOneEl = $("t-per-one");
+    if (perOneEl) perOneEl.textContent = fmtRub(costPer || 0);
+
+    const minWarn = $("t-min-budget-warning");
+    if (minWarn) {
+      if (baseTotal > 0 && baseTotal < TASK_MIN_BUDGET_RUB) {
+        minWarn.textContent = `Минимальный бюджет задания — ${TASK_MIN_BUDGET_RUB} ₽.`;
+        minWarn.style.display = "block";
+      } else {
+        minWarn.style.display = "none";
+      }
+    }
+
+    if (isTopWanted()) total += TOP_FIXED_PRICE_RUB;
+    updateTopUi();
 
     const totalEl = $("t-total");
     if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
 
-    const unitEl = $("t-unit-cost");
-    if (unitEl) unitEl.textContent = fmtRub(costPer || 0);
-
-    const noteEl = $("t-budget-note");
-    if (noteEl) {
-      noteEl.textContent = baseTotal < minBudget
-        ? `Минимальный бюджет задания — ${minBudget} ₽. Увеличьте количество.`
-        : `Бюджет задания: ${fmtRub(baseTotal)}${topChecked ? ` • В топ: +${fmtRub(topPrice)}` : ""}`;
-      noteEl.style.color = baseTotal < minBudget ? "#ff8e8e" : "var(--text-dim)";
-    }
-
-    const topCard = $("t-top-card");
-    if (topCard) topCard.classList.toggle("is-active", topChecked);
-    const topState = $("t-top-state");
-    if (topState) topState.textContent = topChecked ? "Выбрано" : "Не выбрано";
-
-    updateTgHint();
     const s = $("t-target-status");
     if (s) s.textContent = "";
   }
@@ -1974,6 +2051,7 @@ if (!list.length) {
     let title = "";
     let reward = 0;
     let cost = 0;
+    const wantTop = isTopWanted();
     let checkType = "manual";
     let tgChat = null;
     let tgKind = null;
@@ -2001,14 +2079,6 @@ if (!list.length) {
       const manualOnly = (tgKind === "bot" && tgNeedsChat(subType)) || TG_MANUAL_ONLY.has(subType);
       checkType = manualOnly ? "manual" : (tgAutoPossible(subType, tgKind) ? "auto" : "manual");
     }
-
-    const topChecked = !!($("t-top") && $("t-top").checked);
-    const baseCost = Number(cost || 0);
-    if (baseCost < 50) {
-      tgAlert("Минимальный бюджет задания — 50 ₽. Увеличьте количество.", "error", "Слишком маленький бюджет");
-      return;
-    }
-    if (topChecked) cost = baseCost + 250;
 
     // Nice TG validation before sending request (so user doesn't see raw 400)
     if (type === "tg") {
@@ -2062,7 +2132,11 @@ if (!list.length) {
       }
     }
 
-    const neededRub = Number(cost || 0);
+    if (Number(cost || 0) < TASK_MIN_BUDGET_RUB) {
+      return tgAlert(`Минимальный бюджет задания — ${TASK_MIN_BUDGET_RUB} ₽`, "error", "Слишком маленький бюджет");
+    }
+    const chargedRub = Number(cost || 0) + (wantTop ? TOP_FIXED_PRICE_RUB : 0);
+    const neededRub = chargedRub;
     const neededStars = rubToStars(neededRub);
     const bal = state.balance || {};
     if (payCurrency === "star" && !starsPaymentsEnabled()) {
@@ -2085,13 +2159,14 @@ if (!list.length) {
         instructions: txt,
         reward_rub: reward,
         cost_rub: cost,
+        want_top: wantTop,
+        top_price_rub: wantTop ? TOP_FIXED_PRICE_RUB : 0,
         pay_currency: payCurrency,
         qty_total: qty,
         check_type: checkType,
         tg_chat: tgChat,
         tg_kind: tgKind,
         sub_type: subType,
-        top: topChecked,
       });
 
       if (res && res.ok) {
@@ -2099,7 +2174,7 @@ if (!list.length) {
         tgHaptic("success");
         const paidText = (res.charged_currency === "star")
           ? `${Number(res.charged_amount || 0)} ⭐`
-          : fmtRub(res.charged_amount || cost);
+          : fmtRub(res.charged_amount || chargedRub);
         tgAlert(`Задание создано ✅\nСписано: ${paidText}`);
         await syncAll();
       } else {
