@@ -355,8 +355,6 @@ function tgAlert(msg, kind = "info", title = "") {
   // Reviews payouts you asked for
   const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
   const GM = { costPer: 75, reward: 60, title: "Google Maps — отзыв" };
-  const MIN_TASK_BUDGET_RUB = 50;
-  const TOP_PRICE_RUB = 250;
 
   // --------------------
   // State
@@ -1180,78 +1178,139 @@ async function syncAll() {
     return type.toUpperCase();
   }
 
-  function taskIsTop(t) {
-    const ins = String((t && t.instructions) || "");
-    const m = ins.match(/(^|\n)\s*TOP_ACTIVE_UNTIL\s*:\s*(.+?)\s*$/im);
-    if (!m || !m[2]) return false;
-    const dt = new Date(String(m[2]).trim());
-    return !Number.isNaN(dt.getTime()) && dt.getTime() > Date.now();
-  }
-
   function renderTasks() {
     const box = $("tasks-list");
     if (!box) return;
 
     const uid = state.user ? state.user.user_id : null;
+    const isMyMode = state.filter === "my" && uid;
     let list = state.tasks.slice();
 
-    // Hide tasks that this user already completed
-    list = list.filter(t => !isTaskCompleted(t && t.id));
-
-    // Hide tasks that are fully completed (no slots left)
-    list = list.filter(t => Number(t.qty_left || 0) > 0);
-
-    if (state.filter === "my" && uid) {
+    if (isMyMode) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
+    } else {
+      // Hide tasks that this user already completed
+      list = list.filter(t => !isTaskCompleted(t && t.id));
+      // Hide tasks that are fully completed (no slots left)
+      list = list.filter(t => Number(t.qty_left || 0) > 0);
     }
-
-    
 
     if (state.platformFilter && state.platformFilter !== "all") {
       list = list.filter(t => String((t.type || t.platform || "")).toLowerCase() === state.platformFilter);
     }
-if (!list.length) {
-      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">Пока нет активных заданий.</div>`;
+
+    if (!list.length) {
+      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMyMode ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
       return;
     }
 
     box.innerHTML = "";
-    
+
     list.forEach(t => {
-      const left = Number(t.qty_left || 0);
-      const total = Number(t.qty_total || 0);
+      const left = Math.max(0, Number(t.qty_left || 0));
+      const total = Math.max(0, Number(t.qty_total || 0));
       const done = Math.max(0, total - left);
       const prog = total > 0 ? Math.round((done / total) * 100) : 0;
-
-      const isOwner = (state.filter === "my" && uid && Number(t.owner_id) === Number(uid));
-
-      const topBadge = taskIsTop(t) ? `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:rgba(255,140,60,.16);border:1px solid rgba(255,140,60,.28);color:#ffb36b;font-size:10px;font-weight:900;letter-spacing:.2px;">🔥 В топе</span>` : ``;
-      const metaBase = isOwner
-        ? `${taskTypeLabel(t)} • выполнено ${done}/${total} • осталось ${left}/${total}`
+      const reward = Number(t.reward_rub || 0);
+      const budget = Number(t.total_budget_rub || t.budget_rub || (reward * total) || 0);
+      const isOwner = !!isMyMode;
+      const isTop = !!(t.is_top || t.top || (t.top_active_until && Date.parse(t.top_active_until) > Date.now()));
+      const isFinished = total > 0 && left <= 0;
+      const statusLabel = isFinished ? "Завершено" : (String(t.status || "active") === "active" ? "Активно" : safeText(t.status || "Черновик"));
+      const statusBg = isFinished
+        ? "rgba(255,90,90,.12)"
+        : isTop
+          ? "rgba(255,192,72,.14)"
+          : "rgba(0,234,255,.12)";
+      const statusColor = isFinished
+        ? "#ff8f8f"
+        : isTop
+          ? "#ffd56b"
+          : "var(--accent-cyan)";
+      const createdAt = t.created_at ? new Date(t.created_at) : null;
+      const createdText = createdAt && !isNaN(createdAt.getTime())
+        ? createdAt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        : "";
+      const detailsLine = isOwner
+        ? `${taskTypeLabel(t)} • создано ${createdText || 'недавно'}`
         : `${taskTypeLabel(t)}`;
-      const metaLine = topBadge ? `${metaBase} &nbsp; ${topBadge}` : `${metaBase}`;
-
-      const progressHtml = isOwner
-        ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>`
-        : ``;
 
       const card = document.createElement("div");
       card.className = "card";
       card.style.cursor = "pointer";
-      card.innerHTML = `
+      card.style.padding = isOwner ? "14px" : card.style.padding;
+      if (isOwner) {
+        card.style.borderRadius = "20px";
+        card.style.background = isFinished
+          ? "linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.03))"
+          : "linear-gradient(180deg, rgba(0,234,255,.06), rgba(255,255,255,.03))";
+        card.style.border = isTop
+          ? "1px solid rgba(255,213,107,.24)"
+          : "1px solid rgba(255,255,255,.10)";
+        card.style.boxShadow = isTop
+          ? "0 12px 28px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,213,107,.06)"
+          : "0 10px 24px rgba(0,0,0,.18)";
+      }
+
+      card.innerHTML = isOwner ? `
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
+          <div style="display:flex;gap:10px;align-items:flex-start;min-width:0;flex:1;">
+            <div class="brand-box" style="width:44px;height:44px;font-size:18px;flex:0 0 44px;">${brandIconHtml(t, 44)}</div>
+            <div style="min-width:0;flex:1;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+                <div style="font-weight:900;font-size:15px;line-height:1.25;word-break:break-word;">${safeText(t.title || "Задание")}</div>
+                ${isTop ? `<span style="padding:4px 8px;border-radius:999px;background:rgba(255,213,107,.14);border:1px solid rgba(255,213,107,.22);font-size:11px;font-weight:900;color:#ffd56b;">🔥 В топе</span>` : ``}
+              </div>
+              <div style="font-size:12px;color:var(--text-dim);">${detailsLine}</div>
+            </div>
+          </div>
+          <div style="text-align:right;min-width:96px;">
+            <div style="font-weight:900;color:var(--accent-green);font-size:17px;line-height:1.1;">+${fmtRub(reward)}</div>
+            <div style="font-size:11px;opacity:.65;">за 1 выполнение</div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <span style="padding:6px 10px;border-radius:999px;background:${statusBg};color:${statusColor};font-size:11px;font-weight:900;border:1px solid rgba(255,255,255,.08);">${statusLabel}</span>
+          <span style="padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;color:var(--text-dim);border:1px solid rgba(255,255,255,.08);">${taskTypeLabel(t)}</span>
+          <span style="padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;color:var(--text-dim);border:1px solid rgba(255,255,255,.08);">Бюджет: ${fmtRub(budget)}</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;">
+          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Выполнено</div>
+            <div style="font-size:18px;font-weight:900;line-height:1.1;">${done}</div>
+          </div>
+          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Осталось</div>
+            <div style="font-size:18px;font-weight:900;line-height:1.1;">${left}</div>
+          </div>
+          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Всего мест</div>
+            <div style="font-size:18px;font-weight:900;line-height:1.1;">${total}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;">
+          <div style="font-size:12px;color:var(--text-dim);">Прогресс задания</div>
+          <div style="font-size:12px;font-weight:900;color:${statusColor};">${prog}%</div>
+        </div>
+        <div class="xp-track" style="height:10px;border-radius:999px;overflow:hidden;">
+          <div class="xp-fill" style="width:${clamp(prog, 0, 100)}%;border-radius:999px;"></div>
+        </div>
+      ` : `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
               <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
               <div>
                 <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                <div style="font-size:12px; color:var(--text-dim);">${metaLine}</div>
+                <div style="font-size:12px; color:var(--text-dim);">${taskTypeLabel(t)}</div>
               </div>
             </div>
-            ${progressHtml}
           </div>
           <div style="text-align:right; min-width:90px;">
-            <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
+            <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(reward)}</div>
             <div style="font-size:11px; opacity:0.6;">за выполнение</div>
           </div>
         </div>
@@ -1259,7 +1318,7 @@ if (!list.length) {
       card.addEventListener("click", () => openTaskDetails(t));
       box.appendChild(card);
     });
-}
+  }
 
   function normalizeUrl(u) {
     let s = String(u || "").trim();
@@ -1876,7 +1935,6 @@ if (!list.length) {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
     const cur = $("t-cur") ? $("t-cur").value : "rub";
-    const topEnabled = !!($("t-top") && $("t-top").checked);
 
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
@@ -1885,44 +1943,33 @@ if (!list.length) {
 
     let total = 0;
     let reward = 0;
-    let unitCost = 0;
+    let costPer = 0;
 
     if (type === "ya") {
       reward = YA.reward;
-      unitCost = YA.costPer;
-      total = unitCost * qty;
+      costPer = YA.costPer;
+      total = costPer * qty;
     } else if (type === "gm") {
       reward = GM.reward;
-      unitCost = GM.costPer;
-      total = unitCost * qty;
+      costPer = GM.costPer;
+      total = costPer * qty;
     } else {
+      // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       reward = conf.reward;
-      unitCost = reward * 2;
-      total = unitCost * qty;
+      // customer pays ~2x (like your backend default); total = reward*2*qty
+      total = reward * 2 * qty;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
     }
-
-    const baseBeforeMin = total;
-    if (type === "tg" || type === "ya" || type === "gm") {
-      total = Math.max(total, MIN_TASK_BUDGET_RUB);
-    }
-    if (topEnabled) total += TOP_PRICE_RUB;
 
     updateTgHint();
 
     const totalEl = $("t-total");
     if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
 
-    const perEl = $("t-unit-cost");
-    if (perEl) perEl.textContent = cur === "star" ? (rubToStars(unitCost) + " ⭐") : fmtRub(unitCost);
-    const minEl = $("t-min-hint");
-    if (minEl) minEl.textContent = baseBeforeMin < MIN_TASK_BUDGET_RUB ? `Минимальный бюджет: ${fmtRub(MIN_TASK_BUDGET_RUB)}` : "";
-    const topHintEl = $("t-top-price-text");
-    if (topHintEl) topHintEl.textContent = `24 часа · ${fmtRub(TOP_PRICE_RUB)}`;
-
+    // target status reset
     const s = $("t-target-status");
     if (s) s.textContent = "";
   }
@@ -1973,7 +2020,6 @@ if (!list.length) {
     let title = "";
     let reward = 0;
     let cost = 0;
-    const topEnabled = !!($("t-top") && $("t-top").checked);
     let checkType = "manual";
     let tgChat = null;
     let tgKind = null;
@@ -1983,17 +2029,17 @@ if (!list.length) {
     if (type === "ya") {
       title = YA.title;
       reward = YA.reward;
-      cost = Math.max(YA.costPer * qty, MIN_TASK_BUDGET_RUB);
+      cost = YA.costPer * qty;
     } else if (type === "gm") {
       title = GM.title;
       reward = GM.reward;
-      cost = Math.max(GM.costPer * qty, MIN_TASK_BUDGET_RUB);
+      cost = GM.costPer * qty;
     } else {
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       title = "Telegram — " + conf.title;
       reward = conf.reward;
-      cost = Math.max(reward * 2 * qty, MIN_TASK_BUDGET_RUB);
+      cost = reward * 2 * qty;
       subType = conf.id;
 
       tgChat = normalizeTgChatInput(target);
@@ -2054,7 +2100,7 @@ if (!list.length) {
       }
     }
 
-    const neededRub = Number((cost || 0) + (topEnabled ? TOP_PRICE_RUB : 0));
+    const neededRub = Number(cost || 0);
     const neededStars = rubToStars(neededRub);
     const bal = state.balance || {};
     if (payCurrency === "star" && !starsPaymentsEnabled()) {
@@ -2083,7 +2129,6 @@ if (!list.length) {
         tg_chat: tgChat,
         tg_kind: tgKind,
         sub_type: subType,
-        top: topEnabled,
       });
 
       if (res && res.ok) {
