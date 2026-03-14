@@ -322,7 +322,7 @@ def strip_meta_tags(text: str) -> str:
             continue
         if re.match(r"(?im)^\s*TG_POLL_ID\s*:", line):
             continue
-        if re.match(r"(?im)^\s*TOP_(UNTIL|BOUGHT_AT)\s*:", line):
+        if re.match(r"(?im)^\s*TOP_(ACTIVE_UNTIL|BOUGHT_AT|PRICE_RUB)\s*:", line):
             continue
         out.append(line)
     return "\n".join(out).strip()
@@ -332,33 +332,48 @@ def get_tg_subtype(task: dict | None) -> str:
     m = re.search(r"(?im)^\s*TG_SUBTYPE\s*:\s*([a-z0-9_\-]+)\s*$", ins)
     return str(m.group(1)).strip().lower() if m else ""
 
+def tg_subtype(task: dict | None) -> str:
+    return get_tg_subtype(task)
+
+def tg_stack_key(task: dict | None) -> str:
+    """One canonical TG target key for stacking all member tasks by the same link/chat.
+    If user already did any TG member task on this target, hide all other TG member tasks
+    for the same public @username regardless of subtype (+24h/+48h/+72h etc.).
+    """
+    task = task or {}
+    subtype = get_tg_subtype(task)
+    if subtype and subtype not in TG_MEMBER_SUBTYPES:
+        return ""
+    return tg_task_identity(task)
+
+
+
+def get_top_meta(task: dict | None, key: str) -> str:
+    ins = str((task or {}).get("instructions") or "")
+    m = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$", ins)
+    return str(m.group(1)).strip() if m else ""
+
+def parse_dt_safe(value: str | None):
+    s = str(value or "").strip()
+    if not s:
+        return None
+    try:
+        return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def is_top_active(task: dict | None) -> bool:
+    until = parse_dt_safe(get_top_meta(task, "TOP_ACTIVE_UNTIL"))
+    return bool(until and until > _now())
+
+def top_bought_at(task: dict | None):
+    return parse_dt_safe(get_top_meta(task, "TOP_BOUGHT_AT")) or dt.datetime.fromtimestamp(0, tz=dt.timezone.utc)
+
 def get_tg_meta(task: dict | None, key: str) -> str:
     ins = str((task or {}).get("instructions") or "")
     m = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$", ins)
     return str(m.group(1)).strip() if m else ""
 
-TOP_PRICE_RUB = 250.0
-MIN_TASK_BUDGET_RUB = 50.0
-TOP_DURATION_SEC = 24 * 3600
-
-def get_top_until(task: dict | None) -> datetime | None:
-    raw = get_tg_meta(task, 'TOP_UNTIL')
-    return _parse_dt(raw) if raw else None
-
-def get_top_bought_at(task: dict | None) -> datetime | None:
-    raw = get_tg_meta(task, 'TOP_BOUGHT_AT')
-    return _parse_dt(raw) if raw else None
-
-def is_top_active(task: dict | None, now_dt: datetime | None = None) -> bool:
-    dt = get_top_until(task)
-    if not dt:
-        return False
-    return dt > (now_dt or _now())
-
-def append_meta_line(text: str, key: str, value: str) -> str:
-    text = str(text or '').strip()
-    line = f'{key}: {value}'
-    return (text + "\n" + line).strip() if text else line
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
 
@@ -489,6 +504,17 @@ def normalize_tg_chat(s: str | None) -> str | None:
     # keep only @, letters, digits, underscore
     t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
     return t if len(t) > 1 else None
+def tg_task_identity(task: dict | None) -> str:
+    """Stable identity for TG task target to suppress duplicates by same link/chat."""
+    task = task or {}
+    tg_chat = normalize_tg_chat((task.get("tg_chat") or task.get("target_url") or ""))
+    if tg_chat:
+        return tg_chat.lower()
+    raw = str(task.get("target_url") or "").strip().lower()
+    raw = re.sub(r"^https?://", "", raw)
+    raw = raw.split("?")[0].rstrip("/")
+    return raw
+
 def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
     u = (tg_chat or "").lower().lstrip("@")
     tu = (target_url or "").lower()
@@ -525,8 +551,8 @@ async def ensure_bot_in_chat(chat_username: str) -> tuple[bool, str]:
         if status in ("left", "kicked"):
             TG_CHAT_CACHE[key] = (now, False, "Добавь бота в группу/канал, иначе TG-задание создать нельзя.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
-        if ctype == "channel" and status != "administrator":
-            TG_CHAT_CACHE[key] = (now, False, "Для канала нужно добавить бота и сделать админом.")
+        if ctype == "channel" and status not in ("administrator", "creator"):
+            TG_CHAT_CACHE[key] = (now, False, "Для канала бот должен быть админом перед созданием задания.")
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
         TG_CHAT_CACHE[key] = (now, True, "")
         return True, ""
@@ -1251,7 +1277,12 @@ async def get_submit_block_until(uid: int):
     return await get_limit_until(uid, SUBMIT_BLOCK_KEY)
 
 async def mark_submit_attempt(uid: int, ok: bool = False):
-    """Track submit attempts in 10m window; optionally clear on successful completion."""
+    """Track submit attempts using only timestamp rows in user_limits.
+
+    user_limits.last_at is a timestamptz column, so we cannot store JSON there.
+    We use one rolling timestamp for the submit window and one block-until timestamp.
+    """
+    uid = int(uid)
     if ok:
         try:
             await clear_limit(uid, SUBMIT_WINDOW_KEY)
@@ -1260,28 +1291,23 @@ async def mark_submit_attempt(uid: int, ok: bool = False):
             pass
         return 0
 
-    row = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
-    count = 0
-    started_at = _now()
-    if row.data:
-        raw = str((row.data[0] or {}).get("last_at") or "")
-        try:
-            payload = json.loads(raw) if raw else {}
-        except Exception:
-            payload = {}
-        count = int(payload.get("count") or 0)
-        started_at = _parse_dt(payload.get("started_at")) or started_at
-        if (_now() - started_at).total_seconds() > max(60, SUBMIT_WINDOW_SEC):
-            count = 0
-            started_at = _now()
+    now = _now()
+    row = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": SUBMIT_WINDOW_KEY}, limit=1)
+    count = 1
+    started_at = now
 
-    count += 1
+    if row.data:
+        prev = _parse_dt((row.data[0] or {}).get("last_at"))
+        if prev and (now - prev).total_seconds() <= max(60, SUBMIT_WINDOW_SEC):
+            count = max(1, MAX_SUBMITS_10M + 1)
+            started_at = prev
+
     await sb_upsert(
         T_LIMITS,
         {
-            "user_id": int(uid),
+            "user_id": uid,
             "limit_key": SUBMIT_WINDOW_KEY,
-            "last_at": json.dumps({"started_at": started_at.isoformat(), "count": count}),
+            "last_at": started_at.isoformat(),
         },
         on_conflict="user_id,limit_key",
     )
@@ -2080,24 +2106,51 @@ async def api_sync(req: web.Request):
         except Exception:
             pending_task_counts = {}
 
+        completed_tg_stack_keys: set[str] = set()
+        try:
+            user_comp = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
+            done_statuses = {"pending", "pending_hold", "paid", "fake", "approved"}
+            done_task_ids = list({
+                cast_id(x.get("task_id"))
+                for x in (user_comp.data or [])
+                if str(x.get("status") or "").lower() in done_statuses and x.get("task_id") is not None
+            })
+            if done_task_ids:
+                done_tasks = await sb_select_in(
+                    T_TASKS,
+                    "id",
+                    done_task_ids,
+                    columns="id,type,target_url,tg_chat,instructions",
+                    limit=max(len(done_task_ids), 1),
+                )
+                for dt in (done_tasks.data or []):
+                    if str(dt.get("type") or "") != "tg":
+                        continue
+                    stack_key = tg_stack_key(dt)
+                    if stack_key:
+                        completed_tg_stack_keys.add(stack_key)
+        except Exception:
+            completed_tg_stack_keys = set()
+
         tasks = [
             t for t in raw
-            if int(t.get("qty_left") or 0) > 0
-            and (t.get("type") != "tg" or t.get("check_type") == "auto")
+            if (int(t.get("owner_id") or 0) == uid or int(t.get("qty_left") or 0) > 0)
+            and (int(t.get("owner_id") or 0) == uid or t.get("type") != "tg" or t.get("check_type") == "auto")
             and not (
                 int(t.get("owner_id") or 0) != uid
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
             )
-            and (expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
+            and (int(t.get("owner_id") or 0) == uid or expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
+            and not (
+                int(t.get("owner_id") or 0) != uid
+                and str(t.get("type") or "") == "tg"
+                and tg_stack_key(t) in completed_tg_stack_keys
+            )
         ]
-
-        now_dt = _now()
-        for _t in tasks:
-            _t["is_top"] = is_top_active(_t, now_dt)
-            _t["top_until"] = (get_top_until(_t).isoformat() if get_top_until(_t) else None)
-            _t["top_bought_at"] = (get_top_bought_at(_t).isoformat() if get_top_bought_at(_t) else None)
-
-        tasks.sort(key=lambda x: (0 if x.get("is_top") else 1, -( _parse_dt(x.get("top_bought_at") or "1970-01-01T00:00:00+00:00") or _now()).timestamp(), -(_parse_dt(x.get("created_at") or "1970-01-01T00:00:00+00:00") or _now()).timestamp()))
+        for t in tasks:
+            t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")
+            t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
+        tasks.sort(key=lambda x: (0 if is_top_active(x) else 1, -(top_bought_at(x).timestamp() if top_bought_at(x) else 0), str(x.get("created_at") or "")), reverse=False)
 
     reopen_task_ids = []
     try:
@@ -2226,9 +2279,10 @@ async def api_task_create(req: web.Request):
     tg_kind = str(body.get("tg_kind") or "").strip() or None
     sub_type = str(body.get("sub_type") or "").strip() or None
     pay_currency = str(body.get("pay_currency") or "rub").strip().lower()
+    want_top = bool(body.get("want_top") or False)
+    top_price_rub = float(body.get("top_price_rub") or 250)
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
-    top_requested = bool(body.get("top") or body.get("is_top") or body.get("top_requested"))
 
     if ttype not in ("tg", "ya", "gm"):
         raise web.HTTPBadRequest(text="Bad type")
@@ -2302,18 +2356,12 @@ async def api_task_create(req: web.Request):
 
     if cost_rub <= 0:
         cost_rub = reward_rub * qty_total * 2.0
+    if float(cost_rub) < 50:
+        return json_error(400, "Минимальный бюджет задания — 50 ₽", code="MIN_BUDGET")
 
-    base_cost = float(cost_rub)
-    if base_cost < MIN_TASK_BUDGET_RUB:
-        return json_error(400, f"Минимальный бюджет задания — {MIN_TASK_BUDGET_RUB:.0f} ₽", code="MIN_BUDGET")
-
-    top_until = None
-    top_bought_at = None
-    total_cost = float(base_cost + (TOP_PRICE_RUB if top_requested else 0.0))
-    if top_requested:
-        top_bought_at = _now()
-        top_until = top_bought_at + timedelta(seconds=TOP_DURATION_SEC)
-
+    total_cost = float(cost_rub)
+    if want_top:
+        total_cost += max(0.0, float(top_price_rub or 250))
     charged_amount = total_cost
     charged_currency = "rub"
 
@@ -2346,14 +2394,8 @@ async def api_task_create(req: web.Request):
         "status": "active",
     }
 
-    instructions_meta = str(instructions or '').strip()
     if sub_type:
-        instructions_meta = append_meta_line(instructions_meta, 'TG_SUBTYPE', sub_type)
-    if top_until:
-        instructions_meta = append_meta_line(instructions_meta, 'TOP_UNTIL', top_until.isoformat())
-    if top_bought_at:
-        instructions_meta = append_meta_line(instructions_meta, 'TOP_BOUGHT_AT', top_bought_at.isoformat())
-    row["instructions"] = instructions_meta
+        row["instructions"] = (instructions + "\n\nTG_SUBTYPE: " + sub_type).strip()
 
     ins = await sb_insert(T_TASKS, row)
     task = (ins.data or [row])[0]
@@ -2366,22 +2408,12 @@ async def api_task_create(req: web.Request):
     except Exception:
         pass
 
-    try:
-        task["is_top"] = bool(top_until and top_until > _now())
-        task["top_until"] = top_until.isoformat() if top_until else None
-        task["top_bought_at"] = top_bought_at.isoformat() if top_bought_at else None
-    except Exception:
-        pass
-
     return web.json_response({
         "ok": True,
         "task": task,
         "charged_amount": int(charged_amount) if charged_currency == "star" else charged_amount,
         "charged_currency": charged_currency,
         "cost_rub": total_cost,
-        "base_cost_rub": base_cost,
-        "top_price_rub": TOP_PRICE_RUB if top_requested else 0.0,
-        "top": bool(top_requested),
     })
 
 
