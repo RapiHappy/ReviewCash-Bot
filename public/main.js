@@ -1183,134 +1183,68 @@ async function syncAll() {
     if (!box) return;
 
     const uid = state.user ? state.user.user_id : null;
-    const isMyMode = state.filter === "my" && uid;
     let list = state.tasks.slice();
 
-    if (isMyMode) {
+    // Hide tasks that this user already completed
+    list = list.filter(t => !isTaskCompleted(t && t.id));
+
+    // Hide tasks that are fully completed (no slots left)
+    list = list.filter(t => Number(t.qty_left || 0) > 0);
+
+    if (state.filter === "my" && uid) {
       list = list.filter(t => Number(t.owner_id) === Number(uid));
-    } else {
-      // Hide tasks that this user already completed
-      list = list.filter(t => !isTaskCompleted(t && t.id));
-      // Hide tasks that are fully completed (no slots left)
-      list = list.filter(t => Number(t.qty_left || 0) > 0);
     }
+
+    
 
     if (state.platformFilter && state.platformFilter !== "all") {
       list = list.filter(t => String((t.type || t.platform || "")).toLowerCase() === state.platformFilter);
     }
-
-    if (!list.length) {
-      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMyMode ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
+if (!list.length) {
+      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">Пока нет активных заданий.</div>`;
       return;
     }
 
     box.innerHTML = "";
-
+    
     list.forEach(t => {
-      const left = Math.max(0, Number(t.qty_left || 0));
-      const total = Math.max(0, Number(t.qty_total || 0));
+      const left = Number(t.qty_left || 0);
+      const total = Number(t.qty_total || 0);
       const done = Math.max(0, total - left);
       const prog = total > 0 ? Math.round((done / total) * 100) : 0;
-      const reward = Number(t.reward_rub || 0);
-      const budget = Number(t.total_budget_rub || t.budget_rub || (reward * total) || 0);
-      const isOwner = !!isMyMode;
-      const isTop = !!(t.is_top || t.top || (t.top_active_until && Date.parse(t.top_active_until) > Date.now()));
-      const isFinished = total > 0 && left <= 0;
-      const statusLabel = isFinished ? "Завершено" : (String(t.status || "active") === "active" ? "Активно" : safeText(t.status || "Черновик"));
-      const statusBg = isFinished
-        ? "rgba(255,90,90,.12)"
-        : isTop
-          ? "rgba(255,192,72,.14)"
-          : "rgba(0,234,255,.12)";
-      const statusColor = isFinished
-        ? "#ff8f8f"
-        : isTop
-          ? "#ffd56b"
-          : "var(--accent-cyan)";
-      const createdAt = t.created_at ? new Date(t.created_at) : null;
-      const createdText = createdAt && !isNaN(createdAt.getTime())
-        ? createdAt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
-        : "";
-      const detailsLine = isOwner
-        ? `${taskTypeLabel(t)} • создано ${createdText || 'недавно'}`
+
+      const isOwner = (state.filter === "my" && uid && Number(t.owner_id) === Number(uid));
+
+      const metaLine = isOwner
+        ? `${taskTypeLabel(t)} • выполнено ${done}/${total} • осталось ${left}/${total}`
         : `${taskTypeLabel(t)}`;
 
+      const progressHtml = isOwner
+        ? `<div class="xp-track" style="height:8px;"><div class="xp-fill" style="width:${clamp(prog, 0, 100)}%"></div></div>`
+        : ``;
+
+      const isTop = !!(t && (t.is_top || t.top_until));
+      const topBadge = isTop ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:rgba(255,156,82,.14);border:1px solid rgba(255,156,82,.28);font-size:11px;font-weight:800;color:#ffbf84;">🔥 В топе</span>` : ``;
       const card = document.createElement("div");
       card.className = "card";
       card.style.cursor = "pointer";
-      card.style.padding = isOwner ? "14px" : card.style.padding;
-      if (isOwner) {
-        card.style.borderRadius = "20px";
-        card.style.background = isFinished
-          ? "linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.03))"
-          : "linear-gradient(180deg, rgba(0,234,255,.06), rgba(255,255,255,.03))";
-        card.style.border = isTop
-          ? "1px solid rgba(255,213,107,.24)"
-          : "1px solid rgba(255,255,255,.10)";
-        card.style.boxShadow = isTop
-          ? "0 12px 28px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,213,107,.06)"
-          : "0 10px 24px rgba(0,0,0,.18)";
-      }
-
-      card.innerHTML = isOwner ? `
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
-          <div style="display:flex;gap:10px;align-items:flex-start;min-width:0;flex:1;">
-            <div class="brand-box" style="width:44px;height:44px;font-size:18px;flex:0 0 44px;">${brandIconHtml(t, 44)}</div>
-            <div style="min-width:0;flex:1;">
-              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
-                <div style="font-weight:900;font-size:15px;line-height:1.25;word-break:break-word;">${safeText(t.title || "Задание")}</div>
-                ${isTop ? `<span style="padding:4px 8px;border-radius:999px;background:rgba(255,213,107,.14);border:1px solid rgba(255,213,107,.22);font-size:11px;font-weight:900;color:#ffd56b;">🔥 В топе</span>` : ``}
-              </div>
-              <div style="font-size:12px;color:var(--text-dim);">${detailsLine}</div>
-            </div>
-          </div>
-          <div style="text-align:right;min-width:96px;">
-            <div style="font-weight:900;color:var(--accent-green);font-size:17px;line-height:1.1;">+${fmtRub(reward)}</div>
-            <div style="font-size:11px;opacity:.65;">за 1 выполнение</div>
-          </div>
-        </div>
-
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-          <span style="padding:6px 10px;border-radius:999px;background:${statusBg};color:${statusColor};font-size:11px;font-weight:900;border:1px solid rgba(255,255,255,.08);">${statusLabel}</span>
-          <span style="padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;color:var(--text-dim);border:1px solid rgba(255,255,255,.08);">${taskTypeLabel(t)}</span>
-          <span style="padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;color:var(--text-dim);border:1px solid rgba(255,255,255,.08);">Бюджет: ${fmtRub(budget)}</span>
-        </div>
-
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;">
-          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
-            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Выполнено</div>
-            <div style="font-size:18px;font-weight:900;line-height:1.1;">${done}</div>
-          </div>
-          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
-            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Осталось</div>
-            <div style="font-size:18px;font-weight:900;line-height:1.1;">${left}</div>
-          </div>
-          <div style="padding:10px 10px;border-radius:16px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);">
-            <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Всего мест</div>
-            <div style="font-size:18px;font-weight:900;line-height:1.1;">${total}</div>
-          </div>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;">
-          <div style="font-size:12px;color:var(--text-dim);">Прогресс задания</div>
-          <div style="font-size:12px;font-weight:900;color:${statusColor};">${prog}%</div>
-        </div>
-        <div class="xp-track" style="height:10px;border-radius:999px;overflow:hidden;">
-          <div class="xp-fill" style="width:${clamp(prog, 0, 100)}%;border-radius:999px;"></div>
-        </div>
-      ` : `
+      card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
               <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
               <div>
-                <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                <div style="font-size:12px; color:var(--text-dim);">${taskTypeLabel(t)}</div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
+                  ${topBadge}
+                </div>
+                <div style="font-size:12px; color:var(--text-dim);">${metaLine}</div>
               </div>
             </div>
+            ${progressHtml}
           </div>
           <div style="text-align:right; min-width:90px;">
-            <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(reward)}</div>
+            <div style="font-weight:900; color:var(--accent-green); font-size:16px;">+${fmtRub(t.reward_rub || 0)}</div>
             <div style="font-size:11px; opacity:0.6;">за выполнение</div>
           </div>
         </div>
@@ -1318,7 +1252,7 @@ async function syncAll() {
       card.addEventListener("click", () => openTaskDetails(t));
       box.appendChild(card);
     });
-  }
+}
 
   function normalizeUrl(u) {
     let s = String(u || "").trim();
@@ -1933,8 +1867,10 @@ async function syncAll() {
   }
   function recalc() {
     const type = currentCreateType();
-    const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
+    const qtyInput = $("t-qty");
+    const qty = clamp(Number((qtyInput && qtyInput.value) || 1), 1, 1000000);
     const cur = $("t-cur") ? $("t-cur").value : "rub";
+    const topChecked = !!($("t-top") && $("t-top").checked);
 
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
@@ -1954,22 +1890,40 @@ async function syncAll() {
       costPer = GM.costPer;
       total = costPer * qty;
     } else {
-      // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       reward = conf.reward;
-      // customer pays ~2x (like your backend default); total = reward*2*qty
-      total = reward * 2 * qty;
+      costPer = reward * 2;
+      total = costPer * qty;
       const descEl = $("tg-subtype-desc");
       if (descEl) descEl.textContent = conf.desc + " • Исполнитель получит " + reward + "₽";
     }
 
-    updateTgHint();
+    const baseTotal = total;
+    const minBudget = 50;
+    const topPrice = 250;
+    if (topChecked) total += topPrice;
 
     const totalEl = $("t-total");
     if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
 
-    // target status reset
+    const unitEl = $("t-unit-cost");
+    if (unitEl) unitEl.textContent = fmtRub(costPer || 0);
+
+    const noteEl = $("t-budget-note");
+    if (noteEl) {
+      noteEl.textContent = baseTotal < minBudget
+        ? `Минимальный бюджет задания — ${minBudget} ₽. Увеличьте количество.`
+        : `Бюджет задания: ${fmtRub(baseTotal)}${topChecked ? ` • В топ: +${fmtRub(topPrice)}` : ""}`;
+      noteEl.style.color = baseTotal < minBudget ? "#ff8e8e" : "var(--text-dim)";
+    }
+
+    const topCard = $("t-top-card");
+    if (topCard) topCard.classList.toggle("is-active", topChecked);
+    const topState = $("t-top-state");
+    if (topState) topState.textContent = topChecked ? "Выбрано" : "Не выбрано";
+
+    updateTgHint();
     const s = $("t-target-status");
     if (s) s.textContent = "";
   }
@@ -2047,6 +2001,14 @@ async function syncAll() {
       const manualOnly = (tgKind === "bot" && tgNeedsChat(subType)) || TG_MANUAL_ONLY.has(subType);
       checkType = manualOnly ? "manual" : (tgAutoPossible(subType, tgKind) ? "auto" : "manual");
     }
+
+    const topChecked = !!($("t-top") && $("t-top").checked);
+    const baseCost = Number(cost || 0);
+    if (baseCost < 50) {
+      tgAlert("Минимальный бюджет задания — 50 ₽. Увеличьте количество.", "error", "Слишком маленький бюджет");
+      return;
+    }
+    if (topChecked) cost = baseCost + 250;
 
     // Nice TG validation before sending request (so user doesn't see raw 400)
     if (type === "tg") {
@@ -2129,6 +2091,7 @@ async function syncAll() {
         tg_chat: tgChat,
         tg_kind: tgKind,
         sub_type: subType,
+        top: topChecked,
       });
 
       if (res && res.ok) {
