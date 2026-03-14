@@ -270,9 +270,6 @@
       border: 1px solid rgba(239,68,68,0.18);
       box-shadow: 0 18px 40px rgba(15,23,42,0.14);
     }
-  
-    #t-top-card.is-active{ background:linear-gradient(180deg, rgba(255,145,77,0.20), rgba(255,145,77,0.08)); border-color:rgba(255,145,77,0.42); box-shadow:0 10px 28px rgba(255,145,77,0.16); }
-
   </style>
 
 </head>
@@ -500,32 +497,34 @@
         </div>
       </div>
 
-      <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
-        <label id="t-top-card" for="t-top" style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; border-radius:16px; background:linear-gradient(180deg, rgba(255,145,77,0.10), rgba(255,145,77,0.04)); border:1px solid rgba(255,145,77,0.20); transition:.18s ease;">
-          <input type="checkbox" id="t-top" onchange="recalc()" style="position:absolute; opacity:0; pointer-events:none; width:1px; height:1px;">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%;">
-            <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
-              <span style="font-weight:900; font-size:14px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🔥 Поднять в топ</span>
-              <span style="font-size:11px; color:var(--text-dim);">Выше остальных в течение 24 часов</span>
-            </div>
-            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:0 0 auto;">
-              <span id="t-top-price-text" style="font-size:12px; font-weight:800; color:#ffbf84; white-space:nowrap;">250 ₽ · 24ч</span>
-              <span id="t-top-state" style="font-size:11px; color:var(--text-dim);">Не выбрано</span>
-            </div>
-          </div>
-        </label>
-      </div>
-
       <div class="total-badge">
         <div style="display:flex; flex-direction:column; gap:2px;">
           <span style="font-weight:800; opacity:0.7;">Итого к оплате:</span>
-          <span style="font-size:11px; color:var(--text-dim);">Цена за 1 выполнение: <span id="t-unit-cost">0 ₽</span></span>
-          <span id="t-budget-note" style="font-size:11px; color:var(--text-dim);"></span>
+          <span style="font-size:11px; color:var(--text-dim);">Включая комиссию сервиса</span>
         </div>
         <span id="t-total" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0 ₽</span>
       </div>
+      <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; color:var(--text-dim);">
+        <span>Стоимость за 1 выполнение</span>
+        <span id="t-per-one" style="font-weight:900; color:var(--text);">0 ₽</span>
+      </div>
+      <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальный бюджет задания — 50 ₽.</div>
 
-      <button class="btn btn-main create-cta" style="width:100%; margin-top:25px;" onclick="createTask()"><span>⚡ Оплатить и запустить</span></button>
+      <button id="top-option-card" type="button" onclick="toggleTopWanted()" style="width:100%; margin-top:14px; border:none; cursor:pointer; text-align:left; border-radius:16px; padding:12px 14px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <div style="width:34px; height:34px; border-radius:12px; display:grid; place-items:center; background:rgba(255,180,0,.12); font-size:18px;">🔥</div>
+          <div style="min-width:0;">
+            <div style="font-weight:900; font-size:14px; line-height:1.2;">Поднять в топ</div>
+            <div id="top-option-hint" style="font-size:11px; color:var(--text-dim); margin-top:2px;">Поднимет задание выше остальных на 24 часа.</div>
+          </div>
+        </div>
+        <div style="text-align:right; flex:none;">
+          <div style="font-weight:900; font-size:14px; color:#ffd36b;">250 ₽</div>
+          <div id="top-option-badge" style="font-size:11px; color:var(--text-dim); margin-top:2px;">Не выбрано</div>
+        </div>
+      </button>
+
+      <button class="btn btn-main create-cta" style="width:100%; margin-top:18px;" onclick="createTask()"><span>⚡ Оплатить и запустить</span></button>
     </div>
   </div>
 
