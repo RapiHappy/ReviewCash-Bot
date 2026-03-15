@@ -290,18 +290,38 @@
 
     <!-- TASKS VIEW -->
     <section id="view-tasks" class="anim-entry">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
+      <div class="tasks-hero">
+        <div class="tasks-hero-head">
+          <div class="tasks-profile-link" onclick="showTab('profile')" role="button" aria-label="Открыть профиль">
             <!-- FIX: src не должен быть пустым, иначе браузер пытается загрузить /app/ как картинку -->
             <img id="header-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:32px; height:32px; border-radius:50%; background:#333; object-fit:contain;" alt="Avatar">
             <span id="header-name" style="font-weight:800; font-size:14px;">...</span>
           </div>
-          <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
+          <h2 class="tasks-title">Задания</h2>
+          <div class="tasks-subtitle">Выбирай лучшие задания и зарабатывай быстрее.</div>
         </div>
-        <div style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
+        <div class="tasks-switcher">
           <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
           <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
+        </div>
+      </div>
+
+      <div class="overview-strip" id="tasks-overview-strip">
+        <div class="overview-card">
+          <div class="overview-label">Доступно</div>
+          <div id="ov-total" class="overview-value">0</div>
+        </div>
+        <div class="overview-card">
+          <div class="overview-label">Средний доход</div>
+          <div id="ov-money" class="overview-value">0 ₽</div>
+        </div>
+        <div class="overview-card">
+          <div class="overview-label">Топ задания</div>
+          <div id="ov-hot" class="overview-value">0</div>
+        </div>
+        <div class="overview-card connection" id="ov-connection">
+          <div class="overview-label">Статус</div>
+          <div id="ov-live" class="overview-value">Онлайн</div>
         </div>
       </div>
 
