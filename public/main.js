@@ -386,6 +386,8 @@ function tgAlert(msg, kind = "info", title = "") {
     _syncTasksInFlight: false,
     _syncAllInFlight: false,
     _adminProofSeq: 0,
+    lastSyncTs: 0,
+    syncFailed: false,
   };
 
   // --------------------
@@ -801,6 +803,8 @@ function tgAlert(msg, kind = "info", title = "") {
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
+      state.lastSyncTs = Date.now();
+      state.syncFailed = false;
       if (data.auth === false) {
         state.user = null;
         state.balance = null;
@@ -840,6 +844,7 @@ function tgAlert(msg, kind = "info", title = "") {
         if (forceRender || state.currentSection === "tasks") renderTasks();
       }
     } catch (e) {
+      state.syncFailed = true;
       // silent
     } finally {
       state._syncTasksInFlight = false;
@@ -883,6 +888,8 @@ async function syncAll() {
 
     const data = await apiPost("/api/sync", payload);
     if (!data || !data.ok) throw new Error("Bad /api/sync response");
+    state.lastSyncTs = Date.now();
+    state.syncFailed = false;
 
     state.user = data.user;
     state.balance = data.balance || state.balance;
@@ -1206,9 +1213,44 @@ async function syncAll() {
     ].filter(Boolean).join(" ").toLowerCase();
   }
 
+  function renderTasksOverview(list) {
+    const totalEl = $("ov-total");
+    const moneyEl = $("ov-money");
+    const hotEl = $("ov-hot");
+    const liveEl = $("ov-live");
+    if (!totalEl || !moneyEl || !hotEl || !liveEl) return;
+
+    const rewardAvg = list.length
+      ? Math.round(list.reduce((sum, t) => sum + Number(t.reward_rub || 0), 0) / list.length)
+      : 0;
+    const topCount = list.filter(isTaskTopActive).length;
+
+    totalEl.textContent = String(list.length);
+    moneyEl.textContent = fmtRub(rewardAvg);
+    hotEl.textContent = String(topCount);
+
+    if (state.syncFailed) {
+      liveEl.textContent = "Ошибка сети";
+      liveEl.style.color = "#ff7f9f";
+      return;
+    }
+    const age = Math.max(0, Math.floor((Date.now() - Number(state.lastSyncTs || 0)) / 1000));
+    if (!state.lastSyncTs) {
+      liveEl.textContent = "Подключение…";
+      liveEl.style.color = "var(--accent-cyan)";
+    } else if (age < 8) {
+      liveEl.textContent = "Онлайн";
+      liveEl.style.color = "var(--accent-green)";
+    } else {
+      liveEl.textContent = `Обновл. ${age}с`;
+      liveEl.style.color = "var(--text-main)";
+    }
+  }
+
   function updateTaskInsights(list, isMy) {
     const el = $("task-insights");
     if (!el) return;
+    renderTasksOverview(list);
     if (!list.length) {
       el.textContent = isMy ? "Нет заданий по текущим фильтрам." : "Ничего не найдено. Попробуй другой запрос.";
       return;
@@ -3062,6 +3104,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     await syncAllWithRetry();
     startTasksAutoRefresh();
   } catch (e) {
+    state.syncFailed = true;
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
     hideLoader();
