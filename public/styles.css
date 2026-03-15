@@ -168,66 +168,8 @@ html.theme-light body::after{
 }
 
 .balance-stack { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-.profile-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.profile-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--glass) 85%, rgba(255,255,255,0.08) 15%);
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--text-dim);
-  max-width: 100%;
-}
-.profile-pill strong{
-  color: var(--text-main);
-  font-weight: 900;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 150px;
-}
 .bal-rub { font-size: 32px; font-weight: 800; color: var(--accent-cyan); letter-spacing: -1px; }
 .bal-star { font-size: 18px; font-weight: 700; color: var(--accent-gold); display: flex; align-items: center; gap: 6px; }
-
-.profile-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 20px;
-}
-
-.profile-highlight {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(0, 234, 255, 0.24);
-  background: linear-gradient(135deg, rgba(0,234,255,0.10), rgba(176,38,255,0.12));
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-}
-
-.profile-highlight-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-dim);
-}
-
-.profile-highlight-value {
-  font-size: 16px;
-  font-weight: 900;
-  color: var(--text-main);
-}
 
 /* XP BAR */
 .xp-track {
