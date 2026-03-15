@@ -233,25 +233,103 @@ function tgAlert(msg, kind = "info", title = "") {
     });
   }
 
+  const AVATAR_CACHE_KEY = "rc_avatar_v2";
+  const AVATAR_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+  const AVATAR_MAX_SIDE = 96;
+  const avatarMemCache = new Map();
+  const avatarInflight = new Map();
+
+  function getAvatarCache() {
+    try {
+      const raw = localStorage.getItem(AVATAR_CACHE_KEY) || "";
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function setAvatarCacheEntry(url, data) {
+    try {
+      const payload = { url: String(url || ""), data: String(data || ""), ts: Date.now() };
+      localStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function getAvatarCacheEntry(url) {
+    try {
+      if (!url) return null;
+      if (avatarMemCache.has(url)) return avatarMemCache.get(url) || null;
+      const entry = getAvatarCache();
+      if (entry.url !== url) return null;
+      if (!entry.data || !String(entry.data).startsWith("data:image")) return null;
+      if (!entry.ts || (Date.now() - Number(entry.ts)) > AVATAR_CACHE_TTL_MS) return null;
+      avatarMemCache.set(url, entry.data);
+      return entry.data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function downscaleAvatarBlob(blob, maxSide = AVATAR_MAX_SIDE) {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width || 1, bitmap.height || 1));
+      const width = Math.max(1, Math.round((bitmap.width || maxSide) * scale));
+      const height = Math.max(1, Math.round((bitmap.height || maxSide) * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx) throw new Error("no-canvas");
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      if (typeof bitmap.close === "function") bitmap.close();
+      const data = canvas.toDataURL("image/webp", 0.82);
+      if (data && data.startsWith("data:image")) return data;
+    } catch (e) {}
+    return blobToDataURL(blob);
+  }
+
   async function tryCacheAvatar(url) {
     try {
-      const prevUrl = localStorage.getItem("rc_avatar_url") || "";
-      const prevData = localStorage.getItem("rc_avatar_data") || "";
-      if (prevUrl === url && prevData.startsWith("data:image")) return prevData;
+      const cached = getAvatarCacheEntry(url);
+      if (cached) return cached;
+      if (avatarInflight.has(url)) return await avatarInflight.get(url);
 
-      const res = await fetch(url, { cache: "force-cache" });
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      // don't cache huge files
-      if (!blob || blob.size > 160000) return null;
-      const data = await blobToDataURL(blob);
-      if (data && data.startsWith("data:image")) {
-        localStorage.setItem("rc_avatar_url", url);
-        localStorage.setItem("rc_avatar_data", data);
-        return data;
-      }
+      const task = (async () => {
+        try {
+          const res = await fetch(url, { cache: "force-cache", mode: "cors", credentials: "omit" });
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          if (!blob || blob.size > 2 * 1024 * 1024) return null;
+          const data = await downscaleAvatarBlob(blob, AVATAR_MAX_SIDE);
+          if (data && data.startsWith("data:image")) {
+            avatarMemCache.set(url, data);
+            setAvatarCacheEntry(url, data);
+            return data;
+          }
+          return null;
+        } finally {
+          avatarInflight.delete(url);
+        }
+      })();
+
+      avatarInflight.set(url, task);
+      return await task;
     } catch (e) {}
     return null;
+  }
+
+  function primeAvatarFast(url) {
+    if (!url) return;
+    tryCacheAvatar(url).catch(() => {});
+    try {
+      const im = new Image();
+      im.decoding = "async";
+      im.fetchPriority = "high";
+      im.referrerPolicy = "no-referrer";
+      im.src = url;
+    } catch (e) {}
   }
 
   function loadAvatarFast(imgEl, url, displayName) {
@@ -259,35 +337,44 @@ function tgAlert(msg, kind = "info", title = "") {
     const initials = initialsFromName(displayName);
     const placeholder = svgInitialAvatarDataUrl(initials);
 
-    // Make sure we always show something instantly
     try {
       imgEl.decoding = "async";
       imgEl.loading = "eager";
+      imgEl.fetchPriority = "high";
+      imgEl.referrerPolicy = "no-referrer";
+      imgEl.width = imgEl.width || 96;
+      imgEl.height = imgEl.height || 96;
     } catch (e) {}
 
     imgEl.style.opacity = "0.96";
-    imgEl.style.transition = "opacity .22s ease";
-    imgEl.src = placeholder;
+    imgEl.style.transition = "opacity .18s ease";
+
+    const cached = getAvatarCacheEntry(url);
+    imgEl.src = cached || placeholder;
+    if (cached) imgEl.style.opacity = "1";
 
     if (!url) return;
 
-    // If we have cached data-url (when CORS allows), use it immediately
     tryCacheAvatar(url).then((data) => {
-      if (!data) return;
+      if (!data || imgEl.dataset.avatarUrl !== url) return;
       imgEl.src = data;
       imgEl.style.opacity = "1";
-    });
+    }).catch(() => {});
 
-    // Load real image in background and swap when ready
+    imgEl.dataset.avatarUrl = url;
+
     const pre = new Image();
     pre.decoding = "async";
+    pre.fetchPriority = "high";
+    pre.referrerPolicy = "no-referrer";
     pre.src = url;
     pre.onload = () => {
-      imgEl.src = url;
+      if (imgEl.dataset.avatarUrl !== url) return;
+      imgEl.src = getAvatarCacheEntry(url) || url;
       imgEl.style.opacity = "1";
     };
     pre.onerror = () => {
-      // keep placeholder
+      if (!cached) imgEl.src = placeholder;
     };
   }
   function showToast(kind, message, title = "") {
@@ -2911,7 +2998,6 @@ function extractTgWebAppDataFromUrl() {
     initDeviceHash();
     // init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
-
     const themeBtn = document.getElementById("theme-toggle");
     if (themeBtn && !themeBtn.dataset.bound) {
       themeBtn.dataset.bound = "1";
@@ -2954,7 +3040,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           state.user.first_name = tu.first_name;
           state.user.last_name = tu.last_name;
           state.user.photo_url = tu.photo_url;
-          if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
+          if (tu.photo_url) primeAvatarFast(tu.photo_url);
           renderHeader();
           renderProfile();
         }
