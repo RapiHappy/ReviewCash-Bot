@@ -356,10 +356,7 @@
             <div class="level-badge" id="u-lvl-badge">LVL 1</div>
           </div>
           <div class="balance-stack">
-            <div class="profile-meta">
-              <div class="profile-pill">👋 <strong id="u-name">...</strong></div>
-              <div class="profile-pill">🆔 <strong id="u-username">@user</strong></div>
-            </div>
+            <div id="u-name" style="color:var(--text-dim); font-size:14px; font-weight:800;">...</div>
             <div id="u-bal-rub" class="bal-rub">0 ₽</div>
             <div id="u-bal-star" class="bal-star">0 ⭐</div>
           </div>
@@ -368,12 +365,7 @@
         <div class="xp-track"><div class="xp-fill" id="u-xp-fill"></div></div>
         <div class="xp-text"><span id="u-xp-cur">До LVL 2: 100 XP</span><span id="u-xp-next">Нужно на уровень: 100 XP</span></div>
 
-        <div class="profile-highlight">
-          <span class="profile-highlight-label">Прогресс текущего уровня</span>
-          <span class="profile-highlight-value" id="u-xp-progress">0 / 100 XP</span>
-        </div>
-
-        <div class="profile-actions">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:20px;">
           <button class="btn btn-main" onclick="openModal('m-topup')">Пополнить</button>
           <button class="btn btn-secondary" onclick="openModal('m-withdraw')">Вывести</button>
         </div>
