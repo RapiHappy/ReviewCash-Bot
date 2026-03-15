@@ -4209,6 +4209,7 @@ async def api_admin_tg_audit(req: web.Request):
 
         if upd:
             try:
+                task_id_db = cast_id(task_id)
                 await sb_update(T_TASKS, {"id": task_id_db}, upd)
                 changed += 1
                 if desired_check_type == "auto":
