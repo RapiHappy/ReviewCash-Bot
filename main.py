@@ -347,6 +347,24 @@ def tg_stack_key(task: dict | None) -> str:
     return tg_task_identity(task)
 
 
+def tg_display_dedupe_key(task: dict | None) -> str:
+    """Hide duplicate TG cards with the same target and the same subtype.
+
+    Example: two active TG tasks both asking to subscribe to the same @channel should be
+    shown to executors as a single card. For different TG subtypes on the same target we keep
+    separate cards until the user completes one of them; after completion tg_stack_key() hides
+    all member-task variants for that target.
+    """
+    task = task or {}
+    if str(task.get("type") or "") != "tg":
+        return ""
+    ident = tg_task_identity(task)
+    if not ident:
+        return ""
+    subtype = get_tg_subtype(task) or "tg"
+    return f"{subtype}|{ident}"
+
+
 
 def get_top_meta(task: dict | None, key: str) -> str:
     ins = str((task or {}).get("instructions") or "")
@@ -2194,6 +2212,20 @@ async def api_sync(req: web.Request):
             t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")
             t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
         tasks.sort(key=lambda x: (0 if is_top_active(x) else 1, -(top_bought_at(x).timestamp() if top_bought_at(x) else 0), str(x.get("created_at") or "")), reverse=False)
+
+        deduped_tasks = []
+        seen_tg_display_keys: set[str] = set()
+        for t in tasks:
+            if int(t.get("owner_id") or 0) == uid:
+                deduped_tasks.append(t)
+                continue
+            tg_key = tg_display_dedupe_key(t)
+            if tg_key:
+                if tg_key in seen_tg_display_keys:
+                    continue
+                seen_tg_display_keys.add(tg_key)
+            deduped_tasks.append(t)
+        tasks = deduped_tasks
 
     reopen_task_ids = []
     try:
