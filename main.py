@@ -376,6 +376,7 @@ def get_tg_meta(task: dict | None, key: str) -> str:
 
 # Referral
 REF_BONUS_RUB = float(os.getenv("REF_BONUS_RUB", "50").strip())       # бонус рефереру 1 раз
+REF_REVIEWS_REQUIRED = int(os.getenv("REF_REVIEWS_REQUIRED", "2").strip())  # сколько оплаченных отзывов должен сделать приглашённый
 
 # CryptoBot (optional)
 CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "").strip()
@@ -1020,8 +1021,45 @@ async def stats_add(field: str, amount: float):
         log.warning("stats_add skipped (%s): %s", field, e)
 
 # -------------------------
-# referral system (bonus 1 time after first paid task)
+# referral system (bonus 1 time after invited user completes required number of paid reviews)
 # -------------------------
+async def referral_paid_reviews_count(uid: int) -> int:
+    """Count paid completions for review tasks (Yandex/Google)."""
+    try:
+        rows = await sb_select(T_COMP, {"user_id": int(uid), "status": "paid"}, columns="task_id", order="created_at", desc=True, limit=5000)
+        comp_rows = rows.data or []
+        task_ids = []
+        seen = set()
+        for row in comp_rows:
+            tid = cast_id(row.get("task_id"))
+            key = str(tid)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            task_ids.append(tid)
+        if not task_ids:
+            return 0
+
+        review_count = 0
+        chunk_size = 100
+        for i in range(0, len(task_ids), chunk_size):
+            chunk = task_ids[i:i + chunk_size]
+            ids_sql_parts = []
+            for x in chunk:
+                if isinstance(x, int):
+                    ids_sql_parts.append(str(x))
+                else:
+                    ids_sql_parts.append('"' + str(x).replace('"', '') + '"')
+            ids_sql = ",".join(ids_sql_parts)
+            tasks = await sb_select(T_TASKS, filters={"id": f"in.({ids_sql})"}, columns="id,type", limit=len(chunk))
+            for task in (tasks.data or []):
+                if str(task.get("type") or "").lower() in ("ya", "gm"):
+                    review_count += 1
+        return int(review_count)
+    except Exception as e:
+        log.warning("referral_paid_reviews_count failed: %s", e)
+        return 0
+
 async def ensure_referral_event(referred_id: int, referrer_id: int):
     if referrer_id == referred_id:
         return
@@ -1052,6 +1090,11 @@ async def maybe_pay_referral_bonus(referred_id: int):
         if not referrer_id:
             return
 
+        required_reviews = max(1, int(REF_REVIEWS_REQUIRED))
+        paid_reviews = await referral_paid_reviews_count(referred_id)
+        if paid_reviews < required_reviews:
+            return
+
         # проверим что реферер не забанен
         u = await sb_select(T_USERS, {"user_id": referrer_id}, limit=1)
         if u.data and u.data[0].get("is_banned"):
@@ -1070,7 +1113,7 @@ async def maybe_pay_referral_bonus(referred_id: int):
             "paid_at": _now().isoformat()
         })
 
-        await notify_user(referrer_id, f"🎉 Реферальный бонус: +{bonus:.2f}₽ (приглашённый выполнил первое задание)")
+        await notify_user(referrer_id, f"🎉 Реферальный бонус: +{bonus:.2f}₽ (приглашённый выполнил {required_reviews} оплаченных отзыва)")
     except Exception as e:
         log.warning("maybe_pay_referral_bonus failed: %s", e)
 
