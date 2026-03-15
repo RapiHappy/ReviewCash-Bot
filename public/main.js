@@ -371,6 +371,8 @@ function tgAlert(msg, kind = "info", title = "") {
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
+    taskSort: (localStorage.getItem("rc_task_sort") || "smart"),
+    taskSearch: "",
     opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
     currentTask: null,
     isAdmin: false,
@@ -1179,6 +1181,60 @@ async function syncAll() {
     return type.toUpperCase();
   }
 
+  function calcTaskScore(task) {
+    const reward = Number(task && task.reward_rub || 0);
+    const left = Math.max(0, Number(task && task.qty_left || 0));
+    const total = Math.max(left, Number(task && task.qty_total || 0));
+    const leftRatio = total > 0 ? left / total : 0.5;
+    const topBoost = isTaskTopActive(task) ? 20 : 0;
+    return Math.round(reward * 1.35 + (1 - leftRatio) * 25 + topBoost);
+  }
+
+  function getTaskDateMs(task) {
+    const raw = task && (task.created_at || task.ts || task.date_created || task.updated_at);
+    const ts = Date.parse(String(raw || ""));
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function taskSearchText(task) {
+    return [
+      task && task.title,
+      task && task.text,
+      task && task.target_url,
+      taskTypeLabel(task),
+      tgSubtypeLabel(task),
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function updateTaskInsights(list, isMy) {
+    const el = $("task-insights");
+    if (!el) return;
+    if (!list.length) {
+      el.textContent = isMy ? "Нет заданий по текущим фильтрам." : "Ничего не найдено. Попробуй другой запрос.";
+      return;
+    }
+    const rewardAvg = Math.round(list.reduce((sum, t) => sum + Number(t.reward_rub || 0), 0) / list.length);
+    const topCount = list.filter(isTaskTopActive).length;
+    el.innerHTML = `Показано <b>${list.length}</b> · средняя награда <b>${rewardAvg} ₽</b>${topCount ? ` · в топе: <b>${topCount}</b>` : ""}`;
+  }
+
+  function updateTaskSortUi() {
+    ["smart", "reward", "new", "left"].forEach((k) => {
+      const n = $("sort-" + k);
+      if (!n) return;
+      n.classList.toggle("active", state.taskSort === k);
+    });
+  }
+
+  function setTaskSort(sort) {
+    const allow = ["smart", "reward", "new", "left"];
+    state.taskSort = allow.includes(sort) ? sort : "smart";
+    try { localStorage.setItem("rc_task_sort", state.taskSort); } catch (e) {}
+    updateTaskSortUi();
+    renderTasks();
+  }
+  window.setTaskSort = setTaskSort;
+
   function renderTasks() {
     const box = $("tasks-list");
     if (!box) return;
@@ -1197,6 +1253,23 @@ async function syncAll() {
     if (state.platformFilter && state.platformFilter !== "all") {
       list = list.filter(t => String((t.type || t.platform || "")).toLowerCase() === state.platformFilter);
     }
+
+    const q = String(state.taskSearch || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter(t => taskSearchText(t).includes(q));
+    }
+
+    if (state.taskSort === "reward") {
+      list.sort((a, b) => Number(b.reward_rub || 0) - Number(a.reward_rub || 0));
+    } else if (state.taskSort === "new") {
+      list.sort((a, b) => getTaskDateMs(b) - getTaskDateMs(a));
+    } else if (state.taskSort === "left") {
+      list.sort((a, b) => Number(a.qty_left || 0) - Number(b.qty_left || 0));
+    } else {
+      list.sort((a, b) => calcTaskScore(b) - calcTaskScore(a));
+    }
+
+    updateTaskInsights(list, isMy);
 
     if (!list.length) {
       box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
@@ -2974,6 +3047,15 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     showTab("tasks");
     setFilter("all");
     setPlatformFilter(state.platformFilter);
+    updateTaskSortUi();
+    const searchEl = $("task-search");
+    if (searchEl) {
+      searchEl.value = state.taskSearch;
+      searchEl.addEventListener("input", (e) => {
+        state.taskSearch = String(e && e.target && e.target.value || "");
+        renderTasks();
+      });
+    }
     recalc();
 
       try {
