@@ -967,8 +967,6 @@ async function syncAll() {
     }
 
     if ($("u-name")) $("u-name").textContent = name;
-    const uname = (u.username ? ("@" + String(u.username).replace(/^@+/, "")) : "без username");
-    if ($("u-username")) $("u-username").textContent = uname;
     if ($("u-bal-rub")) $("u-bal-rub").textContent = fmtRub(b.rub_balance || 0);
     if ($("u-bal-star")) $("u-bal-star").textContent = fmtStars(b.stars_balance || 0);
 
@@ -980,7 +978,6 @@ async function syncAll() {
     if ($("u-lvl-badge")) $("u-lvl-badge").textContent = "LVL " + currentLevel;
     if ($("u-xp-cur")) $("u-xp-cur").textContent = `До LVL ${currentLevel + 1}: ${remainingXp} XP`;
     if ($("u-xp-next")) $("u-xp-next").textContent = `Нужно на уровень: ${nextNeedXp} XP`;
-    if ($("u-xp-progress")) $("u-xp-progress").textContent = `${currentProgressXp} / ${nextNeedXp} XP`;
     const fill = $("u-xp-fill");
     if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
   }
