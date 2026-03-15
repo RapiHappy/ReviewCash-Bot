@@ -371,8 +371,6 @@ function tgAlert(msg, kind = "info", title = "") {
     tasks: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
-    taskSort: (localStorage.getItem("rc_task_sort") || "smart"),
-    taskSearch: "",
     opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
     currentTask: null,
     isAdmin: false,
@@ -386,8 +384,6 @@ function tgAlert(msg, kind = "info", title = "") {
     _syncTasksInFlight: false,
     _syncAllInFlight: false,
     _adminProofSeq: 0,
-    lastSyncTs: 0,
-    syncFailed: false,
   };
 
   // --------------------
@@ -803,8 +799,6 @@ function tgAlert(msg, kind = "info", title = "") {
 
       const data = await apiPost("/api/sync", payload);
       if (!data || !data.ok) return;
-      state.lastSyncTs = Date.now();
-      state.syncFailed = false;
       if (data.auth === false) {
         state.user = null;
         state.balance = null;
@@ -844,7 +838,6 @@ function tgAlert(msg, kind = "info", title = "") {
         if (forceRender || state.currentSection === "tasks") renderTasks();
       }
     } catch (e) {
-      state.syncFailed = true;
       // silent
     } finally {
       state._syncTasksInFlight = false;
@@ -888,8 +881,6 @@ async function syncAll() {
 
     const data = await apiPost("/api/sync", payload);
     if (!data || !data.ok) throw new Error("Bad /api/sync response");
-    state.lastSyncTs = Date.now();
-    state.syncFailed = false;
 
     state.user = data.user;
     state.balance = data.balance || state.balance;
@@ -1188,95 +1179,6 @@ async function syncAll() {
     return type.toUpperCase();
   }
 
-  function calcTaskScore(task) {
-    const reward = Number(task && task.reward_rub || 0);
-    const left = Math.max(0, Number(task && task.qty_left || 0));
-    const total = Math.max(left, Number(task && task.qty_total || 0));
-    const leftRatio = total > 0 ? left / total : 0.5;
-    const topBoost = isTaskTopActive(task) ? 20 : 0;
-    return Math.round(reward * 1.35 + (1 - leftRatio) * 25 + topBoost);
-  }
-
-  function getTaskDateMs(task) {
-    const raw = task && (task.created_at || task.ts || task.date_created || task.updated_at);
-    const ts = Date.parse(String(raw || ""));
-    return Number.isFinite(ts) ? ts : 0;
-  }
-
-  function taskSearchText(task) {
-    return [
-      task && task.title,
-      task && task.text,
-      task && task.target_url,
-      taskTypeLabel(task),
-      tgSubtypeLabel(task),
-    ].filter(Boolean).join(" ").toLowerCase();
-  }
-
-  function renderTasksOverview(list) {
-    const totalEl = $("ov-total");
-    const moneyEl = $("ov-money");
-    const hotEl = $("ov-hot");
-    const liveEl = $("ov-live");
-    if (!totalEl || !moneyEl || !hotEl || !liveEl) return;
-
-    const rewardAvg = list.length
-      ? Math.round(list.reduce((sum, t) => sum + Number(t.reward_rub || 0), 0) / list.length)
-      : 0;
-    const topCount = list.filter(isTaskTopActive).length;
-
-    totalEl.textContent = String(list.length);
-    moneyEl.textContent = fmtRub(rewardAvg);
-    hotEl.textContent = String(topCount);
-
-    if (state.syncFailed) {
-      liveEl.textContent = "Ошибка сети";
-      liveEl.style.color = "#ff7f9f";
-      return;
-    }
-    const age = Math.max(0, Math.floor((Date.now() - Number(state.lastSyncTs || 0)) / 1000));
-    if (!state.lastSyncTs) {
-      liveEl.textContent = "Подключение…";
-      liveEl.style.color = "var(--accent-cyan)";
-    } else if (age < 8) {
-      liveEl.textContent = "Онлайн";
-      liveEl.style.color = "var(--accent-green)";
-    } else {
-      liveEl.textContent = `Обновл. ${age}с`;
-      liveEl.style.color = "var(--text-main)";
-    }
-  }
-
-  function updateTaskInsights(list, isMy) {
-    const el = $("task-insights");
-    if (!el) return;
-    renderTasksOverview(list);
-    if (!list.length) {
-      el.textContent = isMy ? "Нет заданий по текущим фильтрам." : "Ничего не найдено. Попробуй другой запрос.";
-      return;
-    }
-    const rewardAvg = Math.round(list.reduce((sum, t) => sum + Number(t.reward_rub || 0), 0) / list.length);
-    const topCount = list.filter(isTaskTopActive).length;
-    el.innerHTML = `Показано <b>${list.length}</b> · средняя награда <b>${rewardAvg} ₽</b>${topCount ? ` · в топе: <b>${topCount}</b>` : ""}`;
-  }
-
-  function updateTaskSortUi() {
-    ["smart", "reward", "new", "left"].forEach((k) => {
-      const n = $("sort-" + k);
-      if (!n) return;
-      n.classList.toggle("active", state.taskSort === k);
-    });
-  }
-
-  function setTaskSort(sort) {
-    const allow = ["smart", "reward", "new", "left"];
-    state.taskSort = allow.includes(sort) ? sort : "smart";
-    try { localStorage.setItem("rc_task_sort", state.taskSort); } catch (e) {}
-    updateTaskSortUi();
-    renderTasks();
-  }
-  window.setTaskSort = setTaskSort;
-
   function renderTasks() {
     const box = $("tasks-list");
     if (!box) return;
@@ -1295,23 +1197,6 @@ async function syncAll() {
     if (state.platformFilter && state.platformFilter !== "all") {
       list = list.filter(t => String((t.type || t.platform || "")).toLowerCase() === state.platformFilter);
     }
-
-    const q = String(state.taskSearch || "").trim().toLowerCase();
-    if (q) {
-      list = list.filter(t => taskSearchText(t).includes(q));
-    }
-
-    if (state.taskSort === "reward") {
-      list.sort((a, b) => Number(b.reward_rub || 0) - Number(a.reward_rub || 0));
-    } else if (state.taskSort === "new") {
-      list.sort((a, b) => getTaskDateMs(b) - getTaskDateMs(a));
-    } else if (state.taskSort === "left") {
-      list.sort((a, b) => Number(a.qty_left || 0) - Number(b.qty_left || 0));
-    } else {
-      list.sort((a, b) => calcTaskScore(b) - calcTaskScore(a));
-    }
-
-    updateTaskInsights(list, isMy);
 
     if (!list.length) {
       box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
@@ -3089,22 +2974,12 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     showTab("tasks");
     setFilter("all");
     setPlatformFilter(state.platformFilter);
-    updateTaskSortUi();
-    const searchEl = $("task-search");
-    if (searchEl) {
-      searchEl.value = state.taskSearch;
-      searchEl.addEventListener("input", (e) => {
-        state.taskSearch = String(e && e.target && e.target.value || "");
-        renderTasks();
-      });
-    }
     recalc();
 
       try {
     await syncAllWithRetry();
     startTasksAutoRefresh();
   } catch (e) {
-    state.syncFailed = true;
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
     hideLoader();
