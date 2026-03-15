@@ -313,6 +313,17 @@
           <div class="pf-item" id="pf-tg" onclick="setPlatformFilter('tg')"><span class="pf-ico" data-pf-ico="tg"></span>Telegram</div>
         </div>
 
+      <div class="task-tools">
+        <input id="task-search" type="search" class="task-search" placeholder="Поиск по заданиям: название, описание, ссылка" autocomplete="off" />
+        <div class="task-sort-bar" role="tablist" aria-label="Сортировка заданий">
+          <button class="task-sort-chip active" id="sort-smart" onclick="setTaskSort('smart')" type="button">Умно</button>
+          <button class="task-sort-chip" id="sort-reward" onclick="setTaskSort('reward')" type="button">По награде</button>
+          <button class="task-sort-chip" id="sort-new" onclick="setTaskSort('new')" type="button">Сначала новые</button>
+          <button class="task-sort-chip" id="sort-left" onclick="setTaskSort('left')" type="button">Меньше конкуренции</button>
+        </div>
+        <div id="task-insights" class="task-insights"></div>
+      </div>
+
       <div id="tasks-list"></div>
     </section>
 
