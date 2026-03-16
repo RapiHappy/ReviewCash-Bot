@@ -2779,12 +2779,30 @@ async def api_withdraw_create(req: web.Request):
     if amount is None:
         return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
 
-    details = str(body.get("details") or body.get("requisites") or body.get("requisites_text") or body.get("card") or body.get("wallet") or "").strip()
+    full_name = str(body.get("full_name") or body.get("fio") or body.get("name") or "").strip()
+    payout_value = str(body.get("payout_value") or body.get("phone") or body.get("card") or body.get("wallet") or body.get("requisites") or body.get("requisites_text") or body.get("details") or "").strip()
+    payout_method = str(body.get("payout_method") or "").strip().lower()
 
     if amount < 300:
         return web.json_response({"ok": False, "error": "Минимум 300₽"}, status=400)
-    if not details:
-        return web.json_response({"ok": False, "error": "Укажи реквизиты"}, status=400)
+    if not full_name or len(full_name) < 5 or " " not in full_name:
+        return web.json_response({"ok": False, "error": "Укажи имя и фамилию"}, status=400)
+    if not payout_value:
+        return web.json_response({"ok": False, "error": "Укажи номер телефона или карты"}, status=400)
+
+    normalized = "".join(ch for ch in payout_value if ch.isdigit())
+    if payout_method == "phone":
+        if len(normalized) < 10:
+            return web.json_response({"ok": False, "error": "Некорректный номер телефона"}, status=400)
+    elif payout_method == "card":
+        if len(normalized) < 16:
+            return web.json_response({"ok": False, "error": "Некорректный номер карты"}, status=400)
+    else:
+        if len(normalized) < 10:
+            return web.json_response({"ok": False, "error": "Укажи корректный номер телефона или карты"}, status=400)
+        payout_method = "card" if len(normalized) >= 16 else "phone"
+
+    details = f"{full_name} | {payout_method} | {payout_value}"
 
     first_withdraw_done = await get_limit_until(uid, FIRST_WITHDRAW_DONE_KEY)
     if not first_withdraw_done:
@@ -4209,7 +4227,6 @@ async def api_admin_tg_audit(req: web.Request):
 
         if upd:
             try:
-                task_id_db = cast_id(task_id)
                 await sb_update(T_TASKS, {"id": task_id_db}, upd)
                 changed += 1
                 if desired_check_type == "auto":
