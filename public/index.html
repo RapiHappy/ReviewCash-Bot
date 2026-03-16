@@ -674,9 +674,19 @@
   <div id="m-withdraw" class="overlay">
     <div class="modal">
       <h2>Вывод средств</h2>
-      <input type="text" id="w-details" placeholder="Карта или номер телефона">
+      <div class="card" style="margin:0 0 14px 0; padding:12px 14px; background:rgba(255,255,255,0.03);">
+        <div style="font-size:13px; color:var(--text-dim); line-height:1.45;">
+          Заполни данные для выплаты. Можно указать <b>номер телефона</b> или <b>номер карты</b>.
+        </div>
+      </div>
+      <input type="text" id="w-fullname" placeholder="Имя и фамилия">
+      <select id="w-method" style="margin-top:10px;">
+        <option value="phone">По номеру телефона</option>
+        <option value="card">По номеру карты</option>
+      </select>
+      <input type="text" id="w-details" placeholder="Номер телефона или карты" inputmode="numeric" style="margin-top:10px;">
       <input type="number" id="w-amount" placeholder="Сумма вывода" style="margin-top:10px;">
-      <button class="btn btn-main" style="width:100%; margin-top:20px;" onclick="requestWithdraw()">Создать заявку</button>
+      <button class="btn btn-main" style="width:100%; margin-top:18px;" onclick="requestWithdraw()">Создать заявку</button>
 
       <div style="margin-top:30px;">
         <h3 style="font-size:16px;">Мои заявки</h3>
