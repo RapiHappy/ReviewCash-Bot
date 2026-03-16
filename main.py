@@ -2811,20 +2811,51 @@ async def api_withdraw_create(req: web.Request):
         if paid_count < max(1, FIRST_WITHDRAW_MIN_PAID_TASKS):
             return web.json_response({"ok": False, "error": f"Первый вывод доступен после {FIRST_WITHDRAW_MIN_PAID_TASKS} выполненных и оплаченных заданий."}, status=400)
 
-    ok = await sub_rub(uid, amount)
-    if not ok:
+    bal = await get_balance(uid)
+    cur = float(bal.get("rub_balance") or 0)
+    if cur < float(amount):
         return web.json_response({"ok": False, "error": "Недостаточно средств"}, status=400)
 
-    wd = await sb_insert(T_WD, {
-        "user_id": uid,
-        "amount_rub": amount,
-        "details": details,
-        "status": "pending",
-    })
+    wd_row = None
+    debited = False
+    try:
+        await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
+        debited = True
 
-    wd_row = (wd.data or [None])[0]
-    await notify_admin(f"🏦 Заявка на вывод: {amount}₽\nUser: {uid}\nID: {wd_row.get('id') if wd_row else 'n/a'}")
-    return web.json_response({"ok": True, "withdrawal": wd_row})
+        wd = await sb_insert(T_WD, {
+            "user_id": uid,
+            "amount_rub": amount,
+            "details": details,
+            "status": "pending",
+        })
+        wd_row = (wd.data or [None])[0]
+
+        try:
+            await notify_admin(
+                f"🏦 Заявка на вывод: {amount}₽
+"
+                f"User: {uid}
+"
+                f"ФИО: {full_name}
+"
+                f"Способ: {payout_method}
+"
+                f"Реквизиты: {payout_value}
+"
+                f"ID: {wd_row.get('id') if wd_row else 'n/a'}"
+            )
+        except Exception:
+            pass
+
+        return web.json_response({"ok": True, "withdrawal": wd_row})
+    except Exception:
+        log.exception("withdraw create failed uid=%s amount=%s", uid, amount)
+        if debited:
+            try:
+                await add_rub(uid, amount)
+            except Exception:
+                log.exception("withdraw rollback failed uid=%s amount=%s", uid, amount)
+        return web.json_response({"ok": False, "error": "Ошибка сервера при создании заявки. Баланс восстановлен."}, status=500)
 
 async def api_withdraw_list(req: web.Request):
     _, user = await require_init(req)
