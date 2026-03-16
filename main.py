@@ -2832,16 +2832,11 @@ async def api_withdraw_create(req: web.Request):
 
         try:
             await notify_admin(
-                f"🏦 Заявка на вывод: {amount}₽
-"
-                f"User: {uid}
-"
-                f"ФИО: {full_name}
-"
-                f"Способ: {payout_method}
-"
-                f"Реквизиты: {payout_value}
-"
+                f"🏦 Заявка на вывод: {amount}₽\n"
+                f"User: {uid}\n"
+                f"ФИО: {full_name}\n"
+                f"Способ: {payout_method}\n"
+                f"Реквизиты: {payout_value}\n"
                 f"ID: {wd_row.get('id') if wd_row else 'n/a'}"
             )
         except Exception:
