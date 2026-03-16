@@ -2291,6 +2291,34 @@ async function syncAll() {
     }
   }
 
+  function initWithdrawForm() {
+    const methodEl = $("w-method");
+    const detailsEl = $("w-details");
+    const amountEl = $("w-amount");
+    const nameEl = $("w-fullname");
+
+    if (nameEl) {
+      nameEl.autocomplete = "name";
+      nameEl.maxLength = 80;
+    }
+    if (amountEl) {
+      try { amountEl.min = "300"; } catch (e) {}
+      try { amountEl.step = "1"; } catch (e) {}
+      amountEl.addEventListener("input", () => {
+        const n = Number(String(amountEl.value || '').replace(',', '.'));
+        if (!Number.isFinite(n) || n < 0) amountEl.value = '';
+      });
+    }
+    if (methodEl) {
+      methodEl.addEventListener("change", () => applyWithdrawInputMask());
+    }
+    if (detailsEl) {
+      detailsEl.addEventListener("input", () => applyWithdrawInputMask());
+      detailsEl.addEventListener("paste", () => setTimeout(applyWithdrawInputMask, 0));
+    }
+    applyWithdrawInputMask();
+  }
+
   async function copyTextEx(text, okText) {
     const value = String(text || "").trim();
     if (!value) return;
@@ -2351,9 +2379,10 @@ async function syncAll() {
     const fullName = String(($("w-fullname") && $("w-fullname").value) || "").trim();
     const payoutMethod = String(($("w-method") && $("w-method").value) || "phone").trim();
     const payoutValue = String(($("w-details") && $("w-details").value) || "").trim();
+    const payoutDigits = digitsOnly(payoutValue);
     const amount = Number(($("w-amount") && $("w-amount").value) || 0);
 
-    if (!fullName || !fullName.includes(" ")) return tgAlert("Укажи имя и фамилию");
+    if (!fullName || !/\S+\s+\S+/.test(fullName)) return tgAlert("Укажи имя и фамилию");
     if (!payoutValue) return tgAlert("Укажи номер телефона или карты");
     if (payoutMethod === "phone" && payoutDigits.length < 11) return tgAlert("Введи корректный номер телефона");
     if (payoutMethod === "card" && payoutDigits.length < 16) return tgAlert("Введи корректный номер карты");
