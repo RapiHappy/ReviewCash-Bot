@@ -233,103 +233,25 @@ function tgAlert(msg, kind = "info", title = "") {
     });
   }
 
-  const AVATAR_CACHE_KEY = "rc_avatar_v2";
-  const AVATAR_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
-  const AVATAR_MAX_SIDE = 96;
-  const avatarMemCache = new Map();
-  const avatarInflight = new Map();
-
-  function getAvatarCache() {
-    try {
-      const raw = localStorage.getItem(AVATAR_CACHE_KEY) || "";
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (e) {
-      return {};
-    }
-  }
-
-  function setAvatarCacheEntry(url, data) {
-    try {
-      const payload = { url: String(url || ""), data: String(data || ""), ts: Date.now() };
-      localStorage.setItem(AVATAR_CACHE_KEY, JSON.stringify(payload));
-    } catch (e) {}
-  }
-
-  function getAvatarCacheEntry(url) {
-    try {
-      if (!url) return null;
-      if (avatarMemCache.has(url)) return avatarMemCache.get(url) || null;
-      const entry = getAvatarCache();
-      if (entry.url !== url) return null;
-      if (!entry.data || !String(entry.data).startsWith("data:image")) return null;
-      if (!entry.ts || (Date.now() - Number(entry.ts)) > AVATAR_CACHE_TTL_MS) return null;
-      avatarMemCache.set(url, entry.data);
-      return entry.data;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  async function downscaleAvatarBlob(blob, maxSide = AVATAR_MAX_SIDE) {
-    try {
-      const bitmap = await createImageBitmap(blob);
-      const scale = Math.min(1, maxSide / Math.max(bitmap.width || 1, bitmap.height || 1));
-      const width = Math.max(1, Math.round((bitmap.width || maxSide) * scale));
-      const height = Math.max(1, Math.round((bitmap.height || maxSide) * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d", { alpha: true });
-      if (!ctx) throw new Error("no-canvas");
-      ctx.drawImage(bitmap, 0, 0, width, height);
-      if (typeof bitmap.close === "function") bitmap.close();
-      const data = canvas.toDataURL("image/webp", 0.82);
-      if (data && data.startsWith("data:image")) return data;
-    } catch (e) {}
-    return blobToDataURL(blob);
-  }
-
   async function tryCacheAvatar(url) {
     try {
-      const cached = getAvatarCacheEntry(url);
-      if (cached) return cached;
-      if (avatarInflight.has(url)) return await avatarInflight.get(url);
+      const prevUrl = localStorage.getItem("rc_avatar_url") || "";
+      const prevData = localStorage.getItem("rc_avatar_data") || "";
+      if (prevUrl === url && prevData.startsWith("data:image")) return prevData;
 
-      const task = (async () => {
-        try {
-          const res = await fetch(url, { cache: "force-cache", mode: "cors", credentials: "omit" });
-          if (!res.ok) return null;
-          const blob = await res.blob();
-          if (!blob || blob.size > 2 * 1024 * 1024) return null;
-          const data = await downscaleAvatarBlob(blob, AVATAR_MAX_SIDE);
-          if (data && data.startsWith("data:image")) {
-            avatarMemCache.set(url, data);
-            setAvatarCacheEntry(url, data);
-            return data;
-          }
-          return null;
-        } finally {
-          avatarInflight.delete(url);
-        }
-      })();
-
-      avatarInflight.set(url, task);
-      return await task;
+      const res = await fetch(url, { cache: "force-cache" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      // don't cache huge files
+      if (!blob || blob.size > 160000) return null;
+      const data = await blobToDataURL(blob);
+      if (data && data.startsWith("data:image")) {
+        localStorage.setItem("rc_avatar_url", url);
+        localStorage.setItem("rc_avatar_data", data);
+        return data;
+      }
     } catch (e) {}
     return null;
-  }
-
-  function primeAvatarFast(url) {
-    if (!url) return;
-    tryCacheAvatar(url).catch(() => {});
-    try {
-      const im = new Image();
-      im.decoding = "async";
-      im.fetchPriority = "high";
-      im.referrerPolicy = "no-referrer";
-      im.src = url;
-    } catch (e) {}
   }
 
   function loadAvatarFast(imgEl, url, displayName) {
@@ -337,44 +259,35 @@ function tgAlert(msg, kind = "info", title = "") {
     const initials = initialsFromName(displayName);
     const placeholder = svgInitialAvatarDataUrl(initials);
 
+    // Make sure we always show something instantly
     try {
       imgEl.decoding = "async";
       imgEl.loading = "eager";
-      imgEl.fetchPriority = "high";
-      imgEl.referrerPolicy = "no-referrer";
-      imgEl.width = imgEl.width || 96;
-      imgEl.height = imgEl.height || 96;
     } catch (e) {}
 
     imgEl.style.opacity = "0.96";
-    imgEl.style.transition = "opacity .18s ease";
-
-    const cached = getAvatarCacheEntry(url);
-    imgEl.src = cached || placeholder;
-    if (cached) imgEl.style.opacity = "1";
+    imgEl.style.transition = "opacity .22s ease";
+    imgEl.src = placeholder;
 
     if (!url) return;
 
+    // If we have cached data-url (when CORS allows), use it immediately
     tryCacheAvatar(url).then((data) => {
-      if (!data || imgEl.dataset.avatarUrl !== url) return;
+      if (!data) return;
       imgEl.src = data;
       imgEl.style.opacity = "1";
-    }).catch(() => {});
+    });
 
-    imgEl.dataset.avatarUrl = url;
-
+    // Load real image in background and swap when ready
     const pre = new Image();
     pre.decoding = "async";
-    pre.fetchPriority = "high";
-    pre.referrerPolicy = "no-referrer";
     pre.src = url;
     pre.onload = () => {
-      if (imgEl.dataset.avatarUrl !== url) return;
-      imgEl.src = getAvatarCacheEntry(url) || url;
+      imgEl.src = url;
       imgEl.style.opacity = "1";
     };
     pre.onerror = () => {
-      if (!cached) imgEl.src = placeholder;
+      // keep placeholder
     };
   }
   function showToast(kind, message, title = "") {
@@ -2323,28 +2236,111 @@ async function syncAll() {
     }
   }
 
+  function parseWithdrawDetails(raw) {
+    const src = String(raw || "");
+    const parts = src.split("|").map(v => String(v || "").trim());
+    return {
+      fullName: parts[0] || "",
+      method: parts[1] || "",
+      value: parts.slice(2).join(" | ") || src
+    };
+  }
+
+  function digitsOnly(v) {
+    return String(v || "").replace(/\D+/g, "");
+  }
+
+  function formatPhoneInput(v) {
+    let d = digitsOnly(v);
+    if (!d) return "";
+    if (d.startsWith("8")) d = "7" + d.slice(1);
+    if (!d.startsWith("7")) d = "7" + d;
+    d = d.slice(0, 11);
+    const a = d.slice(1, 4);
+    const b = d.slice(4, 7);
+    const c = d.slice(7, 9);
+    const e = d.slice(9, 11);
+    let out = "+7";
+    if (a) out += ` (${a}`;
+    if (a && a.length === 3) out += ")";
+    if (b) out += ` ${b}`;
+    if (c) out += `-${c}`;
+    if (e) out += `-${e}`;
+    return out;
+  }
+
+  function formatCardInput(v) {
+    const d = digitsOnly(v).slice(0, 19);
+    return d.replace(/(.{4})/g, "$1 ").trim();
+  }
+
+  function applyWithdrawInputMask() {
+    const methodEl = $("w-method");
+    const detailsEl = $("w-details");
+    if (!methodEl || !detailsEl) return;
+    const method = String(methodEl.value || "phone");
+    const current = String(detailsEl.value || "");
+    if (method === "card") {
+      detailsEl.value = formatCardInput(current);
+      detailsEl.placeholder = "2200 1234 5678 9012";
+      detailsEl.inputMode = "numeric";
+    } else {
+      detailsEl.value = formatPhoneInput(current);
+      detailsEl.placeholder = "+7 (999) 123-45-67";
+      detailsEl.inputMode = "tel";
+    }
+  }
+
+  async function copyTextEx(text, okText) {
+    const value = String(text || "").trim();
+    if (!value) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = value;
+        ta.setAttribute("readonly", "readonly");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      tgHaptic("success");
+      tgAlert(okText || "Скопировано");
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert("Не удалось скопировать");
+    }
+  }
+
   function renderWithdrawals(list) {
     const box = $("withdrawals-list");
     if (!box) return;
-    if (!view.length) {
-      box.innerHTML = `<div style="color:var(--text-dim); font-size:13px;">Нет заявок</div>`;
+    if (!Array.isArray(list) || !list.length) {
+      box.innerHTML = `<div class="card" style="margin:0; padding:14px; color:var(--text-dim); font-size:13px;">Заявок пока нет</div>`;
       return;
     }
     box.innerHTML = "";
     list.forEach(w => {
       const st = String(w.status || "pending");
       const stLabel = st === "paid" ? "✅ Выплачено" : (st === "rejected" ? "❌ Отклонено" : "⏳ В обработке");
+      const info = parseWithdrawDetails(w.details || "");
+      const methodLabel = info.method === "card" ? "Карта" : (info.method === "phone" ? "Телефон" : "Реквизиты");
       const row = document.createElement("div");
       row.className = "card";
       row.style.margin = "0";
-      row.style.padding = "12px";
+      row.style.padding = "14px";
       row.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:900;">${fmtRub(w.amount_rub || 0)}</div>
-            <div style="font-size:12px; color:var(--text-dim);">${safeText(w.details || "")}</div>
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+          <div style="min-width:0;">
+            <div style="font-weight:900; font-size:16px;">${fmtRub(w.amount_rub || 0)}</div>
+            <div style="margin-top:6px; font-size:13px;">👤 ${safeText(info.fullName || "—")}</div>
+            <div style="margin-top:4px; font-size:12px; color:var(--text-dim);">${methodLabel}: ${safeText(info.value || "—")}</div>
           </div>
-          <div style="font-size:12px; opacity:0.8;">${stLabel}</div>
+          <div style="font-size:12px; opacity:0.85; white-space:nowrap;">${stLabel}</div>
         </div>
       `;
       box.appendChild(row);
@@ -2352,19 +2348,33 @@ async function syncAll() {
   }
 
   window.requestWithdraw = async function () {
-    const details = String(($("w-details") && $("w-details").value) || "").trim();
+    const fullName = String(($("w-fullname") && $("w-fullname").value) || "").trim();
+    const payoutMethod = String(($("w-method") && $("w-method").value) || "phone").trim();
+    const payoutValue = String(($("w-details") && $("w-details").value) || "").trim();
     const amount = Number(($("w-amount") && $("w-amount").value) || 0);
 
-    if (!details) return tgAlert("Укажи реквизиты");
+    if (!fullName || !fullName.includes(" ")) return tgAlert("Укажи имя и фамилию");
+    if (!payoutValue) return tgAlert("Укажи номер телефона или карты");
+    if (payoutMethod === "phone" && payoutDigits.length < 11) return tgAlert("Введи корректный номер телефона");
+    if (payoutMethod === "card" && payoutDigits.length < 16) return tgAlert("Введи корректный номер карты");
     if (!amount || amount < 300) return tgAlert("Минимум 300₽");
 
     try {
       tgHaptic("impact");
-      const res = await apiPost("/api/withdraw/create", { details: details, amount_rub: amount });
+      const res = await apiPost("/api/withdraw/create", {
+        full_name: fullName,
+        payout_method: payoutMethod,
+        payout_value: payoutValue,
+        amount_rub: amount
+      });
       if (res && res.ok) {
         tgHaptic("success");
-        tgAlert("Заявка создана ✅");
-        $("w-amount").value = "";
+        tgAlert("Заявка на вывод создана ✅");
+        if ($("w-fullname")) $("w-fullname").value = "";
+        if ($("w-details")) $("w-details").value = "";
+        if ($("w-amount")) $("w-amount").value = "";
+        if ($("w-method")) $("w-method").value = "phone";
+        applyWithdrawInputMask();
         await syncAll();
         await refreshWithdrawals();
       } else {
@@ -2725,9 +2735,18 @@ async function loadAdminWithdrawals() {
     }
 
     list.filter(w => w.status === "pending").forEach(w => {
+      const info = parseWithdrawDetails(w.details || "");
+      const methodLabel = info.method === "card" ? "Карта" : (info.method === "phone" ? "Телефон" : "Реквизиты");
       const c = adminCard(`
         <div style="font-weight:900;">Вывод ${fmtRub(w.amount_rub || 0)}</div>
-        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(w.user_id)} • ${safeText(w.details || "")}</div>
+        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(w.user_id)}</div>
+        <div style="margin-top:6px; font-size:13px;">👤 ${safeText(info.fullName || "—")}</div>
+        <div style="margin-top:4px; font-size:12px; color:var(--text-dim);">${methodLabel}: ${safeText(info.value || "—")}</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+          <button class="btn btn-secondary" data-copy-name="1" style="padding:8px 10px; font-size:12px;">📋 ФИО</button>
+          <button class="btn btn-secondary" data-copy-value="1" style="padding:8px 10px; font-size:12px;">📋 ${methodLabel}</button>
+          <button class="btn btn-secondary" data-copy-all="1" style="padding:8px 10px; font-size:12px;">📋 Всё</button>
+        </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Выплатить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
@@ -2740,6 +2759,14 @@ async function loadAdminWithdrawals() {
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideWithdraw(w.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideWithdraw(w.id, false, c);
+      const cn = c.querySelector('[data-copy-name="1"]');
+      if (cn) cn.onclick = () => copyTextEx(info.fullName || "", "ФИО скопировано");
+      const cv = c.querySelector('[data-copy-value="1"]');
+      if (cv) cv.onclick = () => copyTextEx(info.value || "", `${methodLabel} скопирован`);
+      const ca = c.querySelector('[data-copy-all="1"]');
+      if (ca) ca.onclick = () => copyTextEx(`${info.fullName || ""}
+${methodLabel}: ${info.value || ""}
+Сумма: ${fmtRub(w.amount_rub || 0)}`, "Данные заявки скопированы");
 
       // Sanctions
       const uid = Number(w.user_id || 0);
@@ -2998,6 +3025,7 @@ function extractTgWebAppDataFromUrl() {
     initDeviceHash();
     // init performance mode ASAP (affects animations + refresh interval)
     applyPerfMode(getInitialPerfMode());
+
     const themeBtn = document.getElementById("theme-toggle");
     if (themeBtn && !themeBtn.dataset.bound) {
       themeBtn.dataset.bound = "1";
@@ -3040,7 +3068,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           state.user.first_name = tu.first_name;
           state.user.last_name = tu.last_name;
           state.user.photo_url = tu.photo_url;
-          if (tu.photo_url) primeAvatarFast(tu.photo_url);
+          if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
           renderHeader();
           renderProfile();
         }
@@ -3051,6 +3079,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     initTgSubtypeSelect();
     initTgTargetChecker();
     initPlatformFilterIcons();
+    initWithdrawForm();
 
     // keep loader until first sync is done
     const loader = $("loader");
