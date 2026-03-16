@@ -845,7 +845,8 @@ function tgAlert(msg, kind = "info", title = "") {
 
       if (changed) {
         state.tasks = newTasks;
-        state._tasksSig = newSig;
+        ensureVisiblePlatformFilter(state.tasks);
+        state._tasksSig = tasksSignature(state.tasks);
       }
 
       // render when tasks changed (Tasks tab) OR when balance/level changed (any tab)
@@ -881,6 +882,12 @@ function tgAlert(msg, kind = "info", title = "") {
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden && state.currentSection === "tasks") syncTasksOnly(true);
       });
+      window.addEventListener("pageshow", () => {
+        if (state.currentSection === "tasks") syncTasksOnly(true);
+      });
+      window.addEventListener("focus", () => {
+        if (state.currentSection === "tasks") syncTasksOnly(false);
+      });
     }
   }
 
@@ -903,6 +910,7 @@ async function syncAll() {
     state.balance = data.balance || state.balance;
     state.config = data.config || state.config;
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    ensureVisiblePlatformFilter(state.tasks);
 
     // If some tasks were completed before user_id was known, migrate from anon bucket
     migrateCompletedAnonToUser();
@@ -1123,6 +1131,18 @@ async function syncAll() {
 
     renderTasks();
   }
+
+  function ensureVisiblePlatformFilter(tasks) {
+    try {
+      const allTasks = Array.isArray(tasks) ? tasks : [];
+      if (!allTasks.length) return;
+      const current = String(state.platformFilter || "all");
+      if (current === "all") return;
+      const hasVisibleForCurrent = allTasks.some(t => String((t && (t.type || t.platform) || "")).toLowerCase() === current && Number((t && t.qty_left) || 0) > 0);
+      if (hasVisibleForCurrent) return;
+      setPlatformFilter("all");
+    } catch (e) {}
+  }
   window.setPlatformFilter = setPlatformFilter;
 
     function setOpsFilter(k) {
@@ -1215,7 +1235,15 @@ async function syncAll() {
     }
 
     if (!list.length) {
-      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
+      const hasAnyTasks = state.tasks.some(t => {
+        if (isMy) return Number(t.owner_id) === Number(uid);
+        return !isTaskCompleted(t && t.id) && Number(t.qty_left || 0) > 0;
+      });
+      if (!isMy && state.platformFilter !== "all" && hasAnyTasks) {
+        box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">По текущему фильтру заданий нет.<br><br><button class="btn" onclick="setPlatformFilter('all')">Показать все задания</button></div>`;
+      } else {
+        box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
+      }
       return;
     }
 
