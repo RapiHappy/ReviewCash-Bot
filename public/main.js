@@ -413,9 +413,21 @@ function tgAlert(msg, kind = "info", title = "") {
   }
 
   function updatePerfModeLabel() {
-    const el = $("perf-mode-label");
-    if (!el) return;
-    el.textContent = (state.perfMode === "low") ? "Слабое устройство" : "Нормальный";
+    const isLow = state.perfMode === "low";
+    const labelEl = $("perf-mode-label");
+    const hintEl = $("perf-mode-hint");
+    const chipEl = $("perf-mode-chip");
+    const cardEl = document.getElementById("perf-mode-card");
+    if (labelEl) labelEl.textContent = isLow ? "Экономный" : "Нормальный";
+    if (hintEl) hintEl.textContent = isLow ? "меньше эффектов и анимаций" : "для плавной и красивой работы";
+    if (chipEl) {
+      chipEl.textContent = isLow ? "Включить плавный" : "Включить экономный";
+      chipEl.setAttribute("aria-label", chipEl.textContent);
+    }
+    if (cardEl) {
+      cardEl.classList.toggle("is-low", isLow);
+      cardEl.classList.toggle("is-normal", !isLow);
+    }
   }
 
   function applyPerfMode(mode) {
@@ -437,7 +449,12 @@ function tgAlert(msg, kind = "info", title = "") {
     const next = (state.perfMode === "low") ? "normal" : "low";
     applyPerfMode(next);
     tgHaptic("impact");
-    tgAlert("Режим: " + (state.perfMode === "low" ? "Слабое устройство" : "Нормальный"), "info", "Настройки");
+    tgAlert(
+      "Режим: " + (state.perfMode === "low" ? "Экономный" : "Нормальный") + "\n" +
+      (state.perfMode === "low" ? "Меньше анимаций и нагрузка ниже." : "Максимально плавный интерфейс."),
+      "info",
+      "Настройки"
+    );
   }
   window.togglePerfMode = togglePerfMode;
 
@@ -981,7 +998,6 @@ async function syncAll() {
     const fill = $("u-xp-fill");
     if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
   }
-
   function renderInvite() {
     // Simple link with your bot username (can be replaced if you want)
     const botUsername = "@ReviewCashOrg_Bot";
@@ -1981,7 +1997,6 @@ async function syncAll() {
     }
 
     updateTgHint();
-
     const perOneEl = $("t-per-one");
     if (perOneEl) perOneEl.textContent = fmtRub(costPer || 0);
 
@@ -2246,104 +2261,6 @@ async function syncAll() {
     };
   }
 
-  function digitsOnly(v) {
-    return String(v || "").replace(/\D+/g, "");
-  }
-
-  function formatPhoneInput(v) {
-    let d = digitsOnly(v);
-    if (!d) return "";
-    if (d.startsWith("8")) d = "7" + d.slice(1);
-    if (!d.startsWith("7")) d = "7" + d;
-    d = d.slice(0, 11);
-    const a = d.slice(1, 4);
-    const b = d.slice(4, 7);
-    const c = d.slice(7, 9);
-    const e = d.slice(9, 11);
-    let out = "+7";
-    if (a) out += ` (${a}`;
-    if (a && a.length === 3) out += ")";
-    if (b) out += ` ${b}`;
-    if (c) out += `-${c}`;
-    if (e) out += `-${e}`;
-    return out;
-  }
-
-  function formatCardInput(v) {
-    const d = digitsOnly(v).slice(0, 19);
-    return d.replace(/(.{4})/g, "$1 ").trim();
-  }
-
-  function applyWithdrawInputMask() {
-    const methodEl = $("w-method");
-    const detailsEl = $("w-details");
-    if (!methodEl || !detailsEl) return;
-    const method = String(methodEl.value || "phone");
-    const current = String(detailsEl.value || "");
-    if (method === "card") {
-      detailsEl.value = formatCardInput(current);
-      detailsEl.placeholder = "2200 1234 5678 9012";
-      detailsEl.inputMode = "numeric";
-    } else {
-      detailsEl.value = formatPhoneInput(current);
-      detailsEl.placeholder = "+7 (999) 123-45-67";
-      detailsEl.inputMode = "tel";
-    }
-  }
-
-  function initWithdrawForm() {
-    const methodEl = $("w-method");
-    const detailsEl = $("w-details");
-    const amountEl = $("w-amount");
-    const nameEl = $("w-fullname");
-
-    if (nameEl) {
-      nameEl.autocomplete = "name";
-      nameEl.maxLength = 80;
-    }
-    if (amountEl) {
-      try { amountEl.min = "300"; } catch (e) {}
-      try { amountEl.step = "1"; } catch (e) {}
-      amountEl.addEventListener("input", () => {
-        const n = Number(String(amountEl.value || '').replace(',', '.'));
-        if (!Number.isFinite(n) || n < 0) amountEl.value = '';
-      });
-    }
-    if (methodEl) {
-      methodEl.addEventListener("change", () => applyWithdrawInputMask());
-    }
-    if (detailsEl) {
-      detailsEl.addEventListener("input", () => applyWithdrawInputMask());
-      detailsEl.addEventListener("paste", () => setTimeout(applyWithdrawInputMask, 0));
-    }
-    applyWithdrawInputMask();
-  }
-
-  async function copyTextEx(text, okText) {
-    const value = String(text || "").trim();
-    if (!value) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = value;
-        ta.setAttribute("readonly", "readonly");
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        ta.remove();
-      }
-      tgHaptic("success");
-      tgAlert(okText || "Скопировано");
-    } catch (e) {
-      tgHaptic("error");
-      tgAlert("Не удалось скопировать");
-    }
-  }
-
   function renderWithdrawals(list) {
     const box = $("withdrawals-list");
     if (!box) return;
@@ -2379,13 +2296,10 @@ async function syncAll() {
     const fullName = String(($("w-fullname") && $("w-fullname").value) || "").trim();
     const payoutMethod = String(($("w-method") && $("w-method").value) || "phone").trim();
     const payoutValue = String(($("w-details") && $("w-details").value) || "").trim();
-    const payoutDigits = digitsOnly(payoutValue);
     const amount = Number(($("w-amount") && $("w-amount").value) || 0);
 
-    if (!fullName || !/\S+\s+\S+/.test(fullName)) return tgAlert("Укажи имя и фамилию");
+    if (!fullName || !fullName.includes(" ")) return tgAlert("Укажи имя и фамилию");
     if (!payoutValue) return tgAlert("Укажи номер телефона или карты");
-    if (payoutMethod === "phone" && payoutDigits.length < 11) return tgAlert("Введи корректный номер телефона");
-    if (payoutMethod === "card" && payoutDigits.length < 16) return tgAlert("Введи корректный номер карты");
     if (!amount || amount < 300) return tgAlert("Минимум 300₽");
 
     try {
@@ -2403,7 +2317,6 @@ async function syncAll() {
         if ($("w-details")) $("w-details").value = "";
         if ($("w-amount")) $("w-amount").value = "";
         if ($("w-method")) $("w-method").value = "phone";
-        applyWithdrawInputMask();
         await syncAll();
         await refreshWithdrawals();
       } else {
@@ -2771,11 +2684,6 @@ async function loadAdminWithdrawals() {
         <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(w.user_id)}</div>
         <div style="margin-top:6px; font-size:13px;">👤 ${safeText(info.fullName || "—")}</div>
         <div style="margin-top:4px; font-size:12px; color:var(--text-dim);">${methodLabel}: ${safeText(info.value || "—")}</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-          <button class="btn btn-secondary" data-copy-name="1" style="padding:8px 10px; font-size:12px;">📋 ФИО</button>
-          <button class="btn btn-secondary" data-copy-value="1" style="padding:8px 10px; font-size:12px;">📋 ${methodLabel}</button>
-          <button class="btn btn-secondary" data-copy-all="1" style="padding:8px 10px; font-size:12px;">📋 Всё</button>
-        </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Выплатить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
@@ -2788,14 +2696,6 @@ async function loadAdminWithdrawals() {
       `);
       c.querySelector('[data-approve="1"]').onclick = async () => decideWithdraw(w.id, true, c);
       c.querySelector('[data-approve="0"]').onclick = async () => decideWithdraw(w.id, false, c);
-      const cn = c.querySelector('[data-copy-name="1"]');
-      if (cn) cn.onclick = () => copyTextEx(info.fullName || "", "ФИО скопировано");
-      const cv = c.querySelector('[data-copy-value="1"]');
-      if (cv) cv.onclick = () => copyTextEx(info.value || "", `${methodLabel} скопирован`);
-      const ca = c.querySelector('[data-copy-all="1"]');
-      if (ca) ca.onclick = () => copyTextEx(`${info.fullName || ""}
-${methodLabel}: ${info.value || ""}
-Сумма: ${fmtRub(w.amount_rub || 0)}`, "Данные заявки скопированы");
 
       // Sanctions
       const uid = Number(w.user_id || 0);
@@ -3108,7 +3008,6 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     initTgSubtypeSelect();
     initTgTargetChecker();
     initPlatformFilterIcons();
-    initWithdrawForm();
 
     // keep loader until first sync is done
     const loader = $("loader");
