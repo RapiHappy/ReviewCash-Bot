@@ -575,6 +575,14 @@
       <input type="text" id="t-target" placeholder="https://t.me/..." style="margin-top:5px;">
       <div id="t-target-status" class="input-status"></div>
 
+
+      <label class="input-label" style="margin-top:12px;">Пол исполнителя</label>
+      <select id="t-gender" style="margin-top:5px;">
+        <option value="any">👥 Оба пола</option>
+        <option value="male">👨 Муж. пол.</option>
+        <option value="female">👩 Жен. пол.</option>
+      </select>
+
       <label class="input-label">Текст задания (необязательно)</label>
       <textarea id="t-text" rows="2" placeholder="Например: Вступите и не отписывайтесь..." style="margin-top:5px;"></textarea>
 
@@ -626,6 +634,18 @@
       </button>
 
       <button class="btn btn-main create-cta" style="width:100%; margin-top:18px;" onclick="createTask()"><span>⚡ Оплатить и запустить</span></button>
+    </div>
+  </div>
+
+
+  <div id="m-gender-onboard" class="overlay" style="display:none;">
+    <div class="modal">
+      <h2 style="margin:0 0 8px;">Выберите пол</h2>
+      <p style="color:var(--text-dim); font-size:14px; margin-bottom:14px;">Это нужно, чтобы показывать подходящие задания.</p>
+      <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+        <button class="btn btn-secondary" onclick="pickGender('male')">👨 Мужской</button>
+        <button class="btn btn-secondary" onclick="pickGender('female')">👩 Женский</button>
+      </div>
     </div>
   </div>
 
