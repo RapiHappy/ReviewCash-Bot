@@ -144,6 +144,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 
     InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
 )
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -364,6 +367,19 @@ def tg_display_dedupe_key(task: dict | None) -> str:
     subtype = get_tg_subtype(task) or "tg"
     return f"{subtype}|{ident}"
 
+
+
+def get_task_target_gender(task: dict | None) -> str:
+    t = task or {}
+    raw = t.get("target_gender")
+    g = normalize_task_gender(raw)
+    if g != TASK_GENDER_ANY:
+        return g
+    ins = str(t.get("instructions") or "")
+    m = re.search(r"(?im)^\s*TARGET_GENDER\s*:\s*(male|female|any)\s*$", ins)
+    if m:
+        return normalize_task_gender(m.group(1))
+    return TASK_GENDER_ANY
 
 
 def get_top_meta(task: dict | None, key: str) -> str:
@@ -1574,6 +1590,12 @@ TG_BOT_START_KEY = "bot_start"
 TG_BOT_CALLBACK_KEY = "bot_callback"
 TG_BOT_MESSAGE_KEY = "bot_message"
 TG_MINIAPP_OPEN_KEY = "miniapp_open"
+
+USER_GENDER_MALE_KEY = "gender:male"
+USER_GENDER_FEMALE_KEY = "gender:female"
+TASK_GENDER_ANY = "any"
+TASK_GENDER_MALE = "male"
+TASK_GENDER_FEMALE = "female"
 TG_INVITE_FRIENDS_KEY = "invite_friends"
 TG_POLL_VOTE_KEY = "poll_vote"
 
@@ -1606,6 +1628,37 @@ async def tg_evt_get(user_id: int, event: str, value: str | None = None) -> date
     if not r.data:
         return None
     return _parse_dt(r.data[0].get("last_at"))
+
+async def tg_set_gender(user_id: int, gender: str):
+    g = str(gender or "").strip().lower()
+    if g not in (TASK_GENDER_MALE, TASK_GENDER_FEMALE):
+        return
+    keep_key = USER_GENDER_MALE_KEY if g == TASK_GENDER_MALE else USER_GENDER_FEMALE_KEY
+    drop_key = USER_GENDER_FEMALE_KEY if g == TASK_GENDER_MALE else USER_GENDER_MALE_KEY
+    await sb_delete(T_LIMITS, {"user_id": int(user_id), "limit_key": drop_key})
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": keep_key, "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+
+async def tg_get_gender(user_id: int) -> str | None:
+    rm = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_MALE_KEY}, limit=1)
+    if rm.data:
+        return TASK_GENDER_MALE
+    rf = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_FEMALE_KEY}, limit=1)
+    if rf.data:
+        return TASK_GENDER_FEMALE
+    return None
+
+
+def normalize_task_gender(value: str | None) -> str:
+    v = str(value or "").strip().lower()
+    if v in (TASK_GENDER_MALE, TASK_GENDER_FEMALE):
+        return v
+    return TASK_GENDER_ANY
+
 
 def _task_created_at(task: dict | None) -> datetime:
     return _parse_dt((task or {}).get("created_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -2095,6 +2148,18 @@ async def require_main_admin(req: web.Request) -> dict:
         raise web.HTTPForbidden(text="Not main admin")
     return user
 
+
+
+async def api_user_gender_set(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    body = await safe_json(req)
+    gender = normalize_task_gender(body.get("gender"))
+    if gender not in (TASK_GENDER_MALE, TASK_GENDER_FEMALE):
+        return web.json_response({"ok": False, "error": "Выбери Мужской или Женский"}, status=400)
+    await tg_set_gender(uid, gender)
+    return web.json_response({"ok": True, "gender": gender})
+
 # -------------------------
 # API: referrals summary (for MiniApp)
 # -------------------------
@@ -2151,6 +2216,7 @@ async def api_sync(req: web.Request):
 
     banned_until = await get_task_ban_until(uid)
     tasks = []
+    user_gender = normalize_task_gender(await tg_get_gender(uid))
     if not banned_until:
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
@@ -2202,6 +2268,11 @@ async def api_sync(req: web.Request):
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
             )
             and (int(t.get("owner_id") or 0) == uid or expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
+            and (
+                int(t.get("owner_id") or 0) == uid
+                or get_task_target_gender(t) == TASK_GENDER_ANY
+                or get_task_target_gender(t) == user_gender
+            )
             and not (
                 int(t.get("owner_id") or 0) != uid
                 and str(t.get("type") or "") == "tg"
@@ -2253,6 +2324,7 @@ async def api_sync(req: web.Request):
             "first_name": user.get("first_name"),
             "last_name": user.get("last_name"),
             "photo_url": user.get("photo_url"),
+            "gender": user_gender,
         },
         "balance": bal,
         "tasks": tasks,
@@ -2356,6 +2428,7 @@ async def api_task_create(req: web.Request):
     pay_currency = str(body.get("pay_currency") or "rub").strip().lower()
     want_top = bool(body.get("want_top") or False)
     top_price_rub = float(body.get("top_price_rub") or 250)
+    target_gender = normalize_task_gender(body.get("target_gender"))
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
@@ -2469,8 +2542,13 @@ async def api_task_create(req: web.Request):
         "status": "active",
     }
 
+    meta_lines = []
     if sub_type:
-        row["instructions"] = (instructions + "\n\nTG_SUBTYPE: " + sub_type).strip()
+        meta_lines.append("TG_SUBTYPE: " + sub_type)
+    if target_gender != TASK_GENDER_ANY:
+        meta_lines.append("TARGET_GENDER: " + target_gender)
+    if meta_lines:
+        row["instructions"] = (instructions + "\n\n" + "\n".join(meta_lines)).strip()
 
     ins = await sb_insert(T_TASKS, row)
     task = (ins.data or [row])[0]
@@ -3691,27 +3769,7 @@ async def api_admin_tbank_decision(req: web.Request):
 # =========================================================
 # Telegram handlers
 # =========================================================
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
-    uid = message.from_user.id
-    args = (message.text or "").split(maxsplit=1)
-    ref = None
-    start_arg = ""
-    if len(args) == 2:
-        start_arg = str(args[1] or "").strip()
-    if start_arg.isdigit():
-        ref = int(start_arg)
-    else:
-        m_ref = re.match(r"(?i)^ref[_:\-]?(\d+)$", start_arg)
-        if m_ref:
-            ref = int(m_ref.group(1))
-
-    await ensure_user(message.from_user.model_dump(), referrer_id=ref)
-    try:
-        await tg_evt_touch(uid, "bot_start")
-    except Exception:
-        pass
-
+async def send_main_welcome(message: Message, uid: int):
     kb = InlineKeyboardBuilder()
 
     miniapp_url = MINIAPP_URL
@@ -3744,6 +3802,53 @@ async def cmd_start(message: Message):
     )
     kb.adjust(1)
     await message.answer(text, reply_markup=kb.as_markup())
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    uid = message.from_user.id
+    args = (message.text or "").split(maxsplit=1)
+    ref = None
+    start_arg = ""
+    if len(args) == 2:
+        start_arg = str(args[1] or "").strip()
+    if start_arg.isdigit():
+        ref = int(start_arg)
+    else:
+        m_ref = re.match(r"(?i)^ref[_:\-]?(\d+)$", start_arg)
+        if m_ref:
+            ref = int(m_ref.group(1))
+
+    await ensure_user(message.from_user.model_dump(), referrer_id=ref)
+    try:
+        await tg_evt_touch(uid, "bot_start")
+    except Exception:
+        pass
+
+    user_gender = await tg_get_gender(uid)
+    if not user_gender:
+        gender_kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="👨 Мужской"), KeyboardButton(text="👩 Женский")]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+            selective=True,
+        )
+        await message.answer("Перед началом выбери пол:", reply_markup=gender_kb)
+        return
+
+    await send_main_welcome(message, uid)
+
+
+@dp.message(F.text.in_(["👨 Мужской", "👩 Женский"]))
+async def handle_gender_pick(message: Message):
+    uid = int(message.from_user.id)
+    if str(message.text or "").strip() == "👨 Мужской":
+        await tg_set_gender(uid, TASK_GENDER_MALE)
+    else:
+        await tg_set_gender(uid, TASK_GENDER_FEMALE)
+
+    await message.answer("Пол сохранён ✅", reply_markup=ReplyKeyboardRemove())
+    await send_main_welcome(message, uid)
 
 @dp.callback_query(F.data == "help_newbie")
 async def cb_help(cq: CallbackQuery):
@@ -4164,6 +4269,7 @@ def make_app():
 
     # API
     app.router.add_post("/api/sync", api_sync)
+    app.router.add_post("/api/user/gender", api_user_gender_set)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/click", api_task_click)

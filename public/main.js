@@ -779,6 +779,35 @@ function tgAlert(msg, kind = "info", title = "") {
     state.deviceHash = v;
   }
 
+  async function setUserGender(gender) {
+    const g = String(gender || "").toLowerCase();
+    if (g !== "male" && g !== "female") return false;
+    const res = await apiPost("/api/user/gender", { gender: g });
+    if (!res || !res.ok) throw new Error((res && res.error) || "Не удалось сохранить пол");
+    state.user = state.user || {};
+    state.user.gender = g;
+    return true;
+  }
+
+  function maybeAskGender() {
+    const g = String((state.user && state.user.gender) || "").toLowerCase();
+    const ov = $("m-gender-onboard");
+    if (!ov) return;
+    if (g === "male" || g === "female") return;
+    openOverlay("m-gender-onboard");
+  }
+
+  async function pickGender(gender) {
+    try {
+      await setUserGender(gender);
+      closeAllOverlays();
+      tgAlert("Пол сохранён", "success", "Готово");
+    } catch (e) {
+      tgAlert(String(e.message || e), "error", "Ошибка");
+    }
+  }
+  window.pickGender = pickGender;
+
   // --------------------
   // Sync + render
   // --------------------
@@ -924,6 +953,7 @@ async function syncAll() {
     renderProfile();
     renderInvite();
     renderTasks();
+    maybeAskGender();
     await refreshWithdrawals();
     await refreshOpsSilent();
     await refreshReferrals();
@@ -2232,6 +2262,7 @@ async function syncAll() {
         tg_chat: tgChat,
         tg_kind: tgKind,
         sub_type: subType,
+        target_gender: (($("t-gender") && $("t-gender").value) ? String($("t-gender").value) : "any"),
       });
 
       if (res && res.ok) {
