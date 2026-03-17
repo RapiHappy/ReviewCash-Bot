@@ -2885,6 +2885,14 @@ async def api_tbank_claim(req: web.Request):
 
     sender = str(body.get("sender") or body.get("name") or body.get("from") or body.get("payer") or "").strip()
     code = str(body.get("code") or body.get("comment") or body.get("payment_code") or body.get("provider_ref") or body.get("reference") or "").strip()
+    phone_raw = str(body.get("phone") or body.get("sender_phone") or body.get("payer_phone") or "").strip()
+    proof_url = str(body.get("proof_url") or body.get("screenshot_url") or body.get("receipt_url") or "").strip()
+
+    phone_digits = "".join(ch for ch in phone_raw if ch.isdigit())
+    if len(phone_digits) == 10:
+        phone_digits = "7" + phone_digits
+    elif len(phone_digits) == 11 and phone_digits.startswith("8"):
+        phone_digits = "7" + phone_digits[1:]
 
     if amount < MIN_TOPUP_RUB:
         return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
@@ -2892,6 +2900,10 @@ async def api_tbank_claim(req: web.Request):
         return web.json_response({"ok": False, "error": "Укажи имя отправителя"}, status=400)
     if not code:
         return web.json_response({"ok": False, "error": "Нет кода платежа"}, status=400)
+    if len(phone_digits) != 11 or not phone_digits.startswith("7"):
+        return web.json_response({"ok": False, "error": "Укажи корректный номер телефона"}, status=400)
+    if not proof_url:
+        return web.json_response({"ok": False, "error": "Прикрепи скрин оплаты"}, status=400)
 
     await sb_insert(T_PAY, {
         "user_id": uid,
@@ -2899,10 +2911,12 @@ async def api_tbank_claim(req: web.Request):
         "status": "pending",
         "amount_rub": amount,
         "provider_ref": code,
-        "meta": {"sender": sender}
+        "meta": {"sender": sender, "phone": phone_digits, "proof_url": proof_url}
     })
 
-    await notify_admin(f"💳 T-Bank заявка\nСумма: {amount}₽\nUser: {uid}\nCode: {code}\nSender: {sender}")
+    await notify_admin(
+        f"💳 T-Bank заявка\nСумма: {amount}₽\nUser: {uid}\nCode: {code}\nSender: {sender}\nPhone: +{phone_digits}\nСкрин: {proof_url}"
+    )
     return web.json_response({"ok": True})
 
 # -------------------------
