@@ -377,6 +377,7 @@ function tgAlert(msg, kind = "info", title = "") {
     isMainAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
     tbankCode: "",
+    tbankPhoneCode: "",
     currentSection: "tasks",
     _tasksSig: "",
     _tasksRefreshTimer: null,
@@ -1611,6 +1612,13 @@ async function syncAll() {
     label.textContent = f ? ("📷 " + f.name) : "📷 Прикрепить скрин оплаты";
   };
 
+  window.updateTBankPhoneFileName = function (input) {
+    const label = $("tbp-filename");
+    if (!label) return;
+    const f = input && input.files && input.files[0] ? input.files[0] : null;
+    label.textContent = f ? ("📷 " + f.name) : "📷 Прикрепить скрин оплаты";
+  };
+
   async function submitTaskManual(task) {
     if (submitTaskManual._busy) return;
     if (isTaskOwner(task)) {
@@ -2513,6 +2521,63 @@ async function syncAll() {
 
   window.copyCode = function () {
     copyText(state.tbankCode || "");
+  };
+
+  window.openTBankPhonePay = function () {
+    const amount = Number(($("sum-input") && $("sum-input").value) || 0);
+    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+
+    state.tbankPhoneCode = "RC" + Math.random().toString(10).slice(2, 8);
+    if ($("tbp-code")) $("tbp-code").textContent = state.tbankPhoneCode;
+    if ($("tbp-amount-display")) $("tbp-amount-display").textContent = fmtRub(amount);
+
+    openOverlay("m-pay-tbank-phone");
+  };
+
+  window.copyPhoneCode = function () {
+    copyText(state.tbankPhoneCode || "");
+  };
+
+  window.confirmTBankPhone = async function () {
+    const amountStr = ($("tbp-amount-display") && $("tbp-amount-display").textContent) || "";
+    const amount = Number(String(amountStr).replace(/[^\d.,]/g, "").replace(",", ".")) || Number(($("sum-input") && $("sum-input").value) || 0);
+    const sender = String(($("tbp-sender") && $("tbp-sender").value) || "").trim();
+    const phoneRaw = String(($("tbp-phone") && $("tbp-phone").value) || "").trim();
+    const phone = normalizePhoneForTbank(phoneRaw);
+    const file = $("tbp-file") && $("tbp-file").files ? $("tbp-file").files[0] : null;
+
+    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!sender) return tgAlert("Укажи имя отправителя");
+    if (phone.length !== 11 || !phone.startsWith("7")) return tgAlert("Укажи корректный номер телефона РФ");
+    if (!file) return tgAlert("Прикрепи скрин оплаты");
+    if (file && file.type && !/^image\//i.test(file.type)) return tgAlert("Можно прикреплять только изображения");
+
+    try {
+      tgHaptic("impact");
+      const proofUrl = await uploadProof(file, `tbank_phone_${state.tbankPhoneCode || ""}`);
+      const res = await apiPost("/api/tbank/claim", {
+        amount_rub: amount,
+        sender: sender,
+        phone: phone,
+        proof_url: proofUrl,
+        code: state.tbankPhoneCode,
+      });
+      if (res && res.ok) {
+        tgHaptic("success");
+        tgAlert("Заявка отправлена ✅ Ожидай подтверждение админом.");
+        closeAllOverlays();
+        if ($("tbp-sender")) $("tbp-sender").value = "";
+        if ($("tbp-phone")) $("tbp-phone").value = "";
+        if ($("tbp-file")) $("tbp-file").value = "";
+        updateTBankPhoneFileName(null);
+        await refreshOpsSilent();
+      } else {
+        throw new Error(res && res.error ? res.error : "Ошибка");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e));
+    }
   };
 
   window.confirmTBank = async function () {
