@@ -2885,6 +2885,7 @@ async def api_tbank_claim(req: web.Request):
 
     sender = str(body.get("sender") or body.get("name") or body.get("from") or body.get("payer") or "").strip()
     code = str(body.get("code") or body.get("comment") or body.get("payment_code") or body.get("provider_ref") or body.get("reference") or "").strip()
+    proof_url = str(body.get("proof_url") or body.get("screenshot_url") or body.get("receipt_url") or "").strip()
 
     if amount < MIN_TOPUP_RUB:
         return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
@@ -2892,6 +2893,8 @@ async def api_tbank_claim(req: web.Request):
         return web.json_response({"ok": False, "error": "Укажи имя отправителя"}, status=400)
     if not code:
         return web.json_response({"ok": False, "error": "Нет кода платежа"}, status=400)
+    if not proof_url:
+        return web.json_response({"ok": False, "error": "Прикрепи скрин оплаты"}, status=400)
 
     await sb_insert(T_PAY, {
         "user_id": uid,
@@ -2899,10 +2902,57 @@ async def api_tbank_claim(req: web.Request):
         "status": "pending",
         "amount_rub": amount,
         "provider_ref": code,
-        "meta": {"sender": sender}
+        "meta": {"sender": sender, "proof_url": proof_url}
     })
 
-    await notify_admin(f"💳 T-Bank заявка\nСумма: {amount}₽\nUser: {uid}\nCode: {code}\nSender: {sender}")
+    await notify_admin(
+        f"💳 T-Bank заявка\nСумма: {amount}₽\nUser: {uid}\nCode: {code}\nSender: {sender}\nСкрин: {proof_url}"
+    )
+    return web.json_response({"ok": True})
+
+
+async def api_phonepay_claim(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+
+    rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
+    body = await safe_json(req)
+
+    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
+    if amount is None:
+        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
+
+    code = str(body.get("code") or body.get("comment") or body.get("payment_code") or body.get("provider_ref") or "").strip()
+    sender_phone_raw = str(body.get("phone") or body.get("sender_phone") or body.get("payer_phone") or "").strip()
+    proof_url = str(body.get("proof_url") or body.get("screenshot_url") or body.get("receipt_url") or "").strip()
+
+    sender_phone = "".join(ch for ch in sender_phone_raw if ch.isdigit())
+    if len(sender_phone) == 10:
+        sender_phone = "7" + sender_phone
+    elif len(sender_phone) == 11 and sender_phone.startswith("8"):
+        sender_phone = "7" + sender_phone[1:]
+
+    if amount < MIN_TOPUP_RUB:
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
+    if not (len(code) == 5 and code.isdigit()):
+        return web.json_response({"ok": False, "error": "Нужен 5-значный код из бота"}, status=400)
+    if len(sender_phone) != 11 or not sender_phone.startswith("7"):
+        return web.json_response({"ok": False, "error": "Укажи корректный номер телефона"}, status=400)
+    if not proof_url:
+        return web.json_response({"ok": False, "error": "Прикрепи скрин оплаты"}, status=400)
+
+    await sb_insert(T_PAY, {
+        "user_id": uid,
+        "provider": "phonepay",
+        "status": "pending",
+        "amount_rub": amount,
+        "provider_ref": code,
+        "meta": {"sender_phone": sender_phone, "proof_url": proof_url}
+    })
+
+    await notify_admin(
+        f"📱 Заявка: перевод по номеру\nСумма: {amount}₽\nUser: {uid}\nКод: {code}\nТелефон отправителя: +{sender_phone}\nСкрин: {proof_url}"
+    )
     return web.json_response({"ok": True})
 
 # -------------------------
@@ -3084,7 +3134,7 @@ async def api_ops_list(req: web.Request):
         status = str(p.get("status") or "")
         amount = float(p.get("amount_rub") or 0)
         meta = p.get("meta") or {}
-        if provider in ("tbank", "stars", "cryptobot"):
+        if provider in ("tbank", "phonepay", "stars", "cryptobot"):
             if status == "paid":
                 ops.append({
                     "kind": "topup",
@@ -3186,7 +3236,7 @@ async def api_admin_summary(req: web.Request):
     wds = await sb_select(T_WD, {"status": "pending"}, limit=1000)
 
     def _f():
-        return sb.table(T_PAY).select("id").eq("provider", "tbank").eq("status", "pending").execute()
+        return sb.table(T_PAY).select("id,provider").in_("provider", ["tbank", "phonepay"]).eq("status", "pending").execute()
     tp = await sb_exec(_f)
 
     tasks = await sb_select(T_TASKS, {"status": "active"}, limit=2000)
@@ -3625,7 +3675,7 @@ async def api_admin_tbank_list(req: web.Request):
     await require_admin(req)
 
     def _f():
-        return sb.table(T_PAY).select("*").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
+        return sb.table(T_PAY).select("*").in_("provider", ["tbank", "phonepay"]).eq("status", "pending").order("created_at", desc=True).limit(200).execute()
     r = await sb_exec(_f)
     return web.json_response({"ok": True, "tbank": r.data or []})
 
@@ -3644,8 +3694,9 @@ async def api_admin_tbank_decision(req: web.Request):
         return web.json_response({"ok": False, "error": "Payment not found"}, status=404)
     pay = r.data[0]
 
-    if pay.get("provider") != "tbank":
-        return web.json_response({"ok": False, "error": "Not tbank payment"}, status=400)
+    provider = str(pay.get("provider") or "")
+    if provider not in ("tbank", "phonepay"):
+        return web.json_response({"ok": False, "error": "Not manual payment"}, status=400)
     if pay.get("status") != "pending":
         return web.json_response({"ok": True, "status": pay.get("status")})
 
@@ -3661,16 +3712,21 @@ async def api_admin_tbank_decision(req: web.Request):
         if xp_add > 0:
             await add_xp(uid, xp_add)
 
-        await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
-        try:
-            until = await set_tbank_cooldown(uid)
-            # optional notify about cooldown
-            await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
-        except Exception:
-            pass
+        if provider == "tbank":
+            await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
+            try:
+                await set_tbank_cooldown(uid)
+                await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
+            except Exception:
+                pass
+        else:
+            await notify_user(uid, f"✅ Пополнение переводом по номеру подтверждено: +{amount:.2f}₽")
     else:
         await sb_update(T_PAY, {"id": payment_id}, {"status": "rejected"})
-        await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
+        if provider == "tbank":
+            await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
+        else:
+            await notify_user(uid, "❌ Пополнение переводом по номеру отклонено администратором.")
 
     return web.json_response({"ok": True})
 
@@ -4165,6 +4221,7 @@ def make_app():
     app.router.add_post("/api/withdraw/list", api_withdraw_list)
 
     app.router.add_post("/api/tbank/claim", api_tbank_claim)
+    app.router.add_post("/api/phonepay/claim", api_phonepay_claim)
     app.router.add_post("/api/pay/stars/link", api_stars_link)
     app.router.add_post("/api/ops/list", api_ops_list)
 

@@ -6,6 +6,7 @@
  *  - POST /api/withdraw/create
  *  - POST /api/withdraw/list
  *  - POST /api/tbank/claim
+ *  - POST /api/phonepay/claim
  *  - POST /api/pay/stars/link
  *  - POST /api/ops/list
  *  - Admin:
@@ -377,6 +378,7 @@ function tgAlert(msg, kind = "info", title = "") {
     isMainAdmin: false,
     adminCounts: { proofs: 0, withdrawals: 0, tbank: 0 },
     tbankCode: "",
+    phonepayCode: "",
     currentSection: "tasks",
     _tasksSig: "",
     _tasksRefreshTimer: null,
@@ -1597,6 +1599,27 @@ async function syncAll() {
     return String(res.url);
   }
 
+  function normalizeRuPhone(v) {
+    const digits = String(v || "").replace(/\D/g, "");
+    if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) return "7" + digits.slice(1);
+    if (digits.length === 10) return "7" + digits;
+    return digits;
+  }
+
+  window.updatePhonePayFileName = function (input) {
+    const label = $("pp-filename");
+    if (!label) return;
+    const f = input && input.files && input.files[0] ? input.files[0] : null;
+    label.textContent = f ? ("📷 " + f.name) : "📷 Прикрепить скрин оплаты";
+  };
+
+  window.updateTbankFileName = function (input) {
+    const label = $("tb-filename");
+    if (!label) return;
+    const f = input && input.files && input.files[0] ? input.files[0] : null;
+    label.textContent = f ? ("📷 " + f.name) : "📷 Прикрепить скрин оплаты";
+  };
+
   async function submitTaskManual(task) {
     if (submitTaskManual._busy) return;
     if (isTaskOwner(task)) {
@@ -2505,22 +2528,88 @@ async function syncAll() {
     const amountStr = ($("tb-amount-display") && $("tb-amount-display").textContent) || "";
     const amount = Number(String(amountStr).replace(/[^\d.,]/g, "").replace(",", ".")) || Number(($("sum-input") && $("sum-input").value) || 0);
     const sender = String(($("tb-sender") && $("tb-sender").value) || "").trim();
+    const file = $("tb-file") && $("tb-file").files ? $("tb-file").files[0] : null;
 
     if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
     if (!sender) return tgAlert("Укажи имя отправителя");
+    if (!file) return tgAlert("Прикрепи скрин оплаты");
+    if (file && file.type && !/^image\//i.test(file.type)) return tgAlert("Можно прикреплять только изображения");
 
     try {
       tgHaptic("impact");
+      const proofUrl = await uploadProof(file, `tbank_${state.tbankCode || ""}`);
       const res = await apiPost("/api/tbank/claim", {
         amount_rub: amount,
         sender: sender,
+        proof_url: proofUrl,
         code: state.tbankCode,
       });
       if (res && res.ok) {
         tgHaptic("success");
         tgAlert("Заявка отправлена ✅ Ожидай подтверждение админом.");
         closeAllOverlays();
-        $("tb-sender").value = "";
+        if ($("tb-sender")) $("tb-sender").value = "";
+        if ($("tb-file")) $("tb-file").value = "";
+        updateTbankFileName(null);
+        await refreshOpsSilent();
+      } else {
+        throw new Error(res && res.error ? res.error : "Ошибка");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e));
+    }
+  };
+
+
+  window.openPhoneTopupPay = function () {
+    const amount = Number(($("sum-input") && $("sum-input").value) || 0);
+    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+
+    state.phonepayCode = String(Math.floor(10000 + Math.random() * 90000));
+    if ($("pp-code")) $("pp-code").textContent = state.phonepayCode;
+    if ($("pp-amount-display")) $("pp-amount-display").textContent = fmtRub(amount);
+
+    openOverlay("m-pay-phone");
+  };
+
+  window.copyPhoneReceiver = function () {
+    copyText((($("pp-receiver") && $("pp-receiver").textContent) || "").trim());
+  };
+
+  window.copyPhonePayCode = function () {
+    copyText(state.phonepayCode || "");
+  };
+
+  window.confirmPhoneTopup = async function () {
+    const amountStr = ($("pp-amount-display") && $("pp-amount-display").textContent) || "";
+    const amount = Number(String(amountStr).replace(/[^\d.,]/g, "").replace(",", ".")) || Number(($("sum-input") && $("sum-input").value) || 0);
+    const phoneRaw = String(($("pp-phone") && $("pp-phone").value) || "").trim();
+    const phone = normalizeRuPhone(phoneRaw);
+    const file = $("pp-file") && $("pp-file").files ? $("pp-file").files[0] : null;
+
+    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!state.phonepayCode || !/^\d{5}$/.test(String(state.phonepayCode))) return tgAlert("Код платежа не сгенерирован");
+    if (phone.length !== 11 || !phone.startsWith("7")) return tgAlert("Укажи корректный номер телефона РФ");
+    if (!file) return tgAlert("Прикрепи скрин оплаты");
+    if (file && file.type && !/^image\//i.test(file.type)) return tgAlert("Можно прикреплять только изображения");
+
+    try {
+      tgHaptic("impact");
+      const proofUrl = await uploadProof(file, `phonepay_${state.phonepayCode || ""}`);
+      const res = await apiPost("/api/phonepay/claim", {
+        amount_rub: amount,
+        phone: phone,
+        proof_url: proofUrl,
+        code: state.phonepayCode,
+      });
+      if (res && res.ok) {
+        tgHaptic("success");
+        tgAlert("Заявка отправлена ✅ Ожидай подтверждение админом.");
+        closeAllOverlays();
+        if ($("pp-phone")) $("pp-phone").value = "";
+        if ($("pp-file")) $("pp-file").value = "";
+        updatePhonePayFileName(null);
         await refreshOpsSilent();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка");
@@ -2764,11 +2853,18 @@ async function loadAdminWithdrawals() {
     }
 
     list.forEach(p => {
+      const provider = String(p.provider || "");
       const sender = (p.meta && p.meta.sender) ? p.meta.sender : "";
+      const phone = (p.meta && (p.meta.phone || p.meta.sender_phone)) ? (p.meta.phone || p.meta.sender_phone) : "";
+      const proofUrl = (p.meta && p.meta.proof_url) ? normalizeUrl(p.meta.proof_url) : "";
+      const providerLabel = provider === "phonepay" ? "Перевод по номеру" : "T-Bank";
+      const proofHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
       const c = adminCard(`
-        <div style="font-weight:900;">T-Bank ${fmtRub(p.amount_rub || 0)}</div>
+        <div style="font-weight:900;">${safeText(providerLabel)} ${fmtRub(p.amount_rub || 0)}</div>
         <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(p.user_id)} • Code: ${safeText(p.provider_ref || "")}</div>
         <div style="font-size:12px; color:var(--text-dim);">Sender: ${safeText(sender)}</div>
+        <div style="font-size:12px; color:var(--text-dim);">Phone: ${safeText(phone || "—")}</div>
+        ${proofHtml}
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Подтвердить</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
