@@ -1537,3 +1537,10 @@ input:focus, select:focus, textarea:focus{
   padding: 6px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.25);
 }
+.brand-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 16px;
+}
