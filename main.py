@@ -3314,6 +3314,50 @@ def _dt_key(v: str):
     except Exception:
         return 0.0
 
+
+
+async def api_report_list(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+
+    rows = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
+    comps = rows.data or []
+
+    task_ids = list({c.get("task_id") for c in comps if c.get("task_id") is not None})
+    tasks_map: dict[str, dict] = {}
+    if task_ids:
+        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,type,target_url,tg_subtype", limit=500)
+        for t in (tr.data or []):
+            tasks_map[str(t.get("id"))] = t
+
+    type_labels = {
+        "tg": "Telegram",
+        "ya": "Яндекс",
+        "gm": "Google",
+    }
+
+    reports: list[dict] = []
+    for c in comps:
+        task = tasks_map.get(str(c.get("task_id")), {})
+        reports.append({
+            "id": c.get("id"),
+            "task_id": c.get("task_id"),
+            "title": task.get("title") or "Задание",
+            "type": task.get("type") or "tg",
+            "type_label": type_labels.get(str(task.get("type") or "").lower(), str(task.get("type") or "Задание")),
+            "reward_rub": float(task.get("reward_rub") or 0),
+            "target_url": task.get("target_url"),
+            "tg_subtype": task.get("tg_subtype"),
+            "status": c.get("status"),
+            "proof_text": c.get("proof_text"),
+            "proof_url": c.get("proof_url"),
+            "created_at": c.get("created_at"),
+            "updated_at": c.get("moderated_at") or c.get("updated_at") or c.get("created_at"),
+            "moderated_at": c.get("moderated_at"),
+        })
+
+    return web.json_response({"ok": True, "reports": reports})
+
 async def api_ops_list(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
@@ -4453,6 +4497,7 @@ def make_app():
     app.router.add_post("/api/tbank/claim", api_tbank_claim)
     app.router.add_post("/api/pay/stars/link", api_stars_link)
     app.router.add_post("/api/ops/list", api_ops_list)
+    app.router.add_post("/api/report/list", api_report_list)
 
     # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
