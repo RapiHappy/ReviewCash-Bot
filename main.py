@@ -327,8 +327,41 @@ def strip_meta_tags(text: str) -> str:
             continue
         if re.match(r"(?im)^\s*TOP_(ACTIVE_UNTIL|BOUGHT_AT|PRICE_RUB)\s*:", line):
             continue
+        if re.match(r"(?im)^\s*(RETENTION_DAYS|CUSTOM_REVIEW_MODE|CUSTOM_REVIEW_TEXTS)\s*:", line):
+            continue
         out.append(line)
     return "\n".join(out).strip()
+
+
+
+def get_meta_value(task: dict | None, key: str) -> str:
+    ins = str((task or {}).get("instructions") or "")
+    m = re.search(rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$", ins)
+    return str(m.group(1)).strip() if m else ""
+
+
+def get_review_texts(task: dict | None) -> list[str]:
+    raw = get_meta_value(task, "CUSTOM_REVIEW_TEXTS")
+    if not raw:
+        return []
+    try:
+        data = json.loads(base64.b64decode(raw.encode("utf-8")).decode("utf-8"))
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except Exception:
+        return []
+    return []
+
+
+def get_custom_review_mode(task: dict | None) -> str:
+    return (get_meta_value(task, "CUSTOM_REVIEW_MODE") or "none").strip().lower()
+
+
+def get_retention_days(task: dict | None) -> int:
+    try:
+        return max(0, int(get_meta_value(task, "RETENTION_DAYS") or 0))
+    except Exception:
+        return 0
 
 def get_tg_subtype(task: dict | None) -> str:
     ins = str((task or {}).get("instructions") or "")
@@ -1684,22 +1717,29 @@ async def tg_poll_answer_seen_since(uid: int, since_dt: datetime, poll_id: str |
     dt = await tg_evt_get(uid, "poll_answer")
     return bool(dt and dt >= since_dt)
 
+TG_BASE_RETENTION_DAYS = 2
 TG_SUB_24H_DELAY_SEC = 24 * 3600
 TG_SUB_48H_DELAY_SEC = 48 * 3600
 TG_SUB_72H_DELAY_SEC = 72 * 3600
 
-def tg_hold_delay_sec(subtype: str) -> int:
+def tg_subtype_extra_days(subtype: str) -> int:
     subtype = str(subtype or '').strip().lower()
     if subtype in (TG_SUB_24H_KEY, TG_JOIN_GROUP_24H_KEY):
-        return TG_SUB_24H_DELAY_SEC
+        return 1
     if subtype in (TG_SUB_48H_KEY, TG_JOIN_GROUP_48H_KEY):
-        return TG_SUB_48H_DELAY_SEC
+        return 2
     if subtype in (TG_SUB_72H_KEY, TG_JOIN_GROUP_72H_KEY):
-        return TG_SUB_72H_DELAY_SEC
+        return 3
     return 0
 
-def tg_hold_delay_hours(subtype: str) -> int:
-    sec = tg_hold_delay_sec(subtype)
+def tg_required_retention_days(subtype: str, extra_days: int = 0) -> int:
+    return max(TG_BASE_RETENTION_DAYS, TG_BASE_RETENTION_DAYS + tg_subtype_extra_days(subtype) + max(0, int(extra_days or 0)))
+
+def tg_hold_delay_sec(subtype: str, extra_days: int = 0) -> int:
+    return tg_required_retention_days(subtype, extra_days) * 24 * 3600
+
+def tg_hold_delay_hours(subtype: str, extra_days: int = 0) -> int:
+    sec = tg_hold_delay_sec(subtype, extra_days)
     return max(0, sec // 3600)
 
 TG_HOLD_SCAN_INTERVAL_SEC = int(os.getenv("TG_HOLD_SCAN_INTERVAL_SEC", "60").strip())
@@ -1819,16 +1859,21 @@ async def process_tg_holds_once():
                         "proof_url": None,
                         "moderated_at": _now().isoformat(),
                     })
-                await notify_user(user_id, f"✅ Повторная проверка пройдена. Начислено +{reward:.2f}₽")
+                await notify_user(user_id, f"✅ Проверка срока удержания пройдена. Начислено +{reward:.2f}₽")
             else:
                 c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
                 if c.data:
                     await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
-                        "status": "rejected",
+                        "status": "fake",
                         "proof_text": "AUTO_TG_HOLD_FAIL",
                         "moderated_at": _now().isoformat(),
                     })
-                await notify_user(user_id, "❌ Повторная проверка не пройдена: подписка не найдена. Выплата отменена.")
+                try:
+                    until = await set_task_ban(user_id, days=3)
+                    until_txt = until.strftime('%d.%m %H:%M') if until else 'на 3 дня'
+                except Exception:
+                    until_txt = 'на 3 дня'
+                await notify_user(user_id, f"❌ Проверка срока удержания не пройдена: пользователь вышел из канала/группы раньше срока. Выплата отменена, применён штраф: доступ к заданиям ограничен {until_txt}.")
         except Exception as e:
             log.warning("tg hold process failed task=%s user=%s err=%s", task_id, user_id, e)
         finally:
@@ -2282,6 +2327,9 @@ async def api_sync(req: web.Request):
         for t in tasks:
             t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")
             t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
+            t["retention_days"] = get_retention_days(t)
+            t["custom_review_mode"] = get_custom_review_mode(t)
+            t["custom_review_texts"] = get_review_texts(t)
         tasks.sort(key=lambda x: (0 if is_top_active(x) else 1, -(top_bought_at(x).timestamp() if top_bought_at(x) else 0), str(x.get("created_at") or "")), reverse=False)
 
         deduped_tasks = []
@@ -2429,6 +2477,9 @@ async def api_task_create(req: web.Request):
     want_top = bool(body.get("want_top") or False)
     top_price_rub = float(body.get("top_price_rub") or 250)
     target_gender = normalize_task_gender(body.get("target_gender"))
+    retention_extra_days = max(0, int(body.get("retention_extra_days") or 0))
+    custom_review_texts = body.get("custom_review_texts") or []
+    custom_review_mode = str(body.get("custom_review_mode") or "none").strip().lower()
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
@@ -2450,6 +2501,14 @@ async def api_task_create(req: web.Request):
         target_url = norm_u
     if reward_rub <= 0 or qty_total <= 0:
         raise web.HTTPBadRequest(text="Bad reward/qty")
+    if custom_review_mode not in ("none", "single", "per_item"):
+        custom_review_mode = "none"
+    if not isinstance(custom_review_texts, list):
+        custom_review_texts = [custom_review_texts]
+    custom_review_texts = [str(x).strip() for x in custom_review_texts if str(x).strip()]
+    if ttype not in ("ya", "gm"):
+        custom_review_mode = "none"
+        custom_review_texts = []
 
     # TG task:
     # - принимаем только @юзернейм или ссылку t.me/...
@@ -2547,6 +2606,12 @@ async def api_task_create(req: web.Request):
         meta_lines.append("TG_SUBTYPE: " + sub_type)
     if target_gender != TASK_GENDER_ANY:
         meta_lines.append("TARGET_GENDER: " + target_gender)
+    if ttype == "tg":
+        meta_lines.append(f"RETENTION_DAYS: {tg_required_retention_days(sub_type or TG_SUB_CHANNEL_KEY, retention_extra_days)}")
+    if custom_review_mode != "none" and custom_review_texts:
+        encoded_review_texts = base64.b64encode(json.dumps(custom_review_texts, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+        meta_lines.append("CUSTOM_REVIEW_MODE: " + custom_review_mode)
+        meta_lines.append("CUSTOM_REVIEW_TEXTS: " + encoded_review_texts)
     if meta_lines:
         row["instructions"] = (instructions + "\n\n" + "\n".join(meta_lines)).strip()
 
@@ -2710,7 +2775,8 @@ async def api_task_submit(req: web.Request):
             if not chat:
                 return web.json_response({"ok": False, "error": "TG task misconfigured (no tg_chat)"}, status=400)
 
-            hold_delay = tg_hold_delay_sec(task_subtype)
+            retention_days = get_retention_days(task)
+            hold_delay = tg_hold_delay_sec(task_subtype, max(0, retention_days - tg_required_retention_days(task_subtype, 0))) if retention_days else tg_hold_delay_sec(task_subtype)
             if hold_delay > 0:
                 existing_hold = await tg_hold_get(task_id, uid)
                 if existing_hold:
@@ -2737,17 +2803,17 @@ async def api_task_submit(req: web.Request):
                     "task_id": task_id_db,
                     "user_id": uid,
                     "status": "pending_hold",
-                    "proof_text": f"AUTO_TG_WAIT_{tg_hold_delay_hours(task_subtype)}H",
+                    "proof_text": f"AUTO_TG_WAIT_{tg_hold_delay_hours(task_subtype, max(0, retention_days - tg_required_retention_days(task_subtype, 0))) if retention_days else tg_hold_delay_hours(task_subtype)}H",
                     "proof_url": None,
                 })
 
                 due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
-                wait_hours = tg_hold_delay_hours(task_subtype)
+                wait_hours = tg_hold_delay_hours(task_subtype, max(0, retention_days - tg_required_retention_days(task_subtype, 0))) if retention_days else tg_hold_delay_hours(task_subtype)
                 await mark_submit_attempt(uid, ok=True)
                 return web.json_response({
                     "ok": True,
                     "status": f"hold_{wait_hours}h",
-                    "message": f"Подписка подтверждена. Бот автоматически проверит повторно через {wait_hours} ч. ({due_msk.strftime('%d.%m %H:%M МСК')}) и начислит {reward:.2f}₽.",
+                    "message": f"Подписка подтверждена. Выходить нельзя {max(1, wait_hours // 24)} дн. Бот автоматически перепроверит участие через {wait_hours} ч. ({due_msk.strftime('%d.%m %H:%M МСК')}). Если выйти раньше — задание отменится и включится штраф.",
                     "retry_after": max(1, int((due_at - _now()).total_seconds())),
                 })
 
