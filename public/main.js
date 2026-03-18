@@ -1206,9 +1206,56 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_SVG = {
-  ya: `<img src="ya_crop.png" alt="Яндекс" style="width:100%;height:100%;object-fit:contain;display:block;" />`,
-  gm: `<img src="gm_crop.png" alt="Google" style="width:100%;height:100%;object-fit:contain;display:block;" />`,
-  tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
+  ya: `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="61" height="61" rx="16" fill="url(#ya_bg)" stroke="rgba(255,255,255,.12)" stroke-width="1.5"/>
+      <defs>
+        <linearGradient id="ya_bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a1d2b"/>
+          <stop offset="100%" stop-color="#0b0f1d"/>
+        </linearGradient>
+        <filter id="ya_shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#000" flood-opacity=".35"/>
+        </filter>
+      </defs>
+      <circle cx="32" cy="32" r="19.5" fill="#ff1f12" filter="url(#ya_shadow)"/>
+      <text x="32" y="41"
+            text-anchor="middle"
+            font-size="30"
+            font-weight="700"
+            font-family="Arial, Helvetica, sans-serif"
+            fill="#ffffff">Я</text>
+    </svg>
+  `,
+
+  gm: `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="61" height="61" rx="16" fill="url(#gm_bg)" stroke="rgba(255,255,255,.12)" stroke-width="1.5"/>
+      <defs>
+        <linearGradient id="gm_bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1a1d2b"/>
+          <stop offset="100%" stop-color="#0b0f1d"/>
+        </linearGradient>
+        <filter id="gm_shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#000" flood-opacity=".28"/>
+        </filter>
+      </defs>
+
+      <circle cx="32" cy="32" r="21" fill="#ffffff" filter="url(#gm_shadow)"/>
+
+      <path fill="#EA4335" d="M32 19.2c3.3 0 6.3 1.2 8.7 3.3l4.8-4.8C41.7 14.2 37.2 12 32 12c-8.1 0-15.1 4.6-18.5 11.3l5.9 4.6c1.4-5.2 6.2-8.7 12.6-8.7z"/>
+      <path fill="#FBBC05" d="M13.5 23.3A19.7 19.7 0 0 0 12 31.2c0 2.8.6 5.5 1.6 7.9l5.9-4.6A12.7 12.7 0 0 1 19 31c0-1.2.2-2.3.5-3.4l-6-4.3z"/>
+      <path fill="#34A853" d="M32 52c5.1 0 9.4-1.7 12.5-4.7l-5.8-4.5c-1.8 1.2-4.1 1.9-6.7 1.9-6.2 0-11.4-4.2-13.2-9.8l-6 4.6C16.1 46.9 23.4 52 32 52z"/>
+      <path fill="#4285F4" d="M51.4 32.8c0-1.3-.1-2.3-.4-3.4H32v8h10.9c-.5 2.4-1.8 4.3-4.2 5.5l5.8 4.5c3.4-3.1 5.4-7.8 5.4-13.6z"/>
+    </svg>
+  `,
+
+  tg: `
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="64" height="64" rx="18" fill="#27A7E7"/>
+      <path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/>
+    </svg>
+  `,
 };
 
 function brandIconHtml(taskOrType, sizePx = 38) {
