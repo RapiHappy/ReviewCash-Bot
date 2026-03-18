@@ -1206,30 +1206,9 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_SVG = {
-  ya: `<img src="icons/yandex.png" style="
-    width:100%;
-    height:100%;
-    object-fit:contain;
-    display:block;
-    border-radius:12px;
-    background:#fff;
-    padding:6px;
-  " />`,
-
-  gm: `<img src="icons/google.png" style="
-    width:100%;
-    height:100%;
-    object-fit:contain;
-    display:block;
-    border-radius:12px;
-    background:#fff;
-    padding:6px;
-  " />`,
-
-  tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-    <rect width="64" height="64" rx="18" fill="#27A7E7"/>
-    <path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6z" fill="#fff"/>
-  </svg>`
+  ya: `<img src="ya_crop.png" alt="Яндекс" style="width:100%;height:100%;object-fit:contain;display:block;" />`,
+  gm: `<img src="gm_crop.png" alt="Google" style="width:100%;height:100%;object-fit:contain;display:block;" />`,
+  tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
 };
 
 function brandIconHtml(taskOrType, sizePx = 38) {
