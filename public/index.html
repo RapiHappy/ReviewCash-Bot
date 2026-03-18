@@ -152,25 +152,29 @@
       flex:0 0 auto;
       display:flex;
       align-items:center;
+      justify-content:center;
       gap:8px;
-      padding:8px 12px;
-      border-radius:14px;
+      min-height:42px;
+      padding:10px 14px;
+      border-radius:16px;
       font-size:12px;
       font-weight:900;
-      opacity:.72;
+      opacity:.78;
       user-select:none;
       cursor:pointer;
       white-space:nowrap;
+      text-align:center;
     }
     .pf-item.active{
       background: rgba(0,234,255,0.12);
       opacity:1;
     }
     .pf-ico{
-      width:18px; height:18px;
+      width:20px; height:20px;
       display:inline-flex;
       align-items:center;
       justify-content:center;
+      flex:0 0 20px;
     }
     .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit:contain; }
 
@@ -241,7 +245,7 @@
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
     
-    .pf-refresh{ margin-left:auto; width:42px; justify-content:center; font-weight:900; opacity:0.9; user-select:none; }
+    .pf-refresh{ margin-left:auto; min-width:48px; padding:0 12px; justify-content:center; font-weight:900; opacity:1; user-select:none; border:1px solid rgba(0,234,255,.18); background:linear-gradient(135deg, rgba(0,234,255,.18), rgba(87,108,255,.18)); box-shadow:0 10px 24px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.14); }
     #tasks-refresh-btn.spin{ animation: rcSpin .9s linear infinite; }
     @keyframes rcSpin{ from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
     html.perf-low .rc-toast{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
@@ -401,7 +405,7 @@
       </div>
 
       <div class="pf-bar">
-          <div class="pf-item pf-refresh" id="tasks-refresh-btn" onclick="refreshTasksBtn()" title="Обновить">↻</div>
+          <div class="pf-item pf-refresh" id="tasks-refresh-btn" onclick="refreshTasksBtn()" title="Обновить"><span class="pf-ico">⟳</span></div>
           <div class="pf-item active" id="pf-all" onclick="setPlatformFilter('all')">Все</div>
           <div class="pf-item" id="pf-ya" onclick="setPlatformFilter('ya')"><span class="pf-ico" data-pf-ico="ya"></span>Яндекс</div>
           <div class="pf-item" id="pf-gm" onclick="setPlatformFilter('gm')"><span class="pf-ico" data-pf-ico="gm"></span>Google</div>
@@ -583,8 +587,20 @@
         <option value="female">👩 Жен. пол.</option>
       </select>
 
-      <label class="input-label">Текст задания (необязательно)</label>
-      <textarea id="t-text" rows="2" placeholder="Например: Вступите и не отписывайтесь..." style="margin-top:5px;"></textarea>
+      <label class="input-label">Текст задания / комментарий</label>
+      <textarea id="t-text" rows="2" placeholder="Например: Оставьте отзыв по опыту посещения, не меняйте смысл бренда." style="margin-top:5px;"></textarea>
+
+      <div id="review-text-config" class="hidden" style="margin-top:14px;">
+        <label class="input-label" style="margin-top:0;">Текст отзыва от заказчика</label>
+        <select id="t-review-mode" onchange="recalc()" style="margin-top:5px;">
+          <option value="none">Не задавать</option>
+          <option value="single">Один текст для всех</option>
+          <option value="per_item">Отдельный текст на каждое выполнение</option>
+        </select>
+        <textarea id="t-review-variants" rows="4" placeholder="Одна строка = один текст отзыва.
+Если выбран один текст для всех — просто введите один вариант." style="margin-top:10px;"></textarea>
+        <div id="review-variants-helper" style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;"></div>
+      </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
         <div>
@@ -598,6 +614,20 @@
             <option value="star">Stars (⭐)</option>
           </select>
         </div>
+      </div>
+
+      <div id="retention-config" style="margin-top:14px;">
+        <label class="input-label" style="margin-top:0;">Доп. дни без выхода</label>
+        <select id="t-retention-extra" onchange="recalc()" style="margin-top:5px;">
+          <option value="0">Только обязательный срок</option>
+          <option value="1">+1 день</option>
+          <option value="2">+2 дня</option>
+          <option value="3">+3 дня</option>
+          <option value="5">+5 дней</option>
+          <option value="7">+7 дней</option>
+          <option value="14">+14 дней</option>
+        </select>
+        <div style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;">Для Telegram-заданий 2 дня удержания обязательны всегда. Подтипы +24/+48/+72 добавляют ещё 1/2/3 дня, а здесь можно увеличить срок дополнительно.</div>
       </div>
 
       <div class="total-badge">
@@ -779,8 +809,11 @@
       </div>
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по номеру в Т-Банк, указав код в комментарии:</p>
-      <div class="copy-box" onclick="copyText('+79600738559 Раяз Н.')" style="margin-bottom:20px;">
-        <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59 · Раяз Н.</span>
+      <div class="copy-box phone-copy-box" onclick="copyText('+79600738559')" style="margin-bottom:20px;">
+        <span style="display:flex; flex-direction:column; gap:4px; min-width:0;">
+          <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59</span>
+          <span style="font-size:12px; color:var(--text-dim);">Раяз Н.</span>
+        </span>
         <span style="font-size:14px; opacity:0.7;">📋</span>
       </div>
 
@@ -823,8 +856,11 @@
       </div>
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по номеру в Т-Банк, указав код в комментарии:</p>
-      <div class="copy-box" onclick="copyText('+79600738559 Раяз Н.')" style="margin-bottom:20px;">
-        <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59 · Раяз Н.</span>
+      <div class="copy-box phone-copy-box" onclick="copyText('+79600738559')" style="margin-bottom:20px;">
+        <span style="display:flex; flex-direction:column; gap:4px; min-width:0;">
+          <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59</span>
+          <span style="font-size:12px; color:var(--text-dim);">Раяз Н.</span>
+        </span>
         <span style="font-size:14px; opacity:0.7;">📋</span>
       </div>
 
