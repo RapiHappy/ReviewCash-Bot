@@ -1206,57 +1206,63 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_SVG = {
-  ya: `
-    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="61" height="61" rx="16" fill="url(#ya_bg)" stroke="rgba(255,255,255,.12)" stroke-width="1.5"/>
-      <defs>
-        <linearGradient id="ya_bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#1a1d2b"/>
-          <stop offset="100%" stop-color="#0b0f1d"/>
-        </linearGradient>
-        <filter id="ya_shadow" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#000" flood-opacity=".35"/>
-        </filter>
-      </defs>
-      <circle cx="32" cy="32" r="19.5" fill="#ff1f12" filter="url(#ya_shadow)"/>
-      <text x="32" y="41"
-            text-anchor="middle"
-            font-size="30"
-            font-weight="700"
-            font-family="Arial, Helvetica, sans-serif"
-            fill="#ffffff">Я</text>
-    </svg>
-  `,
+    ya: `
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="yaCard" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#202536"/>
+            <stop offset="100%" stop-color="#0e1220"/>
+          </linearGradient>
+          <linearGradient id="yaGloss" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(255,255,255,.20)"/>
+            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+          </linearGradient>
+          <filter id="yaShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity=".28"/>
+          </filter>
+        </defs>
 
-  gm: `
-    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="61" height="61" rx="16" fill="url(#gm_bg)" stroke="rgba(255,255,255,.12)" stroke-width="1.5"/>
-      <defs>
-        <linearGradient id="gm_bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#1a1d2b"/>
-          <stop offset="100%" stop-color="#0b0f1d"/>
-        </linearGradient>
-        <filter id="gm_shadow" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2.2" flood-color="#000" flood-opacity=".28"/>
-        </filter>
-      </defs>
+        <rect x="1.5" y="1.5" width="61" height="61" rx="17" fill="url(#yaCard)" stroke="rgba(255,255,255,.10)" stroke-width="1.5"/>
+        <rect x="4.5" y="4.5" width="55" height="24" rx="12" fill="url(#yaGloss)" opacity=".55"/>
 
-      <circle cx="32" cy="32" r="21" fill="#ffffff" filter="url(#gm_shadow)"/>
+        <circle cx="32" cy="32" r="20" fill="#ff2a1c" filter="url(#yaShadow)"/>
+        <circle cx="32" cy="32" r="19" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="1"/>
 
-      <path fill="#EA4335" d="M32 19.2c3.3 0 6.3 1.2 8.7 3.3l4.8-4.8C41.7 14.2 37.2 12 32 12c-8.1 0-15.1 4.6-18.5 11.3l5.9 4.6c1.4-5.2 6.2-8.7 12.6-8.7z"/>
-      <path fill="#FBBC05" d="M13.5 23.3A19.7 19.7 0 0 0 12 31.2c0 2.8.6 5.5 1.6 7.9l5.9-4.6A12.7 12.7 0 0 1 19 31c0-1.2.2-2.3.5-3.4l-6-4.3z"/>
-      <path fill="#34A853" d="M32 52c5.1 0 9.4-1.7 12.5-4.7l-5.8-4.5c-1.8 1.2-4.1 1.9-6.7 1.9-6.2 0-11.4-4.2-13.2-9.8l-6 4.6C16.1 46.9 23.4 52 32 52z"/>
-      <path fill="#4285F4" d="M51.4 32.8c0-1.3-.1-2.3-.4-3.4H32v8h10.9c-.5 2.4-1.8 4.3-4.2 5.5l5.8 4.5c3.4-3.1 5.4-7.8 5.4-13.6z"/>
-    </svg>
-  `,
+        <path d="M36.7 18.8h-4.1c-4.7 0-8.2 2.9-8.2 7.5 0 3.4 1.8 5.9 4.7 7.7l-6.7 10h5.7l7.5-11.5-2.1-1.5c-2.3-1.6-4.1-2.8-4.1-5 0-2.1 1.4-3.4 3.7-3.4h3v21.4h5.1V18.8h-4.5z" fill="#fff"/>
+      </svg>
+    `,
 
-  tg: `
-    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="64" height="64" rx="18" fill="#27A7E7"/>
-      <path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/>
-    </svg>
-  `,
-};
+    gm: `
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="gmCard" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#202536"/>
+            <stop offset="100%" stop-color="#0e1220"/>
+          </linearGradient>
+          <linearGradient id="gmGloss" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(255,255,255,.18)"/>
+            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+          </linearGradient>
+          <filter id="gmShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity=".24"/>
+          </filter>
+        </defs>
+
+        <rect x="1.5" y="1.5" width="61" height="61" rx="17" fill="url(#gmCard)" stroke="rgba(255,255,255,.10)" stroke-width="1.5"/>
+        <rect x="4.5" y="4.5" width="55" height="24" rx="12" fill="url(#gmGloss)" opacity=".5"/>
+
+        <circle cx="32" cy="32" r="20.5" fill="#fff" filter="url(#gmShadow)"/>
+        <circle cx="32" cy="32" r="19.5" fill="none" stroke="rgba(0,0,0,.05)" stroke-width="1"/>
+
+        <path fill="#EA4335" d="M32 20.1c3 0 5.7 1 7.8 3l4.3-4.3C41 15.9 36.8 14 32 14c-7.5 0-14 4.3-17.2 10.6l5.3 4.1c1.3-5 5.8-8.6 11.9-8.6z"/>
+        <path fill="#FBBC05" d="M20.1 28.7 14.8 24.6A18.4 18.4 0 0 0 13.3 32c0 2.6.5 5 1.5 7.3l5.3-4.1a11.7 11.7 0 0 1 0-6.5z"/>
+        <path fill="#34A853" d="M32 50c4.7 0 8.7-1.6 11.6-4.4l-5.4-4.2c-1.6 1.1-3.7 1.8-6.2 1.8-5.9 0-10.8-4-12.3-9.5l-5.4 4.1C17.5 45.6 24.2 50 32 50z"/>
+        <path fill="#4285F4" d="M50.1 32.8c0-1.2-.1-2.1-.3-3.1H32v7.5h10.2c-.4 2.1-1.7 3.9-4 5.1l5.4 4.2c3.2-2.9 5-7.3 5-13.7z"/>
+      </svg>
+    `,
+
+    tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
+  };
 
 function brandIconHtml(taskOrType, sizePx = 38) {
     const tRaw = (typeof taskOrType === "string") ? taskOrType : (taskOrType && (taskOrType.type || taskOrType.platform));
@@ -1339,9 +1345,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const finished = left <= 0 || String(t.status || "") !== "active";
 
       const card = document.createElement("div");
-      card.className = "card task-card-premium" + (isMy ? " is-owner" : " is-worker");
+      card.className = "card";
       card.style.padding = "14px";
-      card.style.borderRadius = "22px";
+      card.style.borderRadius = "18px";
       card.style.background = isMy ? "linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02))" : "";
       card.style.cursor = isMy ? "default" : "pointer";
 
@@ -1379,22 +1385,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           </div>
         `;
       } else {
-        const leftLabel = left > 999 ? "999+" : String(left);
         card.innerHTML = `
-          <div class="task-premium-glow"></div>
-          <div class="task-premium-row">
-            <div class="task-premium-main">
-              <div class="brand-box premium-brand-box" style="width:52px; height:52px; font-size:18px;">${brandIconHtml(t, 40)}</div>
-              <div class="task-premium-copy">
-                <div class="task-premium-title">${safeText(t.title || "Задание")}</div>
-                <div class="task-premium-sub">${safeText(subtypeText)}</div>
-                <div class="task-premium-meta">
-                  <span class="task-meta-chip">Доступно: ${leftLabel}</span>
-                  ${topActive ? `<span class="task-meta-chip hot">🔥 Топ</span>` : ``}
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
+                <div style="min-width:0;">
+                  <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
+                  <div style="font-size:12px; color:var(--text-dim);">${safeText(subtypeText)}</div>
                 </div>
               </div>
             </div>
-            <div class="task-premium-reward">+${fmtRub(reward)}</div>
+            <div style="font-weight:900; color:var(--accent-green); white-space:nowrap;">+${fmtRub(reward)}</div>
           </div>`;
         card.addEventListener("click", () => openTaskDetails(t));
       }
