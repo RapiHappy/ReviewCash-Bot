@@ -9,6 +9,7 @@ import asyncio
 import logging
 import html
 from datetime import datetime, timezone, date, timedelta
+from typing import Any
 
 # Build/version string used for cache-busting in Telegram WebView
 APP_BUILD = (
@@ -355,6 +356,68 @@ def get_review_texts(task: dict | None) -> list[str]:
 
 def get_custom_review_mode(task: dict | None) -> str:
     return (get_meta_value(task, "CUSTOM_REVIEW_MODE") or "none").strip().lower()
+
+
+REWORK_GRACE_DAYS = 3
+ACTIVE_REWORK_STATUSES = {"rework"}
+
+
+def _parse_dt(raw: Any) -> datetime | None:
+    try:
+        if isinstance(raw, datetime):
+            return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        if isinstance(raw, str) and raw.strip():
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return None
+
+
+def rework_deadline_dt(comp: dict | None) -> datetime | None:
+    dt = _parse_dt((comp or {}).get("moderated_at"))
+    if not dt:
+        return None
+    return dt + timedelta(days=REWORK_GRACE_DAYS)
+
+
+def is_rework_active(comp: dict | None, now: datetime | None = None) -> bool:
+    status = str((comp or {}).get("status") or "").lower()
+    if status not in ACTIVE_REWORK_STATUSES:
+        return False
+    deadline = rework_deadline_dt(comp)
+    if not deadline:
+        return False
+    return deadline > (now or _now())
+
+
+async def expire_rework_if_needed(comp: dict | None) -> dict | None:
+    if not comp or str(comp.get("status") or "").lower() != "rework":
+        return comp
+    if is_rework_active(comp):
+        return comp
+    try:
+        await sb_update(T_COMP, {"id": cast_id(comp.get("id"))}, {
+            "status": "rework_expired",
+            "moderated_at": _now().isoformat(),
+        })
+        comp = dict(comp)
+        comp["status"] = "rework_expired"
+    except Exception:
+        pass
+    return comp
+
+
+def pick_review_text_for_task(task: dict | None, slot_index: int) -> str:
+    texts = get_review_texts(task)
+    if not texts:
+        return ""
+    mode = get_custom_review_mode(task)
+    if mode == "single":
+        return texts[0]
+    if mode == "per_item":
+        idx = max(0, min(int(slot_index), len(texts) - 1))
+        return texts[idx]
+    return ""
 
 
 def get_retention_days(task: dict | None) -> int:
@@ -2324,12 +2387,31 @@ async def api_sync(req: web.Request):
                 and tg_stack_key(t) in completed_tg_stack_keys
             )
         ]
+        task_slot_map = {}
+        try:
+            comp_for_slots = await sb_select(T_COMP, {}, order="created_at", desc=False, limit=5000)
+            for comp in (comp_for_slots.data or []):
+                tid = str(comp.get("task_id") or "")
+                if not tid:
+                    continue
+                st = str(comp.get("status") or "").lower()
+                if st in {"pending", "pending_hold", "paid", "fake"} or is_rework_active(comp):
+                    task_slot_map[tid] = int(task_slot_map.get(tid, 0) or 0) + 1
+        except Exception:
+            task_slot_map = {}
+
         for t in tasks:
             t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")
             t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
             t["retention_days"] = get_retention_days(t)
             t["custom_review_mode"] = get_custom_review_mode(t)
-            t["custom_review_texts"] = get_review_texts(t)
+            if int(t.get("owner_id") or 0) == uid:
+                t["custom_review_texts"] = get_review_texts(t)
+            else:
+                slot_index = int(task_slot_map.get(str(t.get("id")), 0) or 0)
+                assigned_text = pick_review_text_for_task(t, slot_index)
+                t["custom_review_texts"] = [assigned_text] if assigned_text else []
+                t["assigned_review_text"] = assigned_text
         tasks.sort(key=lambda x: (0 if is_top_active(x) else 1, -(top_bought_at(x).timestamp() if top_bought_at(x) else 0), str(x.get("created_at") or "")), reverse=False)
 
         deduped_tasks = []
@@ -2509,6 +2591,12 @@ async def api_task_create(req: web.Request):
     if ttype not in ("ya", "gm"):
         custom_review_mode = "none"
         custom_review_texts = []
+    if custom_review_mode == "single" and custom_review_texts:
+        custom_review_texts = [custom_review_texts[0]]
+    if custom_review_mode == "per_item":
+        if len(custom_review_texts) < qty_total:
+            return json_error(400, f"Для режима с разным текстом нужно минимум {qty_total} строк текста", code="REVIEW_TEXTS_NOT_ENOUGH")
+        custom_review_texts = custom_review_texts[:qty_total]
 
     # TG task:
     # - принимаем только @юзернейм или ссылку t.me/...
@@ -2715,16 +2803,25 @@ async def api_task_submit(req: web.Request):
 
     # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
     dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
-    blocking_statuses = {"pending", "pending_24h", "paid", "fake"}
-    if any(str(x.get("status") or "").lower() in blocking_statuses for x in (dup.data or [])):
+    dup_rows = []
+    for row in (dup.data or []):
+        dup_rows.append(await expire_rework_if_needed(row))
+    blocking_statuses = {"pending", "pending_24h", "pending_hold", "paid", "fake"}
+    if any(str(x.get("status") or "").lower() in blocking_statuses or is_rework_active(x) for x in dup_rows):
         return web.json_response({"ok": False, "error": "Уже отправляли выполнение"}, status=400)
 
     is_auto = (task.get("check_type") == "auto") and (task.get("type") == "tg")
 
     if not is_auto:
         # reserve only available slots: allow parallel pending reports while free places remain
-        pending_any = await sb_select(T_COMP, {"task_id": task_id_db, "status": "pending"}, order="created_at", desc=True, limit=1000)
-        pending_count = len(pending_any.data or [])
+        pending_any = await sb_select(T_COMP, {"task_id": task_id_db}, order="created_at", desc=True, limit=1000)
+        active_pending = []
+        for row in (pending_any.data or []):
+            row = await expire_rework_if_needed(row)
+            st = str(row.get("status") or "").lower()
+            if st in {"pending", "pending_hold"} or is_rework_active(row):
+                active_pending.append(row)
+        pending_count = len(active_pending)
         qty_left = int(task.get("qty_left") or 0)
         if pending_count >= qty_left:
             return web.json_response({"ok": False, "error": "Свободных мест сейчас нет: все места уже заняты отчётами на проверке. Дождись решения модератора."}, status=400)
@@ -3660,15 +3757,18 @@ async def api_admin_proof_decision(req: web.Request):
     if rework:
         if task_type not in ("ya", "gm"):
             return web.json_response({"ok": False, "error": "Доработка доступна только для Яндекс/Google отзывов"}, status=400)
+        moderated_at = _now()
         await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
             "status": "rework",
             "moderated_by": int(admin["id"]),
-            "moderated_at": _now().isoformat(),
+            "moderated_at": moderated_at.isoformat(),
         })
+        deadline = moderated_at + timedelta(days=REWORK_GRACE_DAYS)
         msg = "🛠 Отчёт отправлен на доработку."
         if comment:
             msg += f"\n\nКомментарий: {comment}"
-        msg += "\n\nИсправь отзыв/скрин и отправь отчёт заново."
+        msg += f"\n\nНа исправление есть {REWORK_GRACE_DAYS} дня — до {deadline.strftime('%d.%m %H:%M UTC')}."
+        msg += "\nПосле этого отчёт обнулится, и задание снова станет доступно другим исполнителям. Исправь отзыв/скрин и отправь отчёт заново."
         await notify_user(user_id, msg)
         return web.json_response({"ok": True, "status": "rework"})
 
