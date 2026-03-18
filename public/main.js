@@ -24,7 +24,7 @@
 (function () {
   "use strict";
 
-  const RC_BUILD = "rc_20260225_181352";
+  const RC_BUILD = "rc_20260318_142800_icons2";
   try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
 
 
@@ -1206,8 +1206,8 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_SVG = {
-    ya: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#ffffff"/><path d="M31 12h10.5c7.7 0 13.2 5.1 13.2 12.7 0 5.5-3 9.4-8.4 11.2l9.8 16.1H44.8l-8.4-14.5H31V52H20V12h11zm0 17h9.2c2.5 0 4.1-1.6 4.1-4.1s-1.6-4-4.1-4H31v8.1z" fill="#FC3F1D"/></svg>`,
-    gm: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#fff"/><path d="M32 8c-9.6 0-17.4 7.7-17.4 17.2 0 12.7 15.5 29.8 16.1 30.5a1.8 1.8 0 0 0 2.7 0c.7-.7 16.1-17.8 16.1-30.5C49.4 15.7 41.6 8 32 8z" fill="#34A853"/><path d="M32 8c-9.6 0-17.4 7.7-17.4 17.2 0 4.3 1.8 9 4.7 13.6L32 24.4V8z" fill="#4285F4"/><path d="M32 8v16.4l12.7 14.4c2.9-4.6 4.7-9.3 4.7-13.6C49.4 15.7 41.6 8 32 8z" fill="#FBBC04"/><circle cx="32" cy="25.2" r="7.8" fill="#EA4335"/><circle cx="32" cy="25.2" r="3.8" fill="#fff"/></svg>`,
+    ya: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="31" fill="#FC3F1D"/><path d="M35.7 11.5H26.6v14.9c0 5.8 2.8 10.1 8 13.8L20.5 52.5h9.3L41.8 42v10.5H50V11.5H35.7zm6.1 22.8c-4.5-2.9-7.2-4.9-7.2-8.9v-6.8h7.2v15.7z" fill="#fff"/></svg>`,
+    gm: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#fff"/><path d="M52.6 32.3c0-1.7-.2-3.1-.5-4.6H32v8.4h11.6c-.5 2.7-2.1 5-4.4 6.6l7 5.4c4.1-3.8 6.4-9.3 6.4-15.8z" fill="#4285F4"/><path d="M32 53.2c5.8 0 10.6-1.9 14.2-5.2l-7-5.4c-1.9 1.3-4.4 2.1-7.2 2.1-5.5 0-10.2-3.7-11.8-8.8l-7.2 5.6C16.5 48.5 23.7 53.2 32 53.2z" fill="#34A853"/><path d="M20.2 35.9c-.4-1.2-.7-2.5-.7-3.9 0-1.4.2-2.7.7-3.9L13 22.5c-1.5 2.9-2.4 6.1-2.4 9.5 0 3.5.8 6.7 2.4 9.5l7.2-5.6z" fill="#FBBC05"/><path d="M32 19.3c3 0 5.8 1 7.9 3l5.8-5.8C42.6 13.6 37.8 11 32 11c-8.3 0-15.5 4.7-19 11.5l7.2 5.6c1.6-5.1 6.3-8.8 11.8-8.8z" fill="#EA4335"/></svg>`,
     tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
   };
 
@@ -1225,7 +1225,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const nodes = document.querySelectorAll("[data-pf-ico]");
     nodes.forEach(n => {
       const k = String(n.getAttribute("data-pf-ico") || "").toLowerCase();
-      if (k === "ya" || k === "gm" || k === "tg") n.innerHTML = brandIconHtml(k, 18);
+      if (k === "ya" || k === "gm" || k === "tg") n.innerHTML = brandIconHtml(k, 20);
     });
   }
 
