@@ -342,17 +342,18 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 8, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
-  { id: "join_group", title: "Вступление в группу", reward: 8, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
-  { id: "sub_24h", title: "Тг подписка +24ч", reward: 10, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
-  { id: "sub_48h", title: "Тг подписка +48ч", reward: 12, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
-  { id: "sub_72h", title: "Тг подписка +72ч", reward: 14, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
-  { id: "join_group_24h", title: "Вступление в группу +24ч", reward: 10, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
-  { id: "join_group_48h", title: "Вступление в группу +48ч", reward: 12, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
-  { id: "join_group_72h", title: "Вступление в группу +72ч", reward: 14, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
+  { id: "sub_channel", title: "Подписка на канал", reward: 3, cost: 12, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
+  { id: "join_group", title: "Вступление в группу", reward: 3, cost: 12, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
+  { id: "sub_24h", title: "Тг подписка +24ч", reward: 4, cost: 16, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
+  { id: "sub_48h", title: "Тг подписка +48ч", reward: 5, cost: 20, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
+  { id: "sub_72h", title: "Тг подписка +72ч", reward: 6, cost: 24, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
+  { id: "join_group_24h", title: "Вступление в группу +24ч", reward: 4, cost: 16, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
+  { id: "join_group_48h", title: "Вступление в группу +48ч", reward: 5, cost: 20, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
+  { id: "join_group_72h", title: "Вступление в группу +72ч", reward: 6, cost: 24, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
   ];
   const TG_BASE_RETENTION_DAYS = 2;
-  const TG_EXTRA_RETENTION_REWARD_PER_DAY = 0;
+  const TG_EXTRA_RETENTION_REWARD_PER_DAY = 1;
+  const TG_EXTRA_RETENTION_COST_PER_DAY = 3;
 
   // Reviews payouts you asked for
   const YA = { costPer: 12, reward: 3, title: "Яндекс Карты — отзыв" };
@@ -997,7 +998,6 @@ async function syncAll() {
     const level = Math.max(1, Number(lvl || 1));
     return Math.round(base * Math.pow(multiplier, Math.max(0, level - 1)));
   }
-
   function levelFromXp(xp) {
     const x = Math.max(0, Number(xp || 0));
     let lvl = 1;
@@ -1454,7 +1454,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (_ico) { _ico.classList.add("rc-icon"); _ico.innerHTML = brandIconHtml(task, 56); }
     $("td-type-badge").textContent = taskTypeLabel(task);
     $("td-link").textContent = task.target_url || "";
-    $("td-text").textContent = (isOwner ? "⚠️ Это ваше задание. Выполнить и получить награду нельзя.\n\n" : "") + getTaskInstructionText(task);
+    $("td-text").innerHTML = (isOwner ? `<div style="margin-bottom:10px;color:var(--accent-red);font-weight:800;">⚠️ Это ваше задание. Выполнить и получить награду нельзя.</div>` : "") + renderTaskInstructionHtml(task);
 
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
@@ -1554,16 +1554,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
 
   function renderTaskInstructionHtml(task) {
-    const base = safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
+    const baseText = safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
+    const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Что нужно сделать</div><div>${baseText}</div></div>` : "";
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
-    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return base;
-    const heading = mode === "per_item"
-      ? "Твой текст отзыва от заказчика"
-      : "Готовый текст отзыва от заказчика";
-    const items = reviewTexts.map((text, idx) => `<div class="review-text-item"><span class="review-text-index">${mode === "per_item" ? '★' : '★'}</span><span>${safeText(text)}</span></div>`).join("");
+    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return base || safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
+    const heading = mode === "per_item" ? "Текст отзыва для этого выполнения" : "Текст отзыва от заказчика";
+    const items = reviewTexts.map((text) => `<div class="review-text-item"><span class="review-text-index">★</span><span>${safeText(text)}</span></div>`).join("");
     const reviewCard = `<div class="review-text-card"><div class="review-text-title">${heading}</div>${items}</div>`;
-    return mode === "single" ? reviewCard : `${base}${reviewCard}`;
+    return `${base}${reviewCard}`;
   }
 
   window.copyLink = function () {
@@ -1572,22 +1571,37 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     copyText(text);
   };
 
-  function copyText(text) {
+  async function copyText(text) {
     const s = String(text || "");
     if (!s) return;
     try {
-      navigator.clipboard.writeText(s);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(s);
+      } else {
+        throw new Error("clipboard_unavailable");
+      }
       tgHaptic("success");
       tgAlert("Скопировано ✅");
     } catch (e) {
-      // fallback
-      const ta = document.createElement("textarea");
-      ta.value = s;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      tgAlert("Скопировано ✅");
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = s;
+        ta.setAttribute("readonly", "readonly");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        ta.style.pointerEvents = "none";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        document.execCommand("copy");
+        ta.remove();
+        tgHaptic("success");
+        tgAlert("Скопировано ✅");
+      } catch (err) {
+        tgHaptic("error");
+        tgAlert("Не удалось скопировать. Зажмите номер и скопируйте вручную.", "error", "Ошибка копирования");
+      }
     }
   }
 
@@ -1983,7 +1997,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     const chat = normalizeTgChatInput(value);
-
     if (!chat) {
       setTargetStatus("err", "Нужен @юзернейм или ссылка t.me", "Пример: @MyChannel или https://t.me/MyChannel");
       return;
@@ -2095,6 +2108,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   function recalc() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
+    const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
+    const taskTextInput = $("t-text");
+    if (taskTextLabel) taskTextLabel.textContent = (type === "ya" || type === "gm") ? "Комментарий / условия к отзыву" : "Текст задания / комментарий";
+    if (taskTextInput) taskTextInput.placeholder = (type === "ya" || type === "gm") ? "Например: отзыв должен быть естественным, без мата, со скрином после публикации." : "Например: выполните задание и отправьте отчёт.";
     const cur = $("t-cur") ? $("t-cur").value : "rub";
 
     const tgWrap = $("tg-subtype-wrapper");
@@ -2114,22 +2131,21 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       costPer = YA.costPer;
       total = costPer * qty;
       baseTotal = total;
-      baseTotal = total;
     } else if (type === "gm") {
       reward = GM.reward;
       costPer = GM.costPer;
       total = costPer * qty;
+      baseTotal = total;
     } else {
-      // tg
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       const retentionExtra = currentRetentionExtraDays();
-      reward = conf.reward + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-      costPer = reward * 2;
+      reward = Number(conf.reward || 0) + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
+      costPer = Number(conf.cost || Math.max(12, reward * 2)) + (retentionExtra * TG_EXTRA_RETENTION_COST_PER_DAY);
       total = costPer * qty;
       baseTotal = total;
       const descEl = $("tg-subtype-desc");
-      if (descEl) descEl.textContent = `${conf.desc} • Удержание: ${tgTotalRetentionDays(sid, retentionExtra)} дн. • Исполнитель получит ${reward}₽`;
+      if (descEl) descEl.textContent = `${conf.desc} • Удержание: ${tgTotalRetentionDays(sid, retentionExtra)} дн. • Исполнитель получит ${reward}₽ • Цена за 1 шт: ${costPer}₽`;
     }
 
     updateTgHint();
@@ -2161,6 +2177,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   async function createTask() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
+    const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
+    const taskTextInput = $("t-text");
+    if (taskTextLabel) taskTextLabel.textContent = (type === "ya" || type === "gm") ? "Комментарий / условия к отзыву" : "Текст задания / комментарий";
+    if (taskTextInput) taskTextInput.placeholder = (type === "ya" || type === "gm") ? "Например: отзыв должен быть естественным, без мата, со скрином после публикации." : "Например: выполните задание и отправьте отчёт.";
     const target = String(($("t-target") && $("t-target").value) || "").trim();
     const txt = String(($("t-text") && $("t-text").value) || "").trim();
     const reviewMode = getCustomReviewMode();
@@ -2231,8 +2251,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
       title = "Telegram — " + conf.title;
       const retentionExtra = currentRetentionExtraDays();
-      reward = conf.reward + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-      cost = reward * 2 * qty;
+      reward = Number(conf.reward || 0) + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
+      const baseCostPer = Number(conf.cost || Math.max(12, reward * 2));
+      cost = (baseCostPer + retentionExtra * TG_EXTRA_RETENTION_COST_PER_DAY) * qty;
       subType = conf.id;
 
       tgChat = normalizeTgChatInput(target);
@@ -2855,7 +2876,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         <div style="display:grid; grid-template-columns:${isReview ? '1fr 1fr 1fr' : '1fr 1fr'}; gap:10px; margin-top:12px;">
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
-          ${isReview ? '<button class="btn btn-secondary" data-rework="1">🛠 Доработка</button>' : ''}
+          ${isReview ? '<button class="btn btn-secondary" data-rework="1">🛠 На переработку</button>' : ''}
         </div>
       `);
 
