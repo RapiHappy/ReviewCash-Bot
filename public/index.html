@@ -245,9 +245,11 @@
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
     
-    .pf-refresh{ margin-left:auto; min-width:48px; padding:0 12px; justify-content:center; font-weight:900; opacity:1; user-select:none; border:1px solid rgba(0,234,255,.18); background:linear-gradient(135deg, rgba(0,234,255,.18), rgba(87,108,255,.18)); box-shadow:0 10px 24px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.14); }
-    #tasks-refresh-btn.spin{ animation: rcSpin .9s linear infinite; }
-    @keyframes rcSpin{ from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    .pf-refresh{ margin-left:auto; width:52px; min-width:52px; height:52px; padding:0; justify-content:center; border-radius:50%; font-weight:900; opacity:1; user-select:none; border:1px solid rgba(0,234,255,.22); background:radial-gradient(circle at 30% 30%, rgba(255,255,255,.26), transparent 38%), linear-gradient(135deg, rgba(0,234,255,.28), rgba(87,108,255,.28)); box-shadow:0 14px 30px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.2), 0 0 22px rgba(0,234,255,.16); transition:transform .28s cubic-bezier(.22,1,.36,1), box-shadow .28s ease, filter .28s ease; }
+    .pf-refresh:hover{ transform:translateY(-1px) scale(1.04); box-shadow:0 18px 36px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.22), 0 0 28px rgba(0,234,255,.22); }
+    .pf-refresh .pf-ico{ width:24px; height:24px; font-size:20px; transition: transform .55s cubic-bezier(.22,1,.36,1), filter .28s ease; }
+    #tasks-refresh-btn.spin .pf-ico{ animation: rcRefreshSpin 1.05s cubic-bezier(.5,.08,.25,.98) infinite; filter: drop-shadow(0 0 10px rgba(0,234,255,.55)); }
+    @keyframes rcRefreshSpin{ 0%{transform:rotate(0deg) scale(1);} 45%{transform:rotate(180deg) scale(1.12);} 100%{transform:rotate(360deg) scale(1);} }
     html.perf-low .rc-toast{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
 
     /* Light theme readability */
@@ -594,11 +596,12 @@
         <label class="input-label" style="margin-top:0;">Текст отзыва от заказчика</label>
         <select id="t-review-mode" onchange="recalc()" style="margin-top:5px;">
           <option value="none">Не задавать</option>
-          <option value="single">Один текст для всех</option>
           <option value="per_item">Отдельный текст на каждое выполнение</option>
+          <option value="single">Один текст для всех</option>
         </select>
         <textarea id="t-review-variants" rows="4" placeholder="Одна строка = один текст отзыва.
-Если выбран один текст для всех — просто введите один вариант." style="margin-top:10px;"></textarea>
+Для режима с разным текстом: 1 строка = 1 отдельный отзыв.
+Для одинакового текста всем — достаточно одной строки." style="margin-top:10px;"></textarea>
         <div id="review-variants-helper" style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;"></div>
       </div>
 
