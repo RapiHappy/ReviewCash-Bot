@@ -153,11 +153,11 @@
       display:flex;
       align-items:center;
       justify-content:center;
-      gap:8px;
-      min-height:42px;
-      padding:10px 14px;
-      border-radius:16px;
-      font-size:12px;
+      gap:7px;
+      min-height:40px;
+      padding:8px 12px;
+      border-radius:14px;
+      font-size:11px;
       font-weight:900;
       opacity:.78;
       user-select:none;
@@ -170,11 +170,11 @@
       opacity:1;
     }
     .pf-ico{
-      width:20px; height:20px;
+      width:18px; height:18px;
       display:inline-flex;
       align-items:center;
       justify-content:center;
-      flex:0 0 20px;
+      flex:0 0 18px;
     }
     .pf-ico img{ width:18px; height:18px; border-radius:6px; display:block; object-fit:contain; }
 
@@ -245,9 +245,9 @@
     @keyframes rcFloat{ 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-6px); } }
     @keyframes rcLoad{ 0%{ transform: translateX(-60%);} 50%{ transform: translateX(140%);} 100%{ transform: translateX(140%);} }
     
-    .pf-refresh{ margin-left:auto; width:52px; min-width:52px; height:52px; padding:0; justify-content:center; border-radius:50%; font-weight:900; opacity:1; user-select:none; border:1px solid rgba(0,234,255,.22); background:radial-gradient(circle at 30% 30%, rgba(255,255,255,.26), transparent 38%), linear-gradient(135deg, rgba(0,234,255,.28), rgba(87,108,255,.28)); box-shadow:0 14px 30px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.2), 0 0 22px rgba(0,234,255,.16); transition:transform .28s cubic-bezier(.22,1,.36,1), box-shadow .28s ease, filter .28s ease; }
-    .pf-refresh:hover{ transform:translateY(-1px) scale(1.04); box-shadow:0 18px 36px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.22), 0 0 28px rgba(0,234,255,.22); }
-    .pf-refresh .pf-ico{ width:24px; height:24px; font-size:20px; transition: transform .55s cubic-bezier(.22,1,.36,1), filter .28s ease; }
+    .pf-refresh{ margin-left:auto; width:42px; min-width:42px; height:42px; padding:0; justify-content:center; border-radius:14px; font-weight:900; opacity:1; user-select:none; border:1px solid rgba(0,234,255,.22); background:radial-gradient(circle at 30% 30%, rgba(255,255,255,.22), transparent 38%), linear-gradient(135deg, rgba(0,234,255,.24), rgba(87,108,255,.24)); box-shadow:0 10px 24px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.18), 0 0 18px rgba(0,234,255,.14); transition:transform .28s cubic-bezier(.22,1,.36,1), box-shadow .28s ease, filter .28s ease; }
+    .pf-refresh:hover{ transform:translateY(-1px) scale(1.03); box-shadow:0 14px 28px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.2), 0 0 22px rgba(0,234,255,.18); }
+    .pf-refresh .pf-ico{ width:20px; height:20px; font-size:18px; transition: transform .55s cubic-bezier(.22,1,.36,1), filter .28s ease; }
     #tasks-refresh-btn.spin .pf-ico{ animation: rcRefreshSpin 1.05s cubic-bezier(.5,.08,.25,.98) infinite; filter: drop-shadow(0 0 10px rgba(0,234,255,.55)); }
     @keyframes rcRefreshSpin{ 0%{transform:rotate(0deg) scale(1);} 45%{transform:rotate(180deg) scale(1.12);} 100%{transform:rotate(360deg) scale(1);} }
     html.perf-low .rc-toast{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
@@ -400,14 +400,14 @@
           </div>
           <h2 style="font-size:28px; font-weight:900; margin:0;">Задания</h2>
         </div>
-        <div class="seg-switch" style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
-          <div class="nav-item active" style="padding:8px 18px; font-size:12px;" onclick="setFilter('all')" id="f-all">Все</div>
-          <div class="nav-item" style="padding:8px 18px; font-size:12px;" onclick="setFilter('my')" id="f-my">Мои</div>
+        <div class="seg-switch tasks-seg-switch" style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); align-self:flex-end;">
+          <div class="nav-item tasks-seg-btn active" onclick="setFilter('all')" id="f-all">Все</div>
+          <div class="nav-item tasks-seg-btn" onclick="setFilter('my')" id="f-my">Мои</div>
         </div>
       </div>
 
       <div class="pf-bar">
-          <div class="pf-item pf-refresh" id="tasks-refresh-btn" onclick="refreshTasksBtn()" title="Обновить"><span class="pf-ico">⟳</span></div>
+          <div class="pf-item pf-refresh" id="tasks-refresh-btn" onclick="refreshTasksBtn()" title="Обновить"><span class="pf-ico">↻</span></div>
           <div class="pf-item active" id="pf-all" onclick="setPlatformFilter('all')">Все</div>
           <div class="pf-item" id="pf-ya" onclick="setPlatformFilter('ya')"><span class="pf-ico" data-pf-ico="ya"></span>Яндекс</div>
           <div class="pf-item" id="pf-gm" onclick="setPlatformFilter('gm')"><span class="pf-ico" data-pf-ico="gm"></span>Google</div>
