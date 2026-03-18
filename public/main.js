@@ -372,6 +372,7 @@ function tgAlert(msg, kind = "info", title = "") {
     balance: { rub_balance: 0, stars_balance: 0, xp: 0, level: 1 },
     config: { stars_rub_rate: 1, stars_payments_enabled: true },
     tasks: [],
+    reports: [],
     filter: "all",
     platformFilter: (localStorage.getItem("rc_platform_filter") || "all"),
     opsFilter: (localStorage.getItem("rc_ops_filter") || "all"),
@@ -959,6 +960,7 @@ async function syncAll() {
     maybeAskGender();
     await refreshWithdrawals();
     await refreshOpsSilent();
+    await refreshReports();
     await refreshReferrals();
     
   await checkAdmin();
@@ -1137,10 +1139,16 @@ async function syncAll() {
     return loadCompletedIds().has(id);
   }
   function setFilter(f) {
-    state.filter = f === "my" ? "my" : "all";
-    const fa = $("f-all"), fm = $("f-my");
-    if (fa) fa.classList.toggle("active", state.filter === "all");
-    if (fm) fm.classList.toggle("active", state.filter === "my");
+    const mode = (f === "my" || f === "reports") ? f : "all";
+    state.filter = mode;
+    const fa = $("f-all"), fm = $("f-my"), fr = $("f-reports");
+    if (fa) fa.classList.toggle("active", mode === "all");
+    if (fm) fm.classList.toggle("active", mode === "my");
+    if (fr) fr.classList.toggle("active", mode === "reports");
+
+    const pfBar = qs(".pf-bar");
+    if (pfBar) pfBar.classList.toggle("hidden", mode === "reports");
+
     renderTasks();
   }
   window.setFilter = setFilter;
@@ -1304,8 +1312,14 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (!box) return;
 
     const uid = state.user ? state.user.user_id : null;
+    const isReports = state.filter === "reports";
     const isMy = state.filter === "my" && uid;
     let list = state.tasks.slice();
+
+    if (isReports) {
+      renderReports(box);
+      return;
+    }
 
     if (!isMy) {
       list = list.filter(t => !isTaskCompleted(t && t.id));
@@ -1403,6 +1417,100 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
       box.appendChild(card);
     });
+  }
+
+
+  function reportStatusMeta(statusRaw) {
+    const status = String(statusRaw || "").toLowerCase();
+    const map = {
+      pending: { label: "Отправлен", badge: "st-pending", tone: "rgba(255, 204, 0, 0.16)", color: "#facc15", desc: "Отчёт отправлен и ожидает проверки модератором." },
+      pending_hold: { label: "Проверяется", badge: "st-pending", tone: "rgba(0, 234, 255, 0.12)", color: "var(--accent-cyan)", desc: "Задание на удержании: бот перепроверит выполнение позже." },
+      checking: { label: "Проверяется", badge: "st-pending", tone: "rgba(0, 234, 255, 0.12)", color: "var(--accent-cyan)", desc: "Отчёт сейчас на проверке." },
+      paid: { label: "Прошёл", badge: "st-paid", tone: "rgba(0, 255, 136, 0.12)", color: "var(--accent-green)", desc: "Отчёт принят, награда начислена." },
+      approved: { label: "Прошёл", badge: "st-paid", tone: "rgba(0, 255, 136, 0.12)", color: "var(--accent-green)", desc: "Отчёт одобрен." },
+      rejected: { label: "Отказан", badge: "st-rejected", tone: "rgba(255, 75, 75, 0.12)", color: "var(--accent-red)", desc: "Отчёт отклонён модератором." },
+      fake: { label: "Отказан", badge: "st-rejected", tone: "rgba(255, 75, 75, 0.12)", color: "var(--accent-red)", desc: "Отчёт отклонён: выполнение не подтверждено." },
+      rework: { label: "На доработку", badge: "st-pending", tone: "rgba(255, 166, 0, 0.14)", color: "#fb923c", desc: "Нужно исправить отчёт и отправить заново." },
+      rework_expired: { label: "Отказан", badge: "st-rejected", tone: "rgba(255, 75, 75, 0.12)", color: "var(--accent-red)", desc: "Срок на доработку истёк." },
+    };
+    return map[status] || { label: statusRaw || "Неизвестно", badge: "st-pending", tone: "rgba(148, 163, 184, 0.16)", color: "var(--text-dim)", desc: "Статус отчёта обновится позже." };
+  }
+
+  function formatReportDate(value) {
+    if (!value) return "—";
+    try {
+      const d = new Date(value);
+      if (!Number.isFinite(d.getTime())) return String(value);
+      return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    } catch (e) {
+      return String(value);
+    }
+  }
+
+  async function refreshReports() {
+    try {
+      const res = await apiPost("/api/report/list", {});
+      state.reports = Array.isArray(res && res.reports) ? res.reports : [];
+      if (state.filter === "reports") renderTasks();
+    } catch (e) {
+      state.reports = [];
+      if (state.filter === "reports") {
+        const box = $("tasks-list");
+        if (box) box.innerHTML = `<div class="card" style="text-align:center;color:var(--text-dim);">Не удалось загрузить отчёты.</div>`;
+      }
+    }
+  }
+
+  function renderReports(box) {
+    const reports = Array.isArray(state.reports) ? state.reports.slice() : [];
+    if (!reports.length) {
+      box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">У вас пока нет отправленных отчётов.</div>`;
+      return;
+    }
+
+    box.innerHTML = reports.map((r) => {
+      const meta = reportStatusMeta(r.status);
+      const reward = Number(r.reward_rub || 0);
+      const createdAt = formatReportDate(r.created_at);
+      const updatedAt = formatReportDate(r.updated_at || r.moderated_at || r.created_at);
+      const proofName = String(r.proof_text || "").trim();
+      return `
+        <div class="card report-card">
+          <div class="report-card__head">
+            <div style="display:flex; gap:10px; align-items:flex-start; min-width:0;">
+              <div class="brand-box report-card__icon">${brandIconHtml(r.type || 'tg', 40)}</div>
+              <div style="min-width:0; flex:1;">
+                <div class="report-card__title">${safeText(r.title || "Отчёт")}</div>
+                <div class="report-card__sub">${safeText(r.type_label || taskTypeLabel({ type: r.type || "tg" }))}</div>
+              </div>
+            </div>
+            <div class="report-card__reward">+${fmtRub(reward)}</div>
+          </div>
+
+          <div class="report-card__status" style="background:${meta.tone}; color:${meta.color};">${meta.label}</div>
+          <div class="report-card__desc">${meta.desc}</div>
+
+          <div class="report-card__grid">
+            <div class="report-card__cell">
+              <div class="report-card__label">Отправлен</div>
+              <div class="report-card__value">${createdAt}</div>
+            </div>
+            <div class="report-card__cell">
+              <div class="report-card__label">Обновлён</div>
+              <div class="report-card__value">${updatedAt}</div>
+            </div>
+            <div class="report-card__cell">
+              <div class="report-card__label">Ник / комментарий</div>
+              <div class="report-card__value">${safeText(proofName || "—")}</div>
+            </div>
+            <div class="report-card__cell">
+              <div class="report-card__label">Скрин</div>
+              <div class="report-card__value">${r.proof_url ? `<a href="${safeText(r.proof_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent-cyan); text-decoration:none; font-weight:800;">Открыть</a>` : "—"}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
   }
 
   function metricChip(label, value, tint) {
@@ -2435,6 +2543,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
     if (state.currentSection === "tasks") {
+      if (state.filter === "reports") refreshReports();
       try { syncTasksOnly(true); } catch (e) {}
     }
   }
