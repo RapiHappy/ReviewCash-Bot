@@ -24,7 +24,7 @@
 (function () {
   "use strict";
 
-  const RC_BUILD = "rc_20260225_181352";
+  const RC_BUILD = "rc_20260318_142800_icons2";
   try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
 
 
@@ -1206,6 +1206,8 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_SVG = {
+    ya: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="31" fill="#FC3F1D"/><path d="M35.7 11.5H26.6v14.9c0 5.8 2.8 10.1 8 13.8L20.5 52.5h9.3L41.8 42v10.5H50V11.5H35.7zm6.1 22.8c-4.5-2.9-7.2-4.9-7.2-8.9v-6.8h7.2v15.7z" fill="#fff"/></svg>`,
+    gm: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#fff"/><path d="M52.6 32.3c0-1.7-.2-3.1-.5-4.6H32v8.4h11.6c-.5 2.7-2.1 5-4.4 6.6l7 5.4c4.1-3.8 6.4-9.3 6.4-15.8z" fill="#4285F4"/><path d="M32 53.2c5.8 0 10.6-1.9 14.2-5.2l-7-5.4c-1.9 1.3-4.4 2.1-7.2 2.1-5.5 0-10.2-3.7-11.8-8.8l-7.2 5.6C16.5 48.5 23.7 53.2 32 53.2z" fill="#34A853"/><path d="M20.2 35.9c-.4-1.2-.7-2.5-.7-3.9 0-1.4.2-2.7.7-3.9L13 22.5c-1.5 2.9-2.4 6.1-2.4 9.5 0 3.5.8 6.7 2.4 9.5l7.2-5.6z" fill="#FBBC05"/><path d="M32 19.3c3 0 5.8 1 7.9 3l5.8-5.8C42.6 13.6 37.8 11 32 11c-8.3 0-15.5 4.7-19 11.5l7.2 5.6c1.6-5.1 6.3-8.8 11.8-8.8z" fill="#EA4335"/></svg>`,
 
     ya: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="32" fill="#FC3F1D"/><path d="M36.2 12H27v14.4c0 5.8 2.9 10 8 13.7L20.4 52h9.8l12.1-10.2V52H50V12H36.2zm6 22.3c-4.4-2.7-7.5-4.8-7.5-8.7v-6.4h7.5v15.1z" fill="#fff"/></svg>`,
     gm: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#fff"/><path d="M51.8 32.7c0-1.6-.2-2.8-.5-4.1H32v7.4h11.3c-.2 1.8-1.4 4.5-4.1 6.3l6.6 5.1c4-3.7 6-9 6-14.7z" fill="#4285F4"/><path d="M32 52.8c5.5 0 10.1-1.8 13.5-4.9l-6.6-5.1c-1.8 1.2-4.2 2.1-6.9 2.1-5.3 0-9.8-3.6-11.4-8.4l-6.8 5.2c3.3 6.4 10 11.1 18.2 11.1z" fill="#34A853"/><path d="M20.6 36.5c-.4-1.2-.7-2.6-.7-4s.2-2.8.7-4l-6.8-5.2c-1.4 2.8-2.3 5.9-2.3 9.3s.8 6.5 2.3 9.3l6.8-5.4z" fill="#FBBC04"/><path d="M32 19.9c3.1 0 5.9 1.1 8.1 3.2l6-6C42.1 13.3 37.5 11 32 11c-8.2 0-14.9 4.6-18.2 11.2l6.8 5.3c1.6-4.9 6.1-8.6 11.4-8.6z" fill="#EA4335"/></svg>`,
@@ -1230,7 +1232,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const nodes = document.querySelectorAll("[data-pf-ico]");
     nodes.forEach(n => {
       const k = String(n.getAttribute("data-pf-ico") || "").toLowerCase();
-      if (k === "ya" || k === "gm" || k === "tg") n.innerHTML = brandIconHtml(k, 18);
+      if (k === "ya" || k === "gm" || k === "tg") n.innerHTML = brandIconHtml(k, 20);
     });
   }
 
