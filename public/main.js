@@ -1461,6 +1461,33 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
   }
 
+  async function clearReportsHistory() {
+    const reports = Array.isArray(state.reports) ? state.reports : [];
+    if (!reports.length) {
+      tgAlert("История отчётов уже пустая.");
+      return;
+    }
+    const ok = await tgConfirm("Очистить историю отчётов? Это действие нельзя отменить.");
+    if (!ok) return;
+    try {
+      const btn = document.querySelector("[data-action='clear-reports']");
+      if (btn) btn.disabled = true;
+      await apiPost("/api/report/clear", {});
+      state.reports = [];
+      renderTasks();
+      tgHaptic("success");
+      tgAlert("История отчётов очищена ✅");
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(e && e.message ? e.message : "Не удалось очистить историю отчётов.", "error", "Ошибка");
+    } finally {
+      const btn = document.querySelector("[data-action='clear-reports']");
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  window.clearReportsHistory = clearReportsHistory;
+
   function renderReports(box) {
     const reports = Array.isArray(state.reports) ? state.reports.slice() : [];
     if (!reports.length) {
@@ -1468,7 +1495,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       return;
     }
 
-    box.innerHTML = reports.map((r) => {
+    box.innerHTML = `
+      <div class="report-card__toolbar">
+        <button class="report-clear-btn" type="button" data-action="clear-reports" onclick="clearReportsHistory()">🗑️ Очистить историю</button>
+      </div>
+      ${reports.map((r) => {
       const meta = reportStatusMeta(r.status);
       const reward = Number(r.reward_rub || 0);
       const createdAt = formatReportDate(r.created_at);
@@ -1510,7 +1541,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           </div>
         </div>
       `;
-    }).join("");
+    }).join("")}
+    `;
   }
 
   function metricChip(label, value, tint) {
@@ -1732,36 +1764,59 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     copyText(text);
   };
 
+  window.copyPhoneNumber = function (event) {
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    const trigger = event && event.currentTarget ? event.currentTarget : null;
+    const rawPhone = trigger && trigger.dataset ? trigger.dataset.copyPhone : "";
+    const phone = String(rawPhone || "+79600738559").replace(/[^\d+]/g, "");
+    return copyText(phone);
+  };
+
   async function copyText(text) {
-    const s = String(text || "");
-    if (!s) return;
+    const s = String(text || "").trim();
+    if (!s) return false;
+
+    const fallbackCopy = () => {
+      const ta = document.createElement("textarea");
+      ta.value = s;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.width = "1px";
+      ta.style.height = "1px";
+      ta.style.padding = "0";
+      ta.style.border = "0";
+      ta.style.opacity = "0";
+      ta.style.pointerEvents = "none";
+      document.body.appendChild(ta);
+      ta.focus({ preventScroll: true });
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return !!ok;
+    };
+
     try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
         await navigator.clipboard.writeText(s);
-      } else {
+      } else if (!fallbackCopy()) {
         throw new Error("clipboard_unavailable");
       }
       tgHaptic("success");
       tgAlert("Скопировано ✅");
+      return true;
     } catch (e) {
       try {
-        const ta = document.createElement("textarea");
-        ta.value = s;
-        ta.setAttribute("readonly", "readonly");
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        ta.style.pointerEvents = "none";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        ta.setSelectionRange(0, ta.value.length);
-        document.execCommand("copy");
-        ta.remove();
+        if (!fallbackCopy()) throw new Error("copy_failed");
         tgHaptic("success");
         tgAlert("Скопировано ✅");
+        return true;
       } catch (err) {
         tgHaptic("error");
         tgAlert("Не удалось скопировать. Зажмите номер и скопируйте вручную.", "error", "Ошибка копирования");
+        return false;
       }
     }
   }
