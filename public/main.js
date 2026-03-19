@@ -1766,6 +1766,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   window.copyPhoneNumber = function (event) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
+    const trigger = event && event.currentTarget ? event.currentTarget : null;
+    const rawPhone = trigger && trigger.dataset ? trigger.dataset.copyPhone : "";
+    const phone = String(rawPhone || "+79600738559").replace(/[^\d+]/g, "");
+    return copyText(phone);
     return copyText("+79600738559");
   };
 
