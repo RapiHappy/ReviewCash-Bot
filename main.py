@@ -3358,6 +3358,12 @@ async def api_report_list(req: web.Request):
 
     return web.json_response({"ok": True, "reports": reports})
 
+async def api_report_clear(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    await sb_delete(T_COMP, {"user_id": uid})
+    return web.json_response({"ok": True})
+
 async def api_ops_list(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
@@ -4498,6 +4504,7 @@ def make_app():
     app.router.add_post("/api/pay/stars/link", api_stars_link)
     app.router.add_post("/api/ops/list", api_ops_list)
     app.router.add_post("/api/report/list", api_report_list)
+    app.router.add_post("/api/report/clear", api_report_clear)
 
     # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)

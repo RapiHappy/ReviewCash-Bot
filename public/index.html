@@ -813,13 +813,14 @@
       </div>
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по номеру в Т-Банк, указав код в комментарии:</p>
-      <div class="copy-box phone-copy-box" onclick="copyText('+79600738559')" style="margin-bottom:20px;">
-        <span style="display:flex; flex-direction:column; gap:4px; min-width:0;">
-          <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59</span>
-          <span style="font-size:12px; color:var(--text-dim);">Раяз Н.</span>
+      <button class="copy-box phone-copy-box phone-copy-box--fancy" onclick="copyPhoneNumber(event)" style="margin-bottom:20px;" type="button" aria-label="Скопировать номер Т-Банк">
+        <span class="phone-copy-box__meta">
+          <span class="phone-copy-box__label">Номер для перевода</span>
+          <span class="phone-copy-box__number">+7 960 073-85-59</span>
+          <span class="phone-copy-box__name">Получатель: Раяз Н.</span>
         </span>
-        <span style="font-size:14px; opacity:0.7;">📋</span>
-      </div>
+        <span class="phone-copy-box__action" aria-hidden="true">📋</span>
+      </button>
 
       <button class="btn btn-secondary" style="width:100%; margin-top:10px; justify-content:center;" onclick="openTbankReferral()" type="button">🟡 Нет карты? Оформи по ссылке</button>
 
@@ -860,13 +861,14 @@
       </div>
 
       <p style="font-size:13px; color:var(--text-dim); margin:15px 0 8px;">2. Переведите сумму по номеру в Т-Банк, указав код в комментарии:</p>
-      <div class="copy-box phone-copy-box" onclick="copyText('+79600738559')" style="margin-bottom:20px;">
-        <span style="display:flex; flex-direction:column; gap:4px; min-width:0;">
-          <span style="font-family:monospace; font-weight:900; font-size:16px; letter-spacing:0.4px;">+7 960 073-85-59</span>
-          <span style="font-size:12px; color:var(--text-dim);">Раяз Н.</span>
+      <button class="copy-box phone-copy-box phone-copy-box--fancy" onclick="copyPhoneNumber(event)" style="margin-bottom:20px;" type="button" aria-label="Скопировать номер Т-Банк">
+        <span class="phone-copy-box__meta">
+          <span class="phone-copy-box__label">Номер для перевода</span>
+          <span class="phone-copy-box__number">+7 960 073-85-59</span>
+          <span class="phone-copy-box__name">Получатель: Раяз Н.</span>
         </span>
-        <span style="font-size:14px; opacity:0.7;">📋</span>
-      </div>
+        <span class="phone-copy-box__action" aria-hidden="true">📋</span>
+      </button>
 
       <p style="font-size:13px; color:var(--text-dim); margin-bottom:5px;">3. Ваше имя (отправителя):</p>
       <input type="text" id="tbp-sender" placeholder="Например: Иван И." style="margin-top:0;">
