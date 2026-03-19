@@ -564,6 +564,8 @@ option { background-color: var(--card-bg); color: var(--text-main); }
 .qa-ico-history{
   background: radial-gradient(120% 120% at 20% 10%, rgba(0,234,255,0.28), rgba(0,234,255,0.08));
   color: var(--accent-cyan);
+  align-items:center;
+  justify-content:center;
 }
 .qa-history:hover{
   border-color: rgba(0,234,255,0.22);
@@ -573,6 +575,8 @@ option { background-color: var(--card-bg); color: var(--text-main); }
 .qa-ico-perf{
   background: radial-gradient(120% 120% at 20% 10%, rgba(0,234,255,0.22), rgba(0,234,255,0.06));
   color: var(--accent-cyan);
+  align-items:center;
+  justify-content:center;
 }
 .qa-perf:hover{
   border-color: rgba(0,234,255,0.22);
@@ -1019,6 +1023,15 @@ body.light-mode .top-option-card.selected{
   color:#f7fbff;
   text-shadow:0 1px 12px rgba(0,234,255,0.12);
 }
+.phone-copy-box__name{
+  display:block;
+  font-size:15px;
+  line-height:1.28;
+  font-weight:800;
+  color:#ffffff;
+  letter-spacing:0.01em;
+  white-space:normal;
+=======
 .phone-copy-box__recipient{
   display:flex;
   flex-wrap:wrap;
@@ -1478,5 +1491,7 @@ input:focus, select:focus, textarea:focus{
 .report-card__cell{padding:12px;border-radius:16px;background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.06);min-width:0;}
 .report-card__label{font-size:11px;color:var(--text-dim);margin-bottom:5px;}
 .report-card__value{font-size:13px;font-weight:800;line-height:1.35;word-break:break-word;}
+@media (max-width: 520px){.tasks-seg-switch{flex-wrap:wrap;justify-content:flex-end;}.report-card__toolbar{justify-content:stretch;}.report-clear-btn{width:100%;justify-content:center;}.report-card__grid{grid-template-columns:1fr;}.phone-copy-box--fancy{padding:15px 16px;}.phone-copy-box__number{font-size:18px;}.phone-copy-box__name{font-size:14px;}}
+=======
 @media (max-width: 520px){.tasks-seg-switch{flex-wrap:wrap;justify-content:flex-end;}.report-card__toolbar{justify-content:stretch;}.report-clear-btn{width:100%;justify-content:center;}.report-card__grid{grid-template-columns:1fr;}.phone-copy-box--fancy{padding:15px 16px;}.phone-copy-box__number{font-size:18px;}.phone-copy-box__recipient{gap:4px;}.phone-copy-box__recipient-label{font-size:12px;}.phone-copy-box__name{font-size:14px;}}
 @media (max-width: 520px){.tasks-seg-switch{flex-wrap:wrap;justify-content:flex-end;}.report-card__toolbar{justify-content:stretch;}.report-clear-btn{width:100%;justify-content:center;}.report-card__grid{grid-template-columns:1fr;}.phone-copy-box--fancy{padding:15px 16px;}.phone-copy-box__number{font-size:18px;}}
