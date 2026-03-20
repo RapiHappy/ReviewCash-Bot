@@ -1816,3 +1816,102 @@ body.light-mode .helper-link-card{
     font-size:12px;
   }
 }
+
+
+/* === FINAL HOTFIX: phone payment row + real T-Bank referral === */
+.phone-copy-box--fancy{
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) auto !important;
+  column-gap:12px !important;
+  align-items:center !important;
+}
+.phone-copy-box__meta{
+  display:block !important;
+  min-width:0 !important;
+  width:auto !important;
+  padding-right:0 !important;
+}
+.phone-copy-box__label{
+  display:block !important;
+  margin:0 0 6px !important;
+}
+.phone-copy-box__number{
+  display:block !important;
+  margin:0 0 10px !important;
+  white-space:nowrap !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  word-break:normal !important;
+  overflow-wrap:normal !important;
+}
+.phone-copy-box__recipient{
+  display:flex !important;
+  flex-direction:row !important;
+  align-items:center !important;
+  justify-content:flex-start !important;
+  flex-wrap:nowrap !important;
+  width:auto !important;
+  max-width:100% !important;
+  gap:8px !important;
+  min-width:0 !important;
+}
+.phone-copy-box__recipient-label{
+  flex:0 0 auto !important;
+  white-space:nowrap !important;
+}
+.phone-copy-box__recipient-name{
+  display:inline-flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  flex:0 0 auto !important;
+  width:auto !important;
+  max-width:none !important;
+  min-width:auto !important;
+  white-space:nowrap !important;
+  word-break:normal !important;
+  overflow-wrap:normal !important;
+  overflow:visible !important;
+  text-overflow:clip !important;
+  writing-mode:horizontal-tb !important;
+  transform:none !important;
+  line-height:1.1 !important;
+}
+.phone-copy-box__action{
+  align-self:center !important;
+}
+@media (max-width: 420px){
+  .phone-copy-box--fancy{
+    grid-template-columns:minmax(0,1fr) 40px !important;
+    column-gap:10px !important;
+    padding:14px 14px !important;
+  }
+  .phone-copy-box__number{
+    font-size:13px !important;
+    letter-spacing:.01em !important;
+    line-height:1.2 !important;
+  }
+  .phone-copy-box__recipient{
+    gap:6px !important;
+  }
+  .phone-copy-box__recipient-label{
+    font-size:11px !important;
+  }
+  .phone-copy-box__recipient-name{
+    font-size:12px !important;
+    padding:4px 9px !important;
+  }
+  .helper-link-card{
+    margin-top:12px !important;
+    font-size:14px !important;
+    line-height:1.2 !important;
+  }
+}
+@media (max-width: 360px){
+  .phone-copy-box__number{
+    font-size:12px !important;
+  }
+  .phone-copy-box__recipient-name{
+    font-size:11px !important;
+    padding:4px 8px !important;
+  }
+}
