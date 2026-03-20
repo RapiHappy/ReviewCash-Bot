@@ -776,7 +776,7 @@ function tgAlert(msg, kind = "info", title = "") {
       const seg = qs('.tasks-seg-switch');
       if (seg && !seg.nextElementSibling?.classList?.contains('filter-slider-wrap')) {
         const wrap = document.createElement('div');
-        wrap.className = 'filter-slider-wrap';
+        wrap.className = 'filter-slider-wrap is-hidden';
         wrap.setAttribute('data-kind', 'seg');
         wrap.innerHTML = '<div class="filter-slider-thumb"></div>';
         seg.insertAdjacentElement('afterend', wrap);
@@ -796,16 +796,7 @@ function tgAlert(msg, kind = "info", title = "") {
     try {
       const seg = qs('.tasks-seg-switch');
       const wrap = seg ? seg.nextElementSibling : null;
-      const thumb = wrap ? qs('.filter-slider-thumb', wrap) : null;
-      if (!seg || !wrap || !thumb) return;
-      const active = qs('.tasks-seg-btn.active', seg) || qs('.active', seg);
-      if (!active) return;
-      const segRect = seg.getBoundingClientRect();
-      const rect = active.getBoundingClientRect();
-      const width = Math.max(24, Math.min(segRect.width, rect.width));
-      thumb.style.width = width + 'px';
-      thumb.style.transform = 'translateX(' + Math.max(0, rect.left - segRect.left) + 'px)';
-      wrap.classList.toggle('is-hidden', seg.offsetParent === null);
+      if (wrap) wrap.classList.add('is-hidden');
     } catch (e) {}
   }
 
@@ -836,6 +827,77 @@ function tgAlert(msg, kind = "info", title = "") {
     updatePlatformSlider();
   }
   window.refreshFilterSliders = refreshFilterSliders;
+
+  function initPlatformSliderDrag() {
+    try {
+      const bar = qs('.pf-bar');
+      const wrap = bar ? bar.nextElementSibling : null;
+      const thumb = wrap ? qs('.filter-slider-thumb', wrap) : null;
+      if (!bar || !wrap || !thumb || wrap.dataset.dragReady === '1') return;
+      wrap.dataset.dragReady = '1';
+
+      let dragging = false;
+      let startX = 0;
+      let startLeft = 0;
+
+      const getMetrics = () => {
+        const track = wrap.clientWidth || 1;
+        const thumbWidth = thumb.offsetWidth || 1;
+        const maxThumbX = Math.max(0, track - thumbWidth);
+        const maxScroll = Math.max(0, bar.scrollWidth - bar.clientWidth);
+        return { track, thumbWidth, maxThumbX, maxScroll };
+      };
+
+      const setFromClientX = (clientX) => {
+        const rect = wrap.getBoundingClientRect();
+        const { maxThumbX, maxScroll } = getMetrics();
+        if (maxThumbX <= 0 || maxScroll <= 0) return;
+        let x = clientX - rect.left - thumb.offsetWidth / 2;
+        x = Math.max(0, Math.min(maxThumbX, x));
+        bar.scrollLeft = (x / maxThumbX) * maxScroll;
+        updatePlatformSlider();
+      };
+
+      wrap.addEventListener('click', (e) => {
+        if (dragging) return;
+        if (e.target === thumb) return;
+        setFromClientX(e.clientX);
+      });
+
+      thumb.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        startX = e.clientX;
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(thumb).transform);
+        startLeft = matrix.m41 || 0;
+        wrap.classList.add('dragging');
+        thumb.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+      });
+
+      thumb.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const { maxThumbX, maxScroll } = getMetrics();
+        if (maxThumbX <= 0 || maxScroll <= 0) return;
+        let next = startLeft + (e.clientX - startX);
+        next = Math.max(0, Math.min(maxThumbX, next));
+        bar.scrollLeft = (next / maxThumbX) * maxScroll;
+        updatePlatformSlider();
+      });
+
+      const stopDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        wrap.classList.remove('dragging');
+        try { thumb.releasePointerCapture?.(e.pointerId); } catch (_) {}
+      };
+      thumb.addEventListener('pointerup', stopDrag);
+      thumb.addEventListener('pointercancel', stopDrag);
+      thumb.addEventListener('lostpointercapture', () => {
+        dragging = false;
+        wrap.classList.remove('dragging');
+      });
+    } catch (e) {}
+  }
   function forceInitialView() {
     // Defensive: never let the app become an empty black screen
     try {
@@ -1998,6 +2060,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const file = $("p-file") && $("p-file").files ? $("p-file").files[0] : null;
 
     if (!nick) return tgAlert("Напиши никнейм/имя, как в сервисе.\nПример: Я.К.", "error", "Нужен никнейм");
+
     // REQUIRED IMAGE (you asked)
     if (!file) return tgAlert("Нужен скриншот-доказательство.\nБез скрина отправить нельзя.", "error", "Прикрепи скрин");
 
@@ -3561,6 +3624,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     bindOverlayClose();
     ensureModalCloseButtons();
     ensureFilterSliders();
+    initPlatformSliderDrag();
     initTgSubtypeSelect();
     initTgTargetChecker();
     initPlatformFilterIcons();
