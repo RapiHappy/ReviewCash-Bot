@@ -2148,3 +2148,66 @@ body.light-mode .filter-slider-wrap[data-kind="scroll"]{
     border-radius:13px !important;
   }
 }
+
+/* === V9 HOTFIX: draggable horizontal filters for phone + desktop, no fake slider === */
+.filter-slider-wrap{
+  display:none !important;
+}
+
+.tasks-seg-switch,
+.pf-bar,
+.ops-filter,
+.admin-tabs{
+  overflow-x:auto !important;
+  overflow-y:hidden !important;
+  -webkit-overflow-scrolling:touch !important;
+  scrollbar-width:none !important;
+  -ms-overflow-style:none !important;
+  touch-action:pan-x !important;
+  cursor:grab;
+}
+.tasks-seg-switch::-webkit-scrollbar,
+.pf-bar::-webkit-scrollbar,
+.ops-filter::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar{
+  display:none !important;
+}
+
+.tasks-seg-switch{
+  display:flex !important;
+  flex-wrap:nowrap !important;
+  width:100% !important;
+  max-width:100% !important;
+  gap:6px !important;
+  justify-content:flex-start !important;
+  align-items:center !important;
+  padding:4px !important;
+}
+.tasks-seg-switch .nav-item,
+.tasks-seg-switch .tasks-seg-btn,
+.pf-bar .pf-item,
+.ops-filter .ops-btn,
+.admin-tabs .admin-tab{
+  flex:0 0 auto !important;
+}
+
+[data-drag-scroll="1"]{
+  user-select:none;
+}
+[data-drag-scroll="1"] *{
+  user-select:none;
+}
+[data-drag-scroll="1"].dragging{
+  cursor:grabbing !important;
+  scroll-behavior:auto !important;
+}
+[data-drag-scroll="1"].dragging *{
+  pointer-events:none;
+}
+
+@media (max-width:420px){
+  .tasks-seg-switch{
+    gap:5px !important;
+    padding:4px !important;
+  }
+}
