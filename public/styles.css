@@ -2217,3 +2217,37 @@ body.light-mode .filter-slider-wrap[data-kind="scroll"]{
     padding:4px !important;
   }
 }
+
+
+/* === V11 HOTFIX: keep horizontal filters draggable and clickable === */
+.tasks-seg-switch,
+.pf-bar,
+.ops-filter,
+.admin-tabs{
+  overflow-x:auto !important;
+  overflow-y:hidden !important;
+  -webkit-overflow-scrolling:touch !important;
+  scrollbar-width:none !important;
+  -ms-overflow-style:none !important;
+  touch-action:pan-x pan-y pinch-zoom !important;
+}
+
+@media (hover:hover) and (pointer:fine){
+  .tasks-seg-switch,
+  .pf-bar,
+  .ops-filter,
+  .admin-tabs{
+    cursor:grab;
+  }
+  [data-drag-scroll="1"].dragging{
+    cursor:grabbing !important;
+  }
+}
+
+[data-drag-scroll="1"]{
+  user-select:none;
+}
+
+[data-drag-scroll="1"].dragging *{
+  pointer-events:auto !important;
+}
