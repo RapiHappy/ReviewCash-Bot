@@ -1770,7 +1770,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const rawPhone = trigger && trigger.dataset ? trigger.dataset.copyPhone : "";
     const phone = String(rawPhone || "+79600738559").replace(/[^\d+]/g, "");
     return copyText(phone);
-    return copyText("+79600738559");
   };
 
   async function copyText(text) {
@@ -3472,6 +3471,12 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     initTgSubtypeSelect();
     initTgTargetChecker();
     initPlatformFilterIcons();
+
+    try {
+      requestAnimationFrame(() => {
+        document.documentElement.classList.toggle("perf-low", state.perfMode === "low");
+      });
+    } catch (e) {}
 
     // keep loader until first sync is done
     const loader = $("loader");
