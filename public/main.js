@@ -738,6 +738,7 @@ function tgAlert(msg, kind = "info", title = "") {
         switchAdminTab(state.adminTab || "proofs");
       }
     } catch (e) {}
+    try { requestAnimationFrame(refreshFilterSliders); } catch (e) {}
   }
 
   function closeAllOverlays() {
@@ -746,6 +747,95 @@ function tgAlert(msg, kind = "info", title = "") {
   }
 
 
+
+
+  function ensureModalCloseButtons() {
+    qsa('.overlay .modal').forEach(modal => {
+      const hasClose = modal.querySelector('.modal-close-btn, [data-close-modal], [onclick*="closeModal()"], [onclick*="closeModal("]');
+      if (hasClose) {
+        modal.classList.add('modal-has-close');
+        return;
+      }
+      modal.classList.add('modal-has-close');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'modal-close-btn';
+      btn.setAttribute('aria-label', 'Закрыть');
+      btn.innerHTML = '&times;';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeAllOverlays();
+      });
+      modal.appendChild(btn);
+    });
+  }
+
+  function ensureFilterSliders() {
+    try {
+      const seg = qs('.tasks-seg-switch');
+      if (seg && !seg.nextElementSibling?.classList?.contains('filter-slider-wrap')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'filter-slider-wrap';
+        wrap.setAttribute('data-kind', 'seg');
+        wrap.innerHTML = '<div class="filter-slider-thumb"></div>';
+        seg.insertAdjacentElement('afterend', wrap);
+      }
+      const pf = qs('.pf-bar');
+      if (pf && !pf.nextElementSibling?.classList?.contains('filter-slider-wrap')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'filter-slider-wrap';
+        wrap.setAttribute('data-kind', 'scroll');
+        wrap.innerHTML = '<div class="filter-slider-thumb"></div>';
+        pf.insertAdjacentElement('afterend', wrap);
+      }
+    } catch (e) {}
+  }
+
+  function updateSegmentSlider() {
+    try {
+      const seg = qs('.tasks-seg-switch');
+      const wrap = seg ? seg.nextElementSibling : null;
+      const thumb = wrap ? qs('.filter-slider-thumb', wrap) : null;
+      if (!seg || !wrap || !thumb) return;
+      const active = qs('.tasks-seg-btn.active', seg) || qs('.active', seg);
+      if (!active) return;
+      const segRect = seg.getBoundingClientRect();
+      const rect = active.getBoundingClientRect();
+      const width = Math.max(24, Math.min(segRect.width, rect.width));
+      thumb.style.width = width + 'px';
+      thumb.style.transform = 'translateX(' + Math.max(0, rect.left - segRect.left) + 'px)';
+      wrap.classList.toggle('is-hidden', seg.offsetParent === null);
+    } catch (e) {}
+  }
+
+  function updatePlatformSlider() {
+    try {
+      const bar = qs('.pf-bar');
+      const wrap = bar ? bar.nextElementSibling : null;
+      const thumb = wrap ? qs('.filter-slider-thumb', wrap) : null;
+      if (!bar || !wrap || !thumb) return;
+      const scrollable = bar.scrollWidth - bar.clientWidth;
+      if (bar.classList.contains('hidden') || scrollable <= 2) {
+        wrap.classList.add('is-hidden');
+        return;
+      }
+      wrap.classList.remove('is-hidden');
+      const track = wrap.clientWidth || bar.clientWidth;
+      const ratio = bar.clientWidth / bar.scrollWidth;
+      const thumbWidth = Math.max(32, Math.round(track * ratio));
+      const maxX = Math.max(0, track - thumbWidth);
+      const x = scrollable > 0 ? Math.round((bar.scrollLeft / scrollable) * maxX) : 0;
+      thumb.style.width = thumbWidth + 'px';
+      thumb.style.transform = 'translateX(' + x + 'px)';
+    } catch (e) {}
+  }
+
+  function refreshFilterSliders() {
+    updateSegmentSlider();
+    updatePlatformSlider();
+  }
+  window.refreshFilterSliders = refreshFilterSliders;
   function forceInitialView() {
     // Defensive: never let the app become an empty black screen
     try {
@@ -1150,6 +1240,7 @@ async function syncAll() {
     if (pfBar) pfBar.classList.toggle("hidden", mode === "reports");
 
     renderTasks();
+    requestAnimationFrame(refreshFilterSliders);
   }
   window.setFilter = setFilter;
 
@@ -1171,6 +1262,7 @@ async function syncAll() {
     });
 
     renderTasks();
+    requestAnimationFrame(refreshFilterSliders);
   }
 
   function ensureVisiblePlatformFilter(tasks) {
@@ -1906,7 +1998,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const file = $("p-file") && $("p-file").files ? $("p-file").files[0] : null;
 
     if (!nick) return tgAlert("Напиши никнейм/имя, как в сервисе.\nПример: Я.К.", "error", "Нужен никнейм");
-
     // REQUIRED IMAGE (you asked)
     if (!file) return tgAlert("Нужен скриншот-доказательство.\nБез скрина отправить нельзя.", "error", "Прикрепи скрин");
 
@@ -3468,9 +3559,14 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     }
 
     bindOverlayClose();
+    ensureModalCloseButtons();
+    ensureFilterSliders();
     initTgSubtypeSelect();
     initTgTargetChecker();
     initPlatformFilterIcons();
+    requestAnimationFrame(refreshFilterSliders);
+    window.addEventListener("resize", refreshFilterSliders, { passive: true });
+    try { const pfBar = qs(".pf-bar"); if (pfBar) pfBar.addEventListener("scroll", updatePlatformSlider, { passive: true }); } catch (e) {}
 
     try {
       requestAnimationFrame(() => {
@@ -3497,6 +3593,11 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     hideLoader();
   }
 }
+
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllOverlays();
+  });
 
   document.addEventListener("DOMContentLoaded", bootstrap);
 
