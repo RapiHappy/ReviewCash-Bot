@@ -1713,3 +1713,106 @@ html.perf-low .card{
     gap:4px;
   }
 }
+
+
+/* === FINAL FIX: payment box mobile layout === */
+.phone-copy-box--fancy{
+  position: relative;
+  gap: 14px;
+}
+.phone-copy-box__meta{
+  width: 100%;
+  padding-right: 6px;
+}
+.phone-copy-box__number{
+  display:block;
+  max-width:100%;
+  overflow-wrap:anywhere;
+  word-break:normal;
+}
+.phone-copy-box__recipient{
+  display:flex;
+  align-items:center;
+  flex-wrap:nowrap;
+  gap:8px;
+  width:100%;
+}
+.phone-copy-box__recipient-label{
+  flex:0 0 auto;
+}
+.phone-copy-box__recipient-name{
+  display:inline-flex;
+  flex:0 1 auto;
+  max-width:100%;
+  white-space:nowrap;
+  word-break:keep-all;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  writing-mode:horizontal-tb;
+}
+.helper-link-card{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  margin-top:14px;
+  padding:14px 16px;
+  border-radius:18px;
+  text-decoration:none;
+  font-weight:900;
+  font-size:15px;
+  color:var(--text-main);
+  background:linear-gradient(135deg, rgba(255,221,45,0.22), rgba(255,255,255,0.06));
+  border:1px solid rgba(255,221,45,0.35);
+  box-shadow:0 10px 24px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+html.theme-light .helper-link-card,
+body.light-mode .helper-link-card{
+  color:#111827;
+  background:linear-gradient(135deg, rgba(255,221,45,0.24), rgba(255,255,255,0.92));
+  border-color:rgba(245,158,11,0.25);
+}
+@media (max-width: 420px){
+  .phone-copy-box--fancy{
+    padding:14px 14px;
+    border-radius:18px;
+    align-items:center;
+  }
+  .phone-copy-box__meta{
+    gap:5px;
+  }
+  .phone-copy-box__number{
+    font-size:15px;
+    letter-spacing:.02em;
+    line-height:1.18;
+  }
+  .phone-copy-box__recipient{
+    flex-direction:row;
+    align-items:center;
+    flex-wrap:nowrap;
+    gap:6px;
+  }
+  .phone-copy-box__recipient-label{
+    font-size:11px;
+  }
+  .phone-copy-box__recipient-name{
+    max-width:140px;
+    font-size:13px;
+    min-height:26px;
+    padding:4px 9px;
+  }
+  .helper-link-card{
+    font-size:14px;
+    padding:13px 14px;
+    border-radius:16px;
+  }
+}
+@media (max-width: 360px){
+  .phone-copy-box__number{
+    font-size:14px;
+  }
+  .phone-copy-box__recipient-name{
+    max-width:120px;
+    font-size:12px;
+  }
+}
