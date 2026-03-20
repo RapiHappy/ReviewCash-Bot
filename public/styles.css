@@ -1915,3 +1915,54 @@ body.light-mode .helper-link-card{
     padding:4px 8px !important;
   }
 }
+
+/* === V5 HOTFIX: bigger phone number + kill recipient circle from .copy-box span:last-child === */
+.phone-copy-box__recipient-name,
+.phone-copy-box .phone-copy-box__recipient-name,
+.copy-box .phone-copy-box__recipient-name{
+  width:auto !important;
+  min-width:0 !important;
+  height:auto !important;
+  min-height:32px !important;
+  border-radius:12px !important;
+  background:linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.05)) !important;
+  border:1px solid rgba(255,255,255,0.08) !important;
+  box-shadow:none !important;
+  padding:6px 12px !important;
+}
+html.theme-light .phone-copy-box__recipient-name,
+body.light-mode .phone-copy-box__recipient-name,
+html.theme-light .copy-box .phone-copy-box__recipient-name,
+body.light-mode .copy-box .phone-copy-box__recipient-name{
+  background:linear-gradient(135deg, rgba(219,234,254,0.92), rgba(239,246,255,0.95)) !important;
+  border:1px solid rgba(96,165,250,0.22) !important;
+}
+.phone-copy-box__recipient,
+.phone-copy-box .phone-copy-box__recipient{
+  align-items:center !important;
+}
+.phone-copy-box__number,
+.phone-copy-box .phone-copy-box__number{
+  font-size:21px !important;
+  letter-spacing:0.02em !important;
+  line-height:1.15 !important;
+}
+@media (max-width: 420px){
+  .phone-copy-box__number,
+  .phone-copy-box .phone-copy-box__number{
+    font-size:18px !important;
+    letter-spacing:0.01em !important;
+  }
+  .phone-copy-box__recipient-name,
+  .copy-box .phone-copy-box__recipient-name{
+    min-height:30px !important;
+    padding:5px 11px !important;
+    font-size:13px !important;
+  }
+}
+@media (max-width: 360px){
+  .phone-copy-box__number,
+  .phone-copy-box .phone-copy-box__number{
+    font-size:17px !important;
+  }
+}
