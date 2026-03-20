@@ -3672,7 +3672,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   window.openAdminPanel = window.openAdminPanel;
 })();
 
-/* === V9 HOTFIX: drag filters left/right with touch and mouse, no scrollbar needed === */
+/* === V11 HOTFIX: native touch swipe + safe mouse drag for horizontal filters === */
 (function(){
   const DRAG_SCROLL_SELECTORS = ['.tasks-seg-switch', '.pf-bar', '.ops-filter', '.admin-tabs'];
 
@@ -3681,76 +3681,69 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     el.dataset.dragScrollReady = '1';
     el.setAttribute('data-drag-scroll', '1');
 
-    let pointerDown = false;
-    let dragging = false;
+    let isMouseDown = false;
+    let isDragging = false;
+    let suppressClick = false;
     let startX = 0;
     let startScrollLeft = 0;
-    let pointerId = null;
-    let movedX = 0;
-    let startedOnInteractive = false;
 
     const overflowed = () => (el.scrollWidth - el.clientWidth) > 4;
-    const isInteractiveTarget = (node) => {
-      return !!(node && node.closest && node.closest('button,a,input,select,textarea,label,[role="button"],.nav-item,.tasks-seg-btn,.pf-item,.ops-btn,.admin-tab'));
-    };
 
-    const stopDragging = () => {
-      if (!pointerDown && !dragging) return;
-      pointerDown = false;
-      const wasDragging = dragging;
-      dragging = false;
+    const finishDrag = () => {
+      if (!isMouseDown && !isDragging) return;
+      isMouseDown = false;
       el.classList.remove('dragging');
-      if (wasDragging && movedX > 14) {
-        el.dataset.justDragged = '1';
-        window.setTimeout(() => { delete el.dataset.justDragged; }, 140);
+      if (isDragging) {
+        suppressClick = true;
+        window.setTimeout(() => { suppressClick = false; }, 160);
       }
-      try { if (pointerId !== null) el.releasePointerCapture?.(pointerId); } catch (_) {}
-      pointerId = null;
-      movedX = 0;
-      startedOnInteractive = false;
+      isDragging = false;
     };
 
-    el.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // Touch devices: use native horizontal swipe only.
+    // Desktop: add mouse drag without breaking button clicks.
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
       if (!overflowed()) return;
-      pointerDown = true;
-      dragging = false;
-      pointerId = e.pointerId;
+      isMouseDown = true;
+      isDragging = false;
       startX = e.clientX;
       startScrollLeft = el.scrollLeft;
-      movedX = 0;
-      startedOnInteractive = isInteractiveTarget(e.target);
-      try { el.setPointerCapture?.(e.pointerId); } catch (_) {}
     });
 
-    el.addEventListener('pointermove', (e) => {
-      if (!pointerDown) return;
+    window.addEventListener('mousemove', (e) => {
+      if (!isMouseDown) return;
       const dx = e.clientX - startX;
-      movedX = Math.max(movedX, Math.abs(dx));
-
-      const startThreshold = startedOnInteractive ? 14 : 8;
-      if (!dragging && Math.abs(dx) > startThreshold) {
-        dragging = true;
+      if (!isDragging && Math.abs(dx) > 8) {
+        isDragging = true;
         el.classList.add('dragging');
       }
-      if (!dragging) return;
+      if (!isDragging) return;
       el.scrollLeft = startScrollLeft - dx;
       e.preventDefault();
-    });
+    }, { passive: false });
 
-    el.addEventListener('pointerup', stopDragging);
-    el.addEventListener('pointercancel', stopDragging);
-    el.addEventListener('lostpointercapture', stopDragging);
-    el.addEventListener('mouseleave', (e) => {
-      if (pointerDown && e.buttons === 0) stopDragging();
+    window.addEventListener('mouseup', finishDrag);
+    el.addEventListener('mouseleave', () => {
+      if (isMouseDown && !isDragging) finishDrag();
     });
 
     el.addEventListener('click', (e) => {
-      if (el.dataset.justDragged === '1') {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+      if (!suppressClick) return;
+      e.preventDefault();
+      e.stopPropagation();
     }, true);
+
+    // Desktop wheel -> horizontal scroll feels natural.
+    el.addEventListener('wheel', (e) => {
+      if (!overflowed()) return;
+      const mostlyVertical = Math.abs(e.deltaY) > Math.abs(e.deltaX);
+      if (!mostlyVertical && Math.abs(e.deltaX) < 2) return;
+      const delta = mostlyVertical ? e.deltaY : e.deltaX;
+      if (Math.abs(delta) < 2) return;
+      el.scrollLeft += delta;
+      e.preventDefault();
+    }, { passive: false });
 
     el.addEventListener('dragstart', (e) => e.preventDefault());
   }
