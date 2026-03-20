@@ -3671,3 +3671,88 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
 })();
+
+/* === V9 HOTFIX: drag filters left/right with touch and mouse, no scrollbar needed === */
+(function(){
+  const DRAG_SCROLL_SELECTORS = ['.tasks-seg-switch', '.pf-bar', '.ops-filter', '.admin-tabs'];
+
+  function enableDragScroll(el){
+    if (!el || el.dataset.dragScrollReady === '1') return;
+    el.dataset.dragScrollReady = '1';
+    el.setAttribute('data-drag-scroll', '1');
+
+    let pointerDown = false;
+    let dragging = false;
+    let startX = 0;
+    let startScrollLeft = 0;
+    let pointerId = null;
+
+    const overflowed = () => (el.scrollWidth - el.clientWidth) > 4;
+
+    const stopDragging = () => {
+      if (!pointerDown && !dragging) return;
+      pointerDown = false;
+      const wasDragging = dragging;
+      dragging = false;
+      el.classList.remove('dragging');
+      if (wasDragging) {
+        el.dataset.justDragged = '1';
+        window.setTimeout(() => { delete el.dataset.justDragged; }, 120);
+      }
+      try { if (pointerId !== null) el.releasePointerCapture?.(pointerId); } catch (_) {}
+      pointerId = null;
+    };
+
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (!overflowed()) return;
+      pointerDown = true;
+      dragging = false;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startScrollLeft = el.scrollLeft;
+      try { el.setPointerCapture?.(e.pointerId); } catch (_) {}
+    });
+
+    el.addEventListener('pointermove', (e) => {
+      if (!pointerDown) return;
+      const dx = e.clientX - startX;
+      if (!dragging && Math.abs(dx) > 6) {
+        dragging = true;
+        el.classList.add('dragging');
+      }
+      if (!dragging) return;
+      el.scrollLeft = startScrollLeft - dx;
+      e.preventDefault();
+    });
+
+    el.addEventListener('pointerup', stopDragging);
+    el.addEventListener('pointercancel', stopDragging);
+    el.addEventListener('lostpointercapture', stopDragging);
+    el.addEventListener('mouseleave', (e) => {
+      if (pointerDown && e.buttons === 0) stopDragging();
+    });
+
+    el.addEventListener('click', (e) => {
+      if (el.dataset.justDragged === '1') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+
+    el.addEventListener('dragstart', (e) => e.preventDefault());
+  }
+
+  function initDragScrollContainers(root){
+    const scope = root || document;
+    DRAG_SCROLL_SELECTORS.forEach((selector) => {
+      scope.querySelectorAll(selector).forEach(enableDragScroll);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initDragScrollContainers(document);
+    const mo = new MutationObserver(() => initDragScrollContainers(document));
+    try { mo.observe(document.body, { childList:true, subtree:true }); } catch (_) {}
+  });
+})();
