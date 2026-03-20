@@ -3686,8 +3686,13 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     let startX = 0;
     let startScrollLeft = 0;
     let pointerId = null;
+    let movedX = 0;
+    let startedOnInteractive = false;
 
     const overflowed = () => (el.scrollWidth - el.clientWidth) > 4;
+    const isInteractiveTarget = (node) => {
+      return !!(node && node.closest && node.closest('button,a,input,select,textarea,label,[role="button"],.nav-item,.tasks-seg-btn,.pf-item,.ops-btn,.admin-tab'));
+    };
 
     const stopDragging = () => {
       if (!pointerDown && !dragging) return;
@@ -3695,12 +3700,14 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       const wasDragging = dragging;
       dragging = false;
       el.classList.remove('dragging');
-      if (wasDragging) {
+      if (wasDragging && movedX > 14) {
         el.dataset.justDragged = '1';
-        window.setTimeout(() => { delete el.dataset.justDragged; }, 120);
+        window.setTimeout(() => { delete el.dataset.justDragged; }, 140);
       }
       try { if (pointerId !== null) el.releasePointerCapture?.(pointerId); } catch (_) {}
       pointerId = null;
+      movedX = 0;
+      startedOnInteractive = false;
     };
 
     el.addEventListener('pointerdown', (e) => {
@@ -3711,13 +3718,18 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       pointerId = e.pointerId;
       startX = e.clientX;
       startScrollLeft = el.scrollLeft;
+      movedX = 0;
+      startedOnInteractive = isInteractiveTarget(e.target);
       try { el.setPointerCapture?.(e.pointerId); } catch (_) {}
     });
 
     el.addEventListener('pointermove', (e) => {
       if (!pointerDown) return;
       const dx = e.clientX - startX;
-      if (!dragging && Math.abs(dx) > 6) {
+      movedX = Math.max(movedX, Math.abs(dx));
+
+      const startThreshold = startedOnInteractive ? 14 : 8;
+      if (!dragging && Math.abs(dx) > startThreshold) {
         dragging = true;
         el.classList.add('dragging');
       }
