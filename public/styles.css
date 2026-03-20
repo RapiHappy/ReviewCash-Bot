@@ -2163,7 +2163,7 @@ body.light-mode .filter-slider-wrap[data-kind="scroll"]{
   -webkit-overflow-scrolling:touch !important;
   scrollbar-width:none !important;
   -ms-overflow-style:none !important;
-  touch-action:pan-x !important;
+  touch-action:pan-y pinch-zoom !important;
   cursor:grab;
 }
 .tasks-seg-switch::-webkit-scrollbar,
@@ -2194,7 +2194,13 @@ body.light-mode .filter-slider-wrap[data-kind="scroll"]{
 [data-drag-scroll="1"]{
   user-select:none;
 }
-[data-drag-scroll="1"] *{
+[data-drag-scroll="1"] button,
+[data-drag-scroll="1"] a,
+[data-drag-scroll="1"] .nav-item,
+[data-drag-scroll="1"] .tasks-seg-btn,
+[data-drag-scroll="1"] .pf-item,
+[data-drag-scroll="1"] .ops-btn,
+[data-drag-scroll="1"] .admin-tab{
   user-select:none;
 }
 [data-drag-scroll="1"].dragging{
