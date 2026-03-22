@@ -356,8 +356,8 @@ function tgAlert(msg, kind = "info", title = "") {
   const TG_EXTRA_RETENTION_COST_PER_DAY = 3;
 
   // Reviews payouts you asked for
-  const YA = { costPer: 120, reward: 3, title: "Яндекс Карты — отзыв" };
-  const GM = { costPer: 75, reward: 3, title: "Google Maps — отзыв" };
+  const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
+  const GM = { costPer: 75, reward: 50, title: "Google Maps — отзыв" };
 
   // --------------------
   // State
