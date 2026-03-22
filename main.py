@@ -822,6 +822,77 @@ async def sb_select_in(
             q = q.limit(limit)
         return q.execute()
     return await sb_exec(_f)
+
+async def sb_count(
+    table: str,
+    match: dict | None = None,
+    neq: dict | None = None,
+    gt: dict | None = None,
+    gte: dict | None = None,
+    lt: dict | None = None,
+    lte: dict | None = None,
+):
+    def _f():
+        q = sb.table(table).select("*", count="exact", head=True)
+        if match:
+            for k, v in match.items():
+                q = q.eq(k, v)
+        if neq:
+            for k, v in neq.items():
+                q = q.neq(k, v)
+        if gt:
+            for k, v in gt.items():
+                q = q.gt(k, v)
+        if gte:
+            for k, v in gte.items():
+                q = q.gte(k, v)
+        if lt:
+            for k, v in lt.items():
+                q = q.lt(k, v)
+        if lte:
+            for k, v in lte.items():
+                q = q.lte(k, v)
+        res = q.execute()
+        return int(getattr(res, "count", 0) or 0)
+    try:
+        return await sb_exec(_f)
+    except Exception as e:
+        log.warning("sb_count failed table=%s: %s", table, e)
+        return 0
+
+async def sb_distinct_count(
+    table: str,
+    column: str,
+    match: dict | None = None,
+    batch: int = 1000,
+    max_rows: int = 100000,
+):
+    def _f():
+        seen = set()
+        start = 0
+        while True:
+            q = sb.table(table).select(column)
+            if match:
+                for k, v in match.items():
+                    q = q.eq(k, v)
+            q = q.order(column, desc=False).range(start, start + batch - 1)
+            res = q.execute()
+            rows = res.data or []
+            if not rows:
+                break
+            for row in rows:
+                val = row.get(column)
+                if val is not None and val != "":
+                    seen.add(val)
+            start += len(rows)
+            if len(rows) < batch or start >= max_rows:
+                break
+        return len(seen)
+    try:
+        return await sb_exec(_f)
+    except Exception as e:
+        log.warning("sb_distinct_count failed table=%s column=%s: %s", table, column, e)
+        return 0
 # -------------------------
 # helpers: tolerate schema differences (e.g., balances table without 'level' column)
 # -------------------------
@@ -4288,6 +4359,98 @@ async def cmd_stars_tx(message: Message):
 
     for chunk in chunks:
         await message.answer(chunk)
+
+
+def _admin_stats_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Обновить статистику", callback_data="adminstats:refresh")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+async def build_main_admin_stats_text() -> str:
+    today = _day().isoformat()
+
+    users_total = await sb_count(T_USERS)
+    bot_started = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")})
+    miniapp_opened = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")})
+
+    tasks_total = await sb_count(T_TASKS)
+    tasks_active = await sb_count(T_TASKS, match={"status": "active"}, gt={"qty_left": 0})
+    creators_total = await sb_distinct_count(T_TASKS, "owner_id")
+
+    completions_total = await sb_count(T_COMP)
+    completions_paid = await sb_count(T_COMP, match={"status": "paid"})
+    completions_pending = await sb_count(T_COMP, match={"status": "pending"})
+    completions_rejected = await sb_count(T_COMP, match={"status": "rejected"})
+    executors_total = await sb_distinct_count(T_COMP, "user_id")
+
+    topups_paid = await sb_count(T_PAY, match={"status": "paid"}, neq={"provider": "admin_credit"})
+    topups_pending = await sb_count(T_PAY, match={"status": "pending"}, neq={"provider": "admin_credit"})
+    withdrawals_total = await sb_count(T_WD)
+    withdrawals_paid = await sb_count(T_WD, match={"status": "paid"})
+    withdrawals_pending = await sb_count(T_WD, match={"status": "pending"})
+
+    banned_total = await sb_count(T_USERS, match={"is_banned": True})
+
+    day_stats = await sb_select(T_STATS, {"day": today}, limit=1)
+    ds = (day_stats.data or [{}])[0] if getattr(day_stats, "data", None) else {}
+    day_revenue = float(ds.get("revenue_rub") or 0)
+    day_payouts = float(ds.get("payouts_rub") or 0)
+    day_topups = float(ds.get("topups_rub") or 0)
+
+    return (
+        "📊 Статистика бота\n"
+        f"Обновлено: {_now().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+        "👥 Пользователи\n"
+        f"• Всего в базе: {users_total}\n"
+        f"• Нажали /start: {bot_started}\n"
+        f"• Открывали Mini App: {miniapp_opened}\n"
+        f"• Забанено: {banned_total}\n\n"
+        "🧩 Задания\n"
+        f"• Всего создано: {tasks_total}\n"
+        f"• Активных сейчас: {tasks_active}\n"
+        f"• Создателей заданий: {creators_total}\n\n"
+        "✅ Выполнения\n"
+        f"• Всего попыток/отчётов: {completions_total}\n"
+        f"• Оплачено: {completions_paid}\n"
+        f"• На проверке: {completions_pending}\n"
+        f"• Отклонено: {completions_rejected}\n"
+        f"• Уникальных исполнителей: {executors_total}\n\n"
+        "💸 Финансы\n"
+        f"• Пополнений оплачено: {topups_paid}\n"
+        f"• Пополнений в ожидании: {topups_pending}\n"
+        f"• Выводов всего: {withdrawals_total}\n"
+        f"• Выводов оплачено: {withdrawals_paid}\n"
+        f"• Выводов в ожидании: {withdrawals_pending}\n\n"
+        f"📅 За сегодня ({today})\n"
+        f"• Выручка: {day_revenue:.2f}₽\n"
+        f"• Выплаты: {day_payouts:.2f}₽\n"
+        f"• Пополнения: {day_topups:.2f}₽"
+    )
+
+
+@dp.message(Command("adminstats"))
+async def cmd_adminstats(message: Message):
+    if int(message.from_user.id) != int(MAIN_ADMIN_ID or 0):
+        return await message.answer("⛔ Только для главного админа")
+    text = await build_main_admin_stats_text()
+    await message.answer(text, reply_markup=_admin_stats_kb())
+
+
+@dp.callback_query(F.data == "adminstats:refresh")
+async def cb_adminstats_refresh(cq: CallbackQuery):
+    if int(cq.from_user.id) != int(MAIN_ADMIN_ID or 0):
+        return await cq.answer("Только для главного админа", show_alert=True)
+    text = await build_main_admin_stats_text()
+    try:
+        await cq.message.edit_text(text, reply_markup=_admin_stats_kb())
+    except Exception:
+        try:
+            await cq.message.answer(text, reply_markup=_admin_stats_kb())
+        except Exception:
+            pass
+    await cq.answer("Статистика обновлена")
 
 # Stars платежи: Telegram требует PreCheckout ok=True
 @dp.callback_query()
