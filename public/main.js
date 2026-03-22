@@ -356,8 +356,8 @@ function tgAlert(msg, kind = "info", title = "") {
   const TG_EXTRA_RETENTION_COST_PER_DAY = 3;
 
   // Reviews payouts you asked for
-  const YA = { costPer: 12, reward: 3, title: "Яндекс Карты — отзыв" };
-  const GM = { costPer: 12, reward: 3, title: "Google Maps — отзыв" };
+  const YA = { costPer: 120, reward: 3, title: "Яндекс Карты — отзыв" };
+  const GM = { costPer: 75, reward: 3, title: "Google Maps — отзыв" };
 
   // --------------------
   // State
@@ -2134,6 +2134,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     sel.value = available.some(t => t.id === prevValue) ? prevValue : available[0].id;
   }
 
+  function updateCreateTypeLabels() {
+    const sel = $("t-type");
+    if (!sel) return;
+    const yaOpt = sel.querySelector('option[value="ya"]');
+    const gmOpt = sel.querySelector('option[value="gm"]');
+    if (yaOpt) yaOpt.textContent = `📍 Яндекс Карты (${YA.costPer}₽)`;
+    if (gmOpt) gmOpt.textContent = `🌍 Google Maps (${GM.costPer}₽)`;
+  }
+
   function currentCreateType() {
     const t = $("t-type");
     return t ? String(t.value || "tg") : "tg";
@@ -2190,16 +2199,41 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const type = currentCreateType();
     const wrap = $("review-text-config");
     const helper = $("review-variants-helper");
+    const badge = $("review-mode-badge");
+    const textarea = $("t-review-variants");
     const mode = getCustomReviewMode();
-    if (wrap) wrap.classList.toggle("hidden", !(type === "ya" || type === "gm"));
-    if (!helper || !(type === "ya" || type === "gm")) return;
+    const isReviewType = (type === "ya" || type === "gm");
+
+    if (wrap) {
+      wrap.classList.toggle("hidden", !isReviewType);
+      wrap.dataset.mode = isReviewType ? mode : "hidden";
+    }
+    if (!helper || !isReviewType) return;
+
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
+    const lines = getCustomReviewTexts().length;
+
     if (mode === "single") {
-      helper.textContent = "Один и тот же текст увидят все исполнители. Выбирай этот режим, только если специально хочешь одинаковый отзыв для всех.";
+      if (badge) badge.textContent = "👥 Один текст получат все";
+      helper.textContent = "Напиши один готовый отзыв. Этот же текст увидят все исполнители. Используй только если специально нужен одинаковый текст для всех.";
+      if (textarea) {
+        textarea.placeholder = "Напиши 1 готовый текст отзыва.\nИменно этот текст получат все исполнители.";
+        textarea.rows = 4;
+      }
     } else if (mode === "per_item") {
-      helper.textContent = `Каждая строка — отдельный текст для одного исполнения. Сейчас заказано ${qty} шт., поэтому добавь минимум ${qty} разных строк.`;
+      if (badge) badge.textContent = `🔥 Разный текст: ${lines}/${qty} строк`;
+      helper.textContent = `Внимание: каждая новая строка — это отдельный отзыв для одного исполнителя. Сейчас заказано ${qty} шт., поэтому нужно минимум ${qty} разных строк.`;
+      if (textarea) {
+        textarea.placeholder = "Каждая новая строка = отдельный отзыв.\nПример 1: Уютное место, всё понравилось.\nПример 2: Быстро обслужили, приду ещё раз.";
+        textarea.rows = Math.max(5, Math.min(8, qty));
+      }
     } else {
-      helper.textContent = "По умолчанию можно не задавать текст. Но если нужны отзывы, лучше выбрать режим с отдельным текстом на каждую штуку.";
+      if (badge) badge.textContent = "🚫 Готовый текст не задан";
+      helper.textContent = "Можно ничего не писать. Но если хочешь выдать исполнителям готовые тексты, выбери режим выше — особенно удобно для варианта «разный текст для каждого отзыва».";
+      if (textarea) {
+        textarea.placeholder = "Здесь можно оставить готовые тексты отзывов, если они нужны заказу.";
+        textarea.rows = 4;
+      }
     }
   }
 
@@ -3626,6 +3660,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     ensureFilterSliders();
     initPlatformSliderDrag();
     initTgSubtypeSelect();
+    updateCreateTypeLabels();
     initTgTargetChecker();
     initPlatformFilterIcons();
     requestAnimationFrame(refreshFilterSliders);
