@@ -4369,11 +4369,27 @@ def _admin_stats_kb():
 
 
 async def build_main_admin_stats_text() -> str:
+    now_dt = _now()
     today = _day().isoformat()
 
     users_total = await sb_count(T_USERS)
     bot_started = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")})
     miniapp_opened = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")})
+
+    recent_10m = (now_dt - timedelta(minutes=10)).isoformat()
+    recent_1h = (now_dt - timedelta(hours=1)).isoformat()
+    recent_24h = (now_dt - timedelta(hours=24)).isoformat()
+    recent_7d = (now_dt - timedelta(days=7)).isoformat()
+
+    starts_10m = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")}, gte={"last_at": recent_10m})
+    starts_1h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")}, gte={"last_at": recent_1h})
+    starts_24h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")}, gte={"last_at": recent_24h})
+    starts_7d = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")}, gte={"last_at": recent_7d})
+
+    mini_10m = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_10m})
+    mini_1h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_1h})
+    mini_24h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_24h})
+    mini_7d = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_7d})
 
     tasks_total = await sb_count(T_TASKS)
     tasks_active = await sb_count(T_TASKS, match={"status": "active"}, gt={"qty_left": 0})
@@ -4401,12 +4417,21 @@ async def build_main_admin_stats_text() -> str:
 
     return (
         "📊 Статистика бота\n"
-        f"Обновлено: {_now().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+        f"Обновлено: {now_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
         "👥 Пользователи\n"
         f"• Всего в базе: {users_total}\n"
         f"• Нажали /start: {bot_started}\n"
         f"• Открывали Mini App: {miniapp_opened}\n"
         f"• Забанено: {banned_total}\n\n"
+        "🔥 Недавно пришло\n"
+        f"• /start за 10 мин: {starts_10m}\n"
+        f"• /start за 1 час: {starts_1h}\n"
+        f"• /start за 24 часа: {starts_24h}\n"
+        f"• /start за 7 дней: {starts_7d}\n"
+        f"• Mini App за 10 мин: {mini_10m}\n"
+        f"• Mini App за 1 час: {mini_1h}\n"
+        f"• Mini App за 24 часа: {mini_24h}\n"
+        f"• Mini App за 7 дней: {mini_7d}\n\n"
         "🧩 Задания\n"
         f"• Всего создано: {tasks_total}\n"
         f"• Активных сейчас: {tasks_active}\n"
@@ -4428,7 +4453,6 @@ async def build_main_admin_stats_text() -> str:
         f"• Выплаты: {day_payouts:.2f}₽\n"
         f"• Пополнения: {day_topups:.2f}₽"
     )
-
 
 @dp.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
