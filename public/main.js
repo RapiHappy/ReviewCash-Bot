@@ -1942,15 +1942,50 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
 
   function renderTaskInstructionHtml(task) {
-    const baseText = safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
-    const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Текст</div><div>${baseText}</div></div>` : "";
+    const instructionText = String(getTaskInstructionText(task) || "").trim();
+    const taskType = String((task && task.type) || "").toLowerCase();
+    const taskTypeRu = String((task && task.type_ru) || "").toLowerCase();
+    const subtype = String((task && task.tg_subtype) || "").toLowerCase();
+    const looksLikeReview = [taskType, taskTypeRu, subtype].some(v => /review|отзыв|yandex|яндекс|google/.test(v));
+
+    const stepsHtml = `
+      <div class="task-instruction-card">
+        <div class="task-instruction-title">🚀 Как выполнить задание</div>
+        <div class="task-instruction-steps">
+          <div class="task-instruction-step"><span class="task-step-badge">1</span><span>Открой приложение</span></div>
+          <div class="task-instruction-step"><span class="task-step-badge">2</span><span>Выбери задание</span></div>
+          <div class="task-instruction-step"><span class="task-step-badge">3</span><span>Нажми «Перейти к выполнению»</span></div>
+          <div class="task-instruction-step"><span class="task-step-badge">4</span><span>Выполни задание</span></div>
+          <div class="task-instruction-step"><span class="task-step-badge">5</span><span>Отправь отчёт</span></div>
+          <div class="task-instruction-step"><span class="task-step-badge">6</span><span>Получи оплату после проверки</span></div>
+        </div>
+      </div>`;
+
+    const reviewExtraHtml = looksLikeReview ? `
+      <div class="task-instruction-card task-instruction-card-note">
+        <div class="task-instruction-title">📝 Яндекс / Google отзывы</div>
+        <div class="task-instruction-note">Перед отзывом обязательно:</div>
+        <div class="task-instruction-list">
+          <div>— лайкни 5 положительных отзывов</div>
+          <div>— лайкни 5 фото, если они есть</div>
+          <div>— зайди на сайт, если он указан</div>
+        </div>
+        <div class="task-instruction-final">Только после этого пиши отзыв ✨</div>
+      </div>` : "";
+
+    const base = instructionText
+      ? `<button type="button" class="task-info-card task-info-card-copy" onclick="copyTaskMainText(this)" data-task-text="${encodeURIComponent(instructionText)}"><div class="task-info-title-row"><div class="task-info-title">Текст</div><span class="task-info-copy-icon">📋</span></div><div class="task-info-text">${safeText(instructionText).replace(/
+/g, "<br>")}</div></button>`
+      : "";
+
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
-    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return base || safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
+    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return `${stepsHtml}${reviewExtraHtml}${base}` || safeText(instructionText).replace(/
+/g, "<br>");
     const heading = "Текст отзыва";
     const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyTaskReviewText(this)" data-review-text="${encodeURIComponent(String(text || ''))}"><span class="review-text-index">★</span><span class="review-text-content">${safeText(text)}</span><span class="review-text-copy-icon">📋</span></button>`).join("");
     const reviewCard = `<div class="review-text-card"><div class="review-text-title">${heading}</div>${items}</div>`;
-    return `${base}${reviewCard}`;
+    return `${stepsHtml}${reviewExtraHtml}${base}${reviewCard}`;
   }
 
 
