@@ -2370,3 +2370,9 @@ html.perf-low .brand-img{
   border-color:rgba(0,234,255,0.28);
   box-shadow:0 0 0 1px rgba(0,234,255,0.12) inset;
 }
+
+
+.task-info-card-copy{display:block;width:100%;text-align:left;background:linear-gradient(180deg, rgba(32,42,59,.95), rgba(23,31,44,.98));border:1px solid rgba(57,224,255,.22);cursor:pointer;}
+.task-info-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
+.task-info-copy-icon{flex:0 0 auto;font-size:18px;opacity:.95;}
+.task-info-card-copy.copied,.review-text-copy.copied{box-shadow:0 0 0 1px rgba(57,224,255,.3), 0 10px 24px rgba(0,0,0,.22);}
