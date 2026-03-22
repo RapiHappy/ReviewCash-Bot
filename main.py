@@ -4370,13 +4370,18 @@ def _admin_stats_kb():
 
 async def build_main_admin_stats_text() -> str:
     now_dt = _now()
-    today = _day().isoformat()
+    today_d = _day()
+    today = today_d.isoformat()
+    today_start = datetime.combine(today_d, time.min, tzinfo=timezone.utc)
+    yesterday_start = today_start - timedelta(days=1)
 
     users_total = await sb_count(T_USERS)
     bot_started = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("bot_start")})
     miniapp_opened = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")})
 
+    recent_5m = (now_dt - timedelta(minutes=5)).isoformat()
     recent_10m = (now_dt - timedelta(minutes=10)).isoformat()
+    recent_15m = (now_dt - timedelta(minutes=15)).isoformat()
     recent_1h = (now_dt - timedelta(hours=1)).isoformat()
     recent_24h = (now_dt - timedelta(hours=24)).isoformat()
     recent_7d = (now_dt - timedelta(days=7)).isoformat()
@@ -4390,6 +4395,13 @@ async def build_main_admin_stats_text() -> str:
     mini_1h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_1h})
     mini_24h = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_24h})
     mini_7d = await sb_count(T_LIMITS, match={"limit_key": tg_evt_key("miniapp_open")}, gte={"last_at": recent_7d})
+
+    new_users_today = await sb_count(T_USERS, gte={"created_at": today_start.isoformat()})
+    new_users_yesterday = await sb_count(T_USERS, gte={"created_at": yesterday_start.isoformat()}, lt={"created_at": today_start.isoformat()})
+
+    online_5m = await sb_count(T_USERS, gte={"last_seen_at": recent_5m})
+    online_15m = await sb_count(T_USERS, gte={"last_seen_at": recent_15m})
+    online_1h = await sb_count(T_USERS, gte={"last_seen_at": recent_1h})
 
     tasks_total = await sb_count(T_TASKS)
     tasks_active = await sb_count(T_TASKS, match={"status": "active"}, gt={"qty_left": 0})
@@ -4432,6 +4444,13 @@ async def build_main_admin_stats_text() -> str:
         f"• Mini App за 1 час: {mini_1h}\n"
         f"• Mini App за 24 часа: {mini_24h}\n"
         f"• Mini App за 7 дней: {mini_7d}\n\n"
+        "🆕 Новые пользователи\n"
+        f"• Сегодня: {new_users_today}\n"
+        f"• Вчера: {new_users_yesterday}\n\n"
+        "🟢 Онлайн / активность\n"
+        f"• Активны за 5 мин: {online_5m}\n"
+        f"• Активны за 15 мин: {online_15m}\n"
+        f"• Активны за 1 час: {online_1h}\n\n"
         "🧩 Задания\n"
         f"• Всего создано: {tasks_total}\n"
         f"• Активных сейчас: {tasks_active}\n"
