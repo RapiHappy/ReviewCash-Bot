@@ -1953,6 +1953,28 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     return `${base}${reviewCard}`;
   }
 
+
+  window.copyTaskMainText = async function (el) {
+    try {
+      const encoded = el && el.dataset ? String(el.dataset.taskText || "") : "";
+      const text = decodeURIComponent(encoded || "").trim();
+      const ok = await copyText(text);
+      if (ok && el) {
+        el.classList.add("copied");
+        const icon = el.querySelector(".task-info-copy-icon");
+        const prev = icon ? icon.textContent : "";
+        if (icon) icon.textContent = "✅";
+        setTimeout(() => {
+          el.classList.remove("copied");
+          if (icon) icon.textContent = prev || "📋";
+        }, 1200);
+      }
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  };
+
   window.copyTaskReviewText = async function (el) {
     try {
       const encoded = el && el.dataset ? String(el.dataset.reviewText || "") : "";
@@ -2998,6 +3020,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const box = $("history-list");
     if (!box) return;
     state._opsCache = Array.isArray(list) ? list.slice() : [];
+
     let view = Array.isArray(list) ? list.slice() : [];
     const f = state.opsFilter || "all";
     if (f !== "all") {
