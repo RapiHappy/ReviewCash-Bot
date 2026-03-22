@@ -594,16 +594,15 @@
       <textarea id="t-text" rows="2" placeholder="Например: Оставьте отзыв по опыту посещения, не меняйте смысл бренда." style="margin-top:5px;"></textarea>
 
       <div id="review-text-config" class="hidden" style="margin-top:14px;">
-        <label class="input-label" style="margin-top:0;">Текст отзыва от заказчика</label>
-        <select id="t-review-mode" onchange="recalc()" style="margin-top:5px;">
-          <option value="none">Не задавать</option>
-          <option value="per_item">Отдельный текст на каждое выполнение</option>
-          <option value="single">Один текст для всех</option>
+        <label class="input-label" style="margin-top:0;">Как выдавать готовый текст исполнителям</label>
+        <select id="t-review-mode" onchange="recalc()" class="review-mode-select" style="margin-top:5px;">
+          <option value="none">🚫 Без готового текста</option>
+          <option value="per_item">🔥 Разный текст для каждого отзыва</option>
+          <option value="single">👥 Один и тот же текст всем</option>
         </select>
-        <textarea id="t-review-variants" rows="4" placeholder="Одна строка = один текст отзыва.
-Для режима с разным текстом: 1 строка = 1 отдельный отзыв.
-Для одинакового текста всем — достаточно одной строки." style="margin-top:10px;"></textarea>
-        <div id="review-variants-helper" style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;"></div>
+        <div id="review-mode-badge" class="review-mode-badge">🚫 Готовый текст не задан</div>
+        <textarea id="t-review-variants" rows="4" placeholder="Выбери режим выше — здесь появится понятная подсказка, что именно вводить." style="margin-top:10px;"></textarea>
+        <div id="review-variants-helper" class="review-config-note" style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;"></div>
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
