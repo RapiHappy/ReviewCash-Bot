@@ -8,7 +8,7 @@ import time
 import asyncio
 import logging
 import html
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, date, timedelta, time as dt_time
 from typing import Any
 
 # Build/version string used for cache-busting in Telegram WebView
@@ -4372,7 +4372,7 @@ async def build_main_admin_stats_text() -> str:
     now_dt = _now()
     today_d = _day()
     today = today_d.isoformat()
-    today_start = datetime.combine(today_d, time.min, tzinfo=timezone.utc)
+    today_start = datetime.combine(today_d, dt_time.min, tzinfo=timezone.utc)
     yesterday_start = today_start - timedelta(days=1)
 
     users_total = await sb_count(T_USERS)
