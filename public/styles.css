@@ -2348,59 +2348,25 @@ html.perf-low .brand-img{
 }
 
 
-.task-guide-card{
-  margin-bottom:14px;
-  padding:14px;
-  border-radius:16px;
-  background: rgba(255,213,74,0.08);
-  border:1px solid rgba(255,213,74,0.18);
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-.task-guide-title{
-  font-size:12px;
-  font-weight:900;
-  color: var(--accent-yellow, #ffd54a);
-  text-transform: uppercase;
-  letter-spacing:.04em;
-}
-.task-guide-item{
-  display:flex;
-  align-items:flex-start;
-  gap:10px;
-  padding:10px 12px;
-  border-radius:14px;
-  background: rgba(255,255,255,0.04);
-}
-.task-guide-index{
-  width:24px;
-  height:24px;
-  border-radius:999px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  font-size:12px;
-  font-weight:900;
-  color:#1b1400;
-  background: linear-gradient(135deg, #ffd54a, #ffef9a);
-  flex:0 0 24px;
-}
 .review-text-copy{
   width:100%;
   text-align:left;
-  border:none;
   cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+  color:inherit;
 }
-.review-text-copy-badge{
+.review-text-copy-icon{
   margin-left:auto;
-  align-self:center;
-  white-space:nowrap;
-  font-size:11px;
-  font-weight:800;
-  color:var(--accent-cyan);
-  padding-left:10px;
+  flex:0 0 auto;
+  opacity:.85;
+  font-size:16px;
 }
-.review-text-body{
+.review-text-content{
   flex:1 1 auto;
+  white-space:pre-wrap;
+}
+.review-text-copy.copied{
+  border-color:rgba(0,234,255,0.28);
+  box-shadow:0 0 0 1px rgba(0,234,255,0.12) inset;
 }
