@@ -24,7 +24,7 @@
 (function () {
   "use strict";
 
-  const RC_BUILD = "rc_20260318_142800_icons2";
+  const RC_BUILD = "rc_20260322_lowend_compat";
   try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
 
 
@@ -130,7 +130,7 @@ function showConnectHint() {
   document.getElementById("btn-hide-hint").onclick = () => wrap.remove();
   document.getElementById("btn-open-bot-app").onclick = () => {
     try {
-      if (window.Telegram?.WebApp?.openTelegramLink) {
+      if ((window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openTelegramLink)) {
         // IMPORTANT: replace "app" with your BotFather WebApp short name if it's different
         window.Telegram.WebApp.openTelegramLink("https://t.me/ReviewCashOrg_Bot/app");
       } else {
@@ -144,7 +144,7 @@ function showConnectHint() {
 
 function tgAlert(msg, kind = "info", title = "") {
     // Pretty in-app toast (preferred). Falls back to Telegram alert only if toast UI missing.
-    const text = String(msg ?? "");
+    const text = String((msg == null) ? "" : msg);
     const clean = prettifyErrText(text);
     const k = (kind === "error" || /^\s*\d{3}[:\s]/.test(text) || /ошиб/i.test(text) || /лимит/i.test(text)) ? "error" : kind;
     showToast(k, clean, title || (k === "error" ? "Ошибка" : "Сообщение"));
@@ -219,7 +219,7 @@ function tgAlert(msg, kind = "info", title = "") {
   </defs>
   <rect width="128" height="128" rx="64" fill="#10131c"/>
   <rect width="128" height="128" rx="64" fill="url(#g)"/>
-  <text x="64" y="72" text-anchor="middle" font-family="Plus Jakarta Sans, Arial" font-size="44" font-weight="800" fill="#EAF9FF">${decodeURIComponent(txt)}</text>
+  <text x="64" y="72" text-anchor="middle" font-family="Inter, system-ui, -apple-system, Segoe UI, Arial" font-size="44" font-weight="800" fill="#EAF9FF">${decodeURIComponent(txt)}</text>
 </svg>`;
     return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   }
@@ -258,18 +258,30 @@ function tgAlert(msg, kind = "info", title = "") {
     if (!imgEl) return;
     const initials = initialsFromName(displayName);
     const placeholder = svgInitialAvatarDataUrl(initials);
+    const isLowPerf = state && state.perfMode === "low";
 
     // Make sure we always show something instantly
     try {
       imgEl.decoding = "async";
-      imgEl.loading = "eager";
+      imgEl.loading = isLowPerf ? "lazy" : "eager";
+      imgEl.referrerPolicy = "no-referrer";
     } catch (e) {}
 
     imgEl.style.opacity = "0.96";
-    imgEl.style.transition = "opacity .22s ease";
+    imgEl.style.transition = isLowPerf ? "none" : "opacity .22s ease";
     imgEl.src = placeholder;
 
     if (!url) return;
+
+    if (isLowPerf) {
+      imgEl.src = url;
+      imgEl.style.opacity = "1";
+      imgEl.onerror = function () {
+        imgEl.onerror = null;
+        imgEl.src = placeholder;
+      };
+      return;
+    }
 
     // If we have cached data-url (when CORS allows), use it immediately
     tryCacheAvatar(url).then((data) => {
@@ -398,15 +410,32 @@ function tgAlert(msg, kind = "info", title = "") {
 
   function detectPerfMode() {
     try {
+      var score = 0;
+
       // Respect OS/user preference first
       if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return "low";
 
-      // Heuristics (best-effort; not always available in Telegram WebView)
-      const mem = Number(navigator.deviceMemory || 0);
-      if (mem && mem <= 3) return "low";
+      var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+      var effectiveType = conn && conn.effectiveType ? String(conn.effectiveType) : "";
+      if (conn && conn.saveData) score += 3;
+      if (/2g|3g/i.test(effectiveType)) score += 2;
 
-      const cores = Number(navigator.hardwareConcurrency || 0);
-      if (cores && cores <= 4) return "low";
+      // Heuristics (best-effort; not always available in Telegram WebView)
+      var mem = Number(navigator.deviceMemory || 0);
+      if (mem && mem <= 2) score += 3;
+      else if (mem && mem <= 4) score += 2;
+
+      var cores = Number(navigator.hardwareConcurrency || 0);
+      if (cores && cores <= 4) score += 2;
+      else if (cores && cores <= 6) score += 1;
+
+      var sw = Math.min(Number((window.screen && window.screen.width) || 0), Number(window.innerWidth || 0)) || Number((window.screen && window.screen.width) || 0) || Number(window.innerWidth || 0) || 0;
+      if (sw && sw <= 430) score += 1;
+
+      var ua = String(navigator.userAgent || "");
+      if (/Android/i.test(ua) && (!cores || cores <= 8)) score += 1;
+
+      return score >= 2 ? "low" : "normal";
     } catch (e) {}
     return "normal";
   }
@@ -502,7 +531,7 @@ function tgAlert(msg, kind = "info", title = "") {
 
   function tasksRefreshIntervalMs() {
     // Low mode: refresh less often to save battery + CPU
-    return (state.perfMode === "low") ? 45000 : 15000;
+    return (state.perfMode === "low") ? 60000 : 20000;
   }
 
   function setTasksRefreshSpinning(on) {
@@ -774,7 +803,7 @@ function tgAlert(msg, kind = "info", title = "") {
   function ensureFilterSliders() {
     try {
       const seg = qs('.tasks-seg-switch');
-      if (seg && !seg.nextElementSibling?.classList?.contains('filter-slider-wrap')) {
+      if (seg && !(seg.nextElementSibling && seg.nextElementSibling.classList && seg.nextElementSibling.classList.contains('filter-slider-wrap'))) {
         const wrap = document.createElement('div');
         wrap.className = 'filter-slider-wrap is-hidden';
         wrap.setAttribute('data-kind', 'seg');
@@ -782,7 +811,7 @@ function tgAlert(msg, kind = "info", title = "") {
         seg.insertAdjacentElement('afterend', wrap);
       }
       const pf = qs('.pf-bar');
-      if (pf && !pf.nextElementSibling?.classList?.contains('filter-slider-wrap')) {
+      if (pf && !(pf.nextElementSibling && pf.nextElementSibling.classList && pf.nextElementSibling.classList.contains('filter-slider-wrap'))) {
         const wrap = document.createElement('div');
         wrap.className = 'filter-slider-wrap';
         wrap.setAttribute('data-kind', 'scroll');
@@ -828,6 +857,15 @@ function tgAlert(msg, kind = "info", title = "") {
   }
   window.refreshFilterSliders = refreshFilterSliders;
 
+  let _filterSliderRaf = 0;
+  function scheduleRefreshFilterSliders() {
+    if (_filterSliderRaf) return;
+    _filterSliderRaf = requestAnimationFrame(function () {
+      _filterSliderRaf = 0;
+      refreshFilterSliders();
+    });
+  }
+
   function initPlatformSliderDrag() {
     try {
       const bar = qs('.pf-bar');
@@ -855,7 +893,7 @@ function tgAlert(msg, kind = "info", title = "") {
         let x = clientX - rect.left - thumb.offsetWidth / 2;
         x = Math.max(0, Math.min(maxThumbX, x));
         bar.scrollLeft = (x / maxThumbX) * maxScroll;
-        updatePlatformSlider();
+        scheduleRefreshFilterSliders();
       };
 
       wrap.addEventListener('click', (e) => {
@@ -870,7 +908,7 @@ function tgAlert(msg, kind = "info", title = "") {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(thumb).transform);
         startLeft = matrix.m41 || 0;
         wrap.classList.add('dragging');
-        thumb.setPointerCapture?.(e.pointerId);
+        if (thumb.setPointerCapture) thumb.setPointerCapture(e.pointerId);
         e.preventDefault();
       });
 
@@ -881,14 +919,14 @@ function tgAlert(msg, kind = "info", title = "") {
         let next = startLeft + (e.clientX - startX);
         next = Math.max(0, Math.min(maxThumbX, next));
         bar.scrollLeft = (next / maxThumbX) * maxScroll;
-        updatePlatformSlider();
+        scheduleRefreshFilterSliders();
       });
 
       const stopDrag = (e) => {
         if (!dragging) return;
         dragging = false;
         wrap.classList.remove('dragging');
-        try { thumb.releasePointerCapture?.(e.pointerId); } catch (_) {}
+        try { if (thumb.releasePointerCapture) thumb.releasePointerCapture(e.pointerId); } catch (_) {}
       };
       thumb.addEventListener('pointerup', stopDrag);
       thumb.addEventListener('pointercancel', stopDrag);
@@ -980,9 +1018,9 @@ function tgAlert(msg, kind = "info", title = "") {
     try {
       const parts = (Array.isArray(tasks) ? tasks : []).map(t => {
         const id = String(t && t.id || "");
-        const left = String(t && (t.qty_left ?? "") );
-        const total = String(t && (t.qty_total ?? "") );
-        const st = String(t && (t.status ?? "") );
+        const left = String(t && t.qty_left != null ? t.qty_left : "");
+        const total = String(t && t.qty_total != null ? t.qty_total : "");
+        const st = String(t && t.status != null ? t.status : "");
         return id + ":" + left + "/" + total + ":" + st;
       }).sort();
       return parts.join("|");
@@ -1500,6 +1538,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     box.innerHTML = "";
+    const frag = document.createDocumentFragment();
 
     list.forEach(t => {
       const left = Math.max(0, Number(t.qty_left || 0));
@@ -1569,8 +1608,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         card.addEventListener("click", () => openTaskDetails(t));
       }
 
-      box.appendChild(card);
+      frag.appendChild(card);
     });
+
+    box.appendChild(frag);
   }
 
 
@@ -3521,7 +3562,10 @@ async function loadAdminTasks() {
         </div>
         <div style="font-size:11px; opacity:0.65; margin-top:8px;">Бан по умолчанию — глобальный на 1 день. Штраф — списание ₽.</div>
       `);
-      const getUid = () => Number((um.querySelector("#admin-user-id")?.value || "").trim() || 0);
+      const getUid = () => {
+        const uidInput = um.querySelector("#admin-user-id");
+        return Number((((uidInput && uidInput.value) || "").trim()) || 0);
+      };
       const bban = um.querySelector('[data-um-ban="1"]');
       if (bban) bban.onclick = () => { const u = getUid(); if (u) adminBanQuick(u, "global", 1); else tgAlert("Введите User ID", "error"); };
       const bunban = um.querySelector('[data-um-unban="1"]');
@@ -3648,7 +3692,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           state.user.first_name = tu.first_name;
           state.user.last_name = tu.last_name;
           state.user.photo_url = tu.photo_url;
-          if (tu.photo_url) { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
+          if (tu.photo_url && state.perfMode !== "low") { const im = new Image(); im.decoding = "async"; im.src = tu.photo_url; }
           renderHeader();
           renderProfile();
         }
@@ -3664,8 +3708,8 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     initTgTargetChecker();
     initPlatformFilterIcons();
     requestAnimationFrame(refreshFilterSliders);
-    window.addEventListener("resize", refreshFilterSliders, { passive: true });
-    try { const pfBar = qs(".pf-bar"); if (pfBar) pfBar.addEventListener("scroll", updatePlatformSlider, { passive: true }); } catch (e) {}
+    window.addEventListener("resize", scheduleRefreshFilterSliders, { passive: true });
+    try { const pfBar = qs(".pf-bar"); if (pfBar) pfBar.addEventListener("scroll", scheduleRefreshFilterSliders, { passive: true }); } catch (e) {}
 
     try {
       requestAnimationFrame(() => {
