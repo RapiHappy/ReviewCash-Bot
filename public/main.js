@@ -1915,62 +1915,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
 
 
-  function stripTaskMetaLines(raw) {
-    return String(raw || "")
-      .replace(/(^|\n)\s*(TG_SUBTYPE|RETENTION_DAYS|CUSTOM_REVIEW_MODE|CUSTOM_REVIEW_TEXTS)\s*:\s*.*(?=\n|$)/ig, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-  function getTaskExecutionGuideHtml(task) {
-    const type = String((task && task.type) || "").trim();
-    let steps = [];
-    if (type === "ya" || type === "gm") {
-      steps = [
-        "Нажми «Перейти к выполнению».",
-        "Перед отзывом лайкни 5 положительных отзывов.",
-        "Лайкни 5 фото, если они есть.",
-        "Зайди на сайт, если он указан.",
-        "Опубликуй отзыв, сделай скриншот и отправь отчёт."
-      ];
-    } else {
-      steps = [
-        "Нажми «Перейти к выполнению».",
-        "Выполни задание по ссылке.",
-        "Не отменяй действие раньше срока удержания.",
-        "После выполнения нажми кнопку проверки или отправь отчёт."
-      ];
-    }
-    const items = steps.map((s, i) => `<div class="task-guide-item"><span class="task-guide-index">${i + 1}</span><span>${safeText(s)}</span></div>`).join("");
-    return `<div class="task-guide-card"><div class="task-guide-title">Как выполнить</div>${items}</div>`;
-  }
-
-  function buildAutoCreateInstructions(type, subtype, extraDays = 0) {
-    const t = String(type || "").trim();
-    const sub = String(subtype || "").trim();
-    if (t === "ya" || t === "gm") {
-      return [
-        "Нажмите «Перейти к выполнению».",
-        "Перед отзывом лайкните 5 положительных отзывов.",
-        "Лайкните 5 фото, если они есть.",
-        "Зайдите на сайт, если он указан.",
-        "После этого оставьте отзыв, сделайте скриншот и отправьте отчёт."
-      ].join("\n");
-    }
-    const retentionDays = tgTotalRetentionDays(sub, extraDays);
-    const map = {
-      sub_channel: `Подпишитесь на Telegram-канал и оставайтесь подписанным ${retentionDays} дн. Если выйти раньше — будет штраф.`,
-      sub_24h: `Подпишитесь на Telegram-канал и оставайтесь подписанным ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-      sub_48h: `Подпишитесь на Telegram-канал и оставайтесь подписанным ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-      sub_72h: `Подпишитесь на Telegram-канал и оставайтесь подписанным ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-      join_group: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Если выйти раньше — будет штраф.`,
-      join_group_24h: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-      join_group_48h: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-      join_group_72h: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Бот перепроверит участие автоматически.`,
-    };
-    return map[sub] || "Выполните задание и нажмите кнопку проверки.";
-  }
-
   function getTaskInstructionText(task) {
     const subtype = String((task && task.tg_subtype) || "").trim();
     const retentionDays = Number((task && task.retention_days) || 0) || tgTotalRetentionDays(subtype, 0);
@@ -1984,8 +1928,12 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       join_group_48h: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Бот перепроверит участие автоматически.`,
       join_group_72h: `Вступите в Telegram-группу и не выходите ${retentionDays} дн. Бот перепроверит участие автоматически.`,
     };
-    const cleaned = stripTaskMetaLines(task && task.instructions);
-    return map[subtype] || cleaned || buildAutoCreateInstructions(task && task.type, subtype);
+    const raw = String((task && task.instructions) || "");
+    const cleaned = raw
+      .replace(/(^|\n)\s*(TG_SUBTYPE|TARGET_GENDER|CUSTOM_REVIEW_MODE|CUSTOM_REVIEW_TEXTS)\s*:\s*.*(?=\n|$)/ig, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return cleaned || map[subtype] || "Выполните задание и нажмите кнопку проверки.";
   }
 
   function getTaskReviewTexts(task) {
@@ -1994,24 +1942,36 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
 
   function renderTaskInstructionHtml(task) {
-    const guide = getTaskExecutionGuideHtml(task);
     const baseText = safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
-    const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Что нужно сделать</div><div>${baseText}</div></div>` : "";
+    const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Текст</div><div>${baseText}</div></div>` : "";
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
-    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) {
-      return `${guide}${base}` || safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
-    }
-    const heading = mode === "per_item" ? "Текст отзыва для этого выполнения" : "Текст отзыва от заказчика";
-    const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyReviewText(this)" data-copy-text="${escapeHtml(String(text || ""))}"><span class="review-text-index">★</span><span class="review-text-body">${safeText(text)}</span><span class="review-text-copy-badge">Скопировать</span></button>`).join("");
+    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return base || safeText(getTaskInstructionText(task)).replace(/\n/g, "<br>");
+    const heading = "Текст отзыва";
+    const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyTaskReviewText(this)" data-review-text="${encodeURIComponent(String(text || ''))}"><span class="review-text-index">★</span><span class="review-text-content">${safeText(text)}</span><span class="review-text-copy-icon">📋</span></button>`).join("");
     const reviewCard = `<div class="review-text-card"><div class="review-text-title">${heading}</div>${items}</div>`;
-    return `${guide}${base}${reviewCard}`;
+    return `${base}${reviewCard}`;
   }
 
-  window.copyReviewText = function (el) {
-    if (!el) return false;
-    const text = el.getAttribute("data-copy-text") || "";
-    return copyText(text);
+  window.copyTaskReviewText = async function (el) {
+    try {
+      const encoded = el && el.dataset ? String(el.dataset.reviewText || "") : "";
+      const text = decodeURIComponent(encoded || "").trim();
+      const ok = await copyText(text);
+      if (ok && el) {
+        el.classList.add("copied");
+        const icon = el.querySelector(".review-text-copy-icon");
+        const prev = icon ? icon.textContent : "";
+        if (icon) icon.textContent = "✅";
+        setTimeout(() => {
+          el.classList.remove("copied");
+          if (icon) icon.textContent = prev || "📋";
+        }, 1200);
+      }
+      return ok;
+    } catch (e) {
+      return false;
+    }
   };
 
   window.copyLink = function () {
@@ -2616,8 +2576,17 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
     const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
     const taskTextInput = $("t-text");
-    if (taskTextLabel) taskTextLabel.textContent = (type === "ya" || type === "gm") ? "Комментарий / условия к отзыву" : "Текст задания / комментарий";
-    if (taskTextInput) taskTextInput.placeholder = (type === "ya" || type === "gm") ? "Например: отзыв должен быть естественным, без мата, со скрином после публикации." : "Например: выполните задание и отправьте отчёт.";
+    const shouldShowTaskText = !(type === "ya" || type === "gm");
+    if (taskTextLabel) {
+      const row = taskTextLabel.closest(".field") || taskTextLabel.parentElement;
+      if (row) row.style.display = shouldShowTaskText ? "" : "none";
+      taskTextLabel.textContent = "Текст задания / комментарий";
+    }
+    if (taskTextInput) {
+      const row = taskTextInput.closest(".field") || taskTextInput.parentElement;
+      if (row) row.style.display = shouldShowTaskText ? "" : "none";
+      taskTextInput.placeholder = "Например: выполните задание и отправьте отчёт.";
+    }
     const cur = $("t-cur") ? $("t-cur").value : "rub";
 
     const tgWrap = $("tg-subtype-wrapper");
@@ -2683,7 +2652,21 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   async function createTask() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
+    const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
+    const taskTextInput = $("t-text");
+    const shouldShowTaskText = !(type === "ya" || type === "gm");
+    if (taskTextLabel) {
+      const row = taskTextLabel.closest(".field") || taskTextLabel.parentElement;
+      if (row) row.style.display = shouldShowTaskText ? "" : "none";
+      taskTextLabel.textContent = "Текст задания / комментарий";
+    }
+    if (taskTextInput) {
+      const row = taskTextInput.closest(".field") || taskTextInput.parentElement;
+      if (row) row.style.display = shouldShowTaskText ? "" : "none";
+      taskTextInput.placeholder = "Например: выполните задание и отправьте отчёт.";
+    }
     const target = String(($("t-target") && $("t-target").value) || "").trim();
+    const txt = String(($("t-text") && $("t-text").value) || "").trim();
     const reviewMode = getCustomReviewMode();
     const reviewTexts = getCustomReviewTexts();
 
@@ -2738,18 +2721,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     let tgKind = null;
     let subType = null;
     const payCurrency = $("t-cur") ? String($("t-cur").value || "rub").toLowerCase() : "rub";
-    let txt = "";
 
     if (type === "ya") {
       title = YA.title;
       reward = YA.reward;
       cost = YA.costPer * qty;
-      txt = buildAutoCreateInstructions(type, null);
     } else if (type === "gm") {
       title = GM.title;
       reward = GM.reward;
       cost = GM.costPer * qty;
-      txt = buildAutoCreateInstructions(type, null);
     } else {
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
@@ -2759,7 +2739,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const baseCostPer = Number(conf.cost || Math.max(12, reward * 2));
       cost = (baseCostPer + retentionExtra * TG_EXTRA_RETENTION_COST_PER_DAY) * qty;
       subType = conf.id;
-      txt = buildAutoCreateInstructions(type, subType, currentRetentionExtraDays());
 
       tgChat = normalizeTgChatInput(target);
       tgKind = tgNeedsChat(subType) ? (tgIsBotTarget(target, tgChat) ? "bot" : "chat") : "bot";
@@ -3019,7 +2998,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const box = $("history-list");
     if (!box) return;
     state._opsCache = Array.isArray(list) ? list.slice() : [];
-
     let view = Array.isArray(list) ? list.slice() : [];
     const f = state.opsFilter || "all";
     if (f !== "all") {
