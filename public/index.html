@@ -11,7 +11,47 @@
   <meta http-equiv="Expires" content="0" />
 
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
   <title>ReviewCash</title>
+
+  <script>
+    (function () {
+      try {
+        var saved = '';
+        try { saved = String(localStorage.getItem('rc_perf_mode_v1') || '').trim(); } catch (e) {}
+        var isLow = saved === 'low';
+        if (!isLow && saved !== 'normal') {
+          var score = 0;
+          var mm = false;
+          try { mm = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) {}
+          if (mm) score += 3;
+
+          var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+          var effectiveType = conn && conn.effectiveType ? String(conn.effectiveType) : '';
+          if (conn && conn.saveData) score += 3;
+          if (/2g|3g/i.test(effectiveType)) score += 2;
+
+          var mem = Number(navigator.deviceMemory || 0);
+          if (mem && mem <= 2) score += 3;
+          else if (mem && mem <= 4) score += 2;
+
+          var cores = Number(navigator.hardwareConcurrency || 0);
+          if (cores && cores <= 4) score += 2;
+          else if (cores && cores <= 6) score += 1;
+
+          var sw = Math.min(Number((window.screen && window.screen.width) || 0), Number(window.innerWidth || 0)) || Number((window.screen && window.screen.width) || 0) || Number(window.innerWidth || 0) || 0;
+          if (sw && sw <= 430) score += 1;
+
+          var ua = String(navigator.userAgent || '');
+          if (/Android/i.test(ua) && (!cores || cores <= 8)) score += 1;
+
+          isLow = score >= 2;
+        }
+        if (isLow) document.documentElement.classList.add('perf-low');
+      } catch (e) {}
+    })();
+  </script>
+
 
   <!-- FIX: чтобы браузер не запрашивал /favicon.ico -->
   <link rel="icon" href="data:,">
@@ -51,13 +91,12 @@
       }, true);
 
       window.addEventListener("unhandledrejection", function (event) {
-        window.__showError("Unhandled Promise rejection: " + (event.reason?.message || String(event.reason)), event.reason);
+        window.__showError("Unhandled Promise rejection: " + ((event.reason && event.reason.message) || String(event.reason)), event.reason);
       });
     })();
   </script>
 
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=__APP_BUILD__-icons2">
 
   <style>
