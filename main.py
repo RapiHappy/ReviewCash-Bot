@@ -2446,7 +2446,12 @@ async def api_sync(req: web.Request):
                 int(t.get("owner_id") or 0) != uid
                 and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
             )
-            and (int(t.get("owner_id") or 0) == uid or expensive_ok or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB)
+            and (
+                int(t.get("owner_id") or 0) == uid
+                or expensive_ok
+                or str(t.get("type") or "") in ("ya", "gm")
+                or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB
+            )
             and (
                 int(t.get("owner_id") or 0) == uid
                 or get_task_target_gender(t) == TASK_GENDER_ANY
