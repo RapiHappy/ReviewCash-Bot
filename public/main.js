@@ -1974,14 +1974,12 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       </div>` : "";
 
     const base = instructionText
-      ? `<button type="button" class="task-info-card task-info-card-copy" onclick="copyTaskMainText(this)" data-task-text="${encodeURIComponent(instructionText)}"><div class="task-info-title-row"><div class="task-info-title">Текст</div><span class="task-info-copy-icon">📋</span></div><div class="task-info-text">${safeText(instructionText).replace(/
-/g, "<br>")}</div></button>`
+      ? `<button type="button" class="task-info-card task-info-card-copy" onclick="copyTaskMainText(this)" data-task-text="${encodeURIComponent(instructionText)}"><div class="task-info-title-row"><div class="task-info-title">Текст</div><span class="task-info-copy-icon">📋</span></div><div class="task-info-text">${safeText(instructionText).replace(/\n/g, "<br>")}</div></button>`
       : "";
 
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
-    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return `${stepsHtml}${reviewExtraHtml}${base}` || safeText(instructionText).replace(/
-/g, "<br>");
+    if (!reviewTexts.length || !["single", "per_item"].includes(mode)) return `${stepsHtml}${reviewExtraHtml}${base}` || safeText(instructionText).replace(/\n/g, "<br>");
     const heading = "Текст отзыва";
     const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyTaskReviewText(this)" data-review-text="${encodeURIComponent(String(text || ''))}"><span class="review-text-index">★</span><span class="review-text-content">${safeText(text)}</span><span class="review-text-copy-icon">📋</span></button>`).join("");
     const reviewCard = `<div class="review-text-card"><div class="review-text-title">${heading}</div>${items}</div>`;
