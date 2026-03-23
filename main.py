@@ -215,9 +215,9 @@ YA_COOLDOWN_SEC = int(os.getenv("YA_COOLDOWN_SEC", str(3 * 24 * 3600)).strip())
 GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 
 # topup minimum
-MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "300").strip())
+MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "120").strip())
 # Stars topup minimum (in RUB)
-MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "1").strip())
+MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "120").strip())
 
 # Stars rate: сколько рублей даёт 1 Star
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
@@ -3096,7 +3096,7 @@ async def api_withdraw_create(req: web.Request):
     payout_method = str(body.get("payout_method") or "").strip().lower()
 
     if amount < 300:
-        return web.json_response({"ok": False, "error": "Минимум 300₽"}, status=400)
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
     if not full_name or len(full_name) < 5 or " " not in full_name:
         return web.json_response({"ok": False, "error": "Укажи имя и фамилию"}, status=400)
     if not payout_value:
@@ -3955,6 +3955,8 @@ async def api_admin_proof_decision(req: web.Request):
             msg = "❌ Отчёт отклонён модератором."
             if comment:
                 msg += f"\n\nКомментарий: {comment}"
+            if task_type in ("ya", "gm"):
+                msg += "\n\n🗑 Удали свой отзыв как можно скорее. Если отклонённый отзыв не удалить, аккаунт могут забанить и применить штраф."
             await notify_user(user_id, msg)
 
     try:
