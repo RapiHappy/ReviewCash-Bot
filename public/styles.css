@@ -2371,90 +2371,64 @@ html.perf-low .brand-img{
   box-shadow:0 0 0 1px rgba(0,234,255,0.12) inset;
 }
 
-
-.task-info-card-copy{display:block;width:100%;text-align:left;background:linear-gradient(180deg, rgba(32,42,59,.95), rgba(23,31,44,.98));border:1px solid rgba(57,224,255,.22);cursor:pointer;}
-.task-info-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
-.task-info-copy-icon{flex:0 0 auto;font-size:18px;opacity:.95;}
-.task-info-card-copy.copied,.review-text-copy.copied{box-shadow:0 0 0 1px rgba(57,224,255,.3), 0 10px 24px rgba(0,0,0,.22);}
-
-
-.task-instruction-card{
-  margin-top:14px;
-  padding:14px;
-  border-radius:16px;
-  background:linear-gradient(180deg, rgba(17,31,49,.96), rgba(12,24,38,.98));
-  border:1px solid rgba(95,176,255,.18);
-  box-shadow:0 12px 28px rgba(0,0,0,.22);
-}
-.task-instruction-card-note{
-  border-color:rgba(255,217,87,.18);
-}
-.task-instruction-title{
-  font-size:18px;
-  font-weight:900;
-  color:#fff;
-  margin-bottom:10px;
-}
-.task-instruction-steps{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-}
-.task-instruction-step{
-  display:flex;
-  align-items:flex-start;
-  gap:10px;
-  color:#f4f8ff;
-  font-weight:700;
-  line-height:1.35;
-}
-.task-step-badge{
-  width:24px;
-  height:24px;
-  border-radius:8px;
-  flex:0 0 24px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  font-size:13px;
-  font-weight:900;
-  color:#fff;
-  background:linear-gradient(180deg, rgba(139,183,255,.95), rgba(83,127,208,.95));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.18), 0 6px 14px rgba(8,14,30,.28);
-}
-.task-instruction-note,
-.task-instruction-list,
-.task-instruction-final{
-  color:#f4f8ff;
-  line-height:1.45;
-}
-.task-instruction-list{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
-  margin:8px 0 10px;
-  font-weight:700;
-}
-.task-instruction-final{
-  font-weight:800;
-}
+.task-guide-card,
 .task-info-card{
   margin-top:14px;
   padding:14px;
-  border-radius:16px;
-  background:linear-gradient(180deg, rgba(32,42,59,.95), rgba(23,31,44,.98));
-  border:1px solid rgba(57,224,255,.22);
-  color:#eef6ff;
-  box-shadow:0 12px 28px rgba(0,0,0,.22);
+  border-radius:18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.04));
+  border:1px solid rgba(255,255,255,0.10);
+  box-shadow: var(--soft-shadow);
 }
+.task-guide-card{
+  background: linear-gradient(180deg, rgba(101,163,255,0.12), rgba(255,255,255,0.04));
+  border-color: rgba(96,165,250,0.20);
+}
+.task-guide-card--maps{
+  background: linear-gradient(180deg, rgba(255,214,10,0.10), rgba(255,255,255,0.04));
+  border-color: rgba(255,214,10,0.18);
+}
+.task-guide-title,
 .task-info-title{
+  font-size:14px;
+  font-weight:900;
+  margin-bottom:10px;
+  color:#fff;
+}
+.task-guide-step{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  margin-top:8px;
+  line-height:1.45;
+}
+.task-guide-step-num{
+  width:22px;
+  height:22px;
+  border-radius:8px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   font-size:12px;
   font-weight:900;
-  color:var(--accent-cyan);
-  text-transform:uppercase;
-  letter-spacing:.04em;
+  color:#fff;
+  background: linear-gradient(135deg, rgba(147,197,253,0.9), rgba(59,130,246,0.9));
+  flex:0 0 22px;
+  box-shadow:0 8px 18px rgba(59,130,246,0.22);
 }
-.task-info-text{
-  white-space:pre-wrap;
+.task-guide-note,
+.task-guide-tip,
+.task-guide-bullet,
+.task-info-card{
   line-height:1.5;
+}
+.task-guide-bullets{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin-top:8px;
+}
+.task-guide-tip{
+  margin-top:10px;
+  font-weight:700;
 }
