@@ -3104,7 +3104,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (!starsPaymentsEnabled()) return tgAlert("Оплата Stars временно отключена администратором", "error", "Stars выключены");
 
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
-    if (!amount || amount < 1) return tgAlert("Минимум 1 ₽");
+    if (!amount || amount < 120) return tgAlert("Минимум 120 ₽");
 
     try {
       tgHaptic("impact");
@@ -3137,7 +3137,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   window.openTBankPay = function () {
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
-    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!amount || amount < 120) return tgAlert("Минимум 120 ₽");
 
     // generate code
     state.tbankCode = "RC" + Math.random().toString(10).slice(2, 8);
@@ -3159,7 +3159,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   window.openTBankPhonePay = function () {
     const amount = Number(($("sum-input") && $("sum-input").value) || 0);
-    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!amount || amount < 120) return tgAlert("Минимум 120 ₽");
 
     state.tbankPhoneCode = "RC" + Math.random().toString(10).slice(2, 8);
     if ($("tbp-code")) $("tbp-code").textContent = state.tbankPhoneCode;
@@ -3180,7 +3180,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const phone = normalizePhoneForTbank(phoneRaw);
     const file = $("tbp-file") && $("tbp-file").files ? $("tbp-file").files[0] : null;
 
-    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!amount || amount < 120) return tgAlert("Минимум 120 ₽");
     if (!sender) return tgAlert("Укажи имя отправителя");
     if (phone.length !== 11 || !phone.startsWith("7")) return tgAlert("Укажи корректный номер телефона РФ");
     if (!file) return tgAlert("Прикрепи скрин оплаты");
@@ -3222,7 +3222,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const phone = normalizePhoneForTbank(phoneRaw);
     const file = $("tb-file") && $("tb-file").files ? $("tb-file").files[0] : null;
 
-    if (!amount || amount < 300) return tgAlert("Минимум 300 ₽");
+    if (!amount || amount < 120) return tgAlert("Минимум 120 ₽");
     if (!sender) return tgAlert("Укажи имя отправителя");
     if (phone.length !== 11 || !phone.startsWith("7")) return tgAlert("Укажи корректный номер телефона РФ");
     if (!file) return tgAlert("Прикрепи скрин оплаты");
