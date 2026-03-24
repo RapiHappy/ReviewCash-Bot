@@ -2432,3 +2432,51 @@ html.perf-low .brand-img{
   margin-top:10px;
   font-weight:700;
 }
+
+
+.important-task-note {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 191, 71, 0.14);
+  border: 1px solid rgba(255, 191, 71, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+
+.important-task-note__title {
+  font-weight: 900;
+  font-size: 15px;
+  color: #ffd166;
+  margin-bottom: 8px;
+}
+
+.important-task-note__text {
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.task-important-ack {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(0, 234, 255, 0.08);
+  border: 1px solid rgba(0, 234, 255, 0.18);
+}
+
+.task-important-ack__label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.task-important-ack__label input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
