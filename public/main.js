@@ -1700,6 +1700,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const createdAt = formatReportDate(r.created_at);
       const updatedAt = formatReportDate(r.updated_at || r.moderated_at || r.created_at);
       const proofName = String(r.proof_text || "").trim();
+      const moderatorComment = String(r.moderator_comment || "").trim();
       return `
         <div class="card report-card">
           <div class="report-card__head">
@@ -1733,6 +1734,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
               <div class="report-card__label">Скрин</div>
               <div class="report-card__value">${r.proof_url ? `<a href="${safeText(r.proof_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent-cyan); text-decoration:none; font-weight:800;">Открыть</a>` : "—"}</div>
             </div>
+            ${moderatorComment ? `<div class="report-card__cell" style="grid-column:1 / -1;"><div class="report-card__label">Причина / комментарий модератора</div><div class="report-card__value">${safeText(moderatorComment)}</div></div>` : ""}
           </div>
         </div>
       `;
@@ -1844,6 +1846,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     $("td-link").textContent = task.target_url || "";
     $("td-text").innerHTML = (isOwner ? `<div style="margin-bottom:10px;color:var(--accent-red);font-weight:800;">⚠️ Это ваше задание. Выполнить и получить награду нельзя.</div>` : "") + renderTaskInstructionHtml(task);
 
+    // proof blocks
+    const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
+    const ackWrap = $("td-important-ack-wrap");
+    const ackCheckbox = $("td-important-ack");
+    const hasImportantNote = !!getTaskImportantNote(task);
+    const needsAck = !isOwner && !isAuto && hasImportantNote;
+    if (ackCheckbox) ackCheckbox.checked = false;
+    if (ackWrap) ackWrap.classList.toggle("hidden", !needsAck);
+
     const link = normalizeUrl(task.target_url || "");
     const a = $("td-link-btn");
     if (a) {
@@ -1856,8 +1867,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       };
     }
 
-    // proof blocks
-    const isAuto = String(task.check_type || "") === "auto" && String(task.type || "") === "tg";
     const manual = $("proof-manual");
     const auto = $("proof-auto");
     if (manual) manual.classList.toggle("hidden", isAuto);
@@ -1899,8 +1908,6 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         btn.disabled = true;
         btn.style.opacity = "0.65";
       } else {
-        btn.disabled = false;
-        btn.style.opacity = "1";
         if (isAuto) {
           btn.textContent = "✅ Проверить и получить награду";
           btn.onclick = () => submitTaskAuto(task);
@@ -1908,6 +1915,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           btn.textContent = "📤 Отправить отчёт";
           btn.onclick = () => submitTaskManual(task);
         }
+        updateTaskActionState(task, isOwner, isAuto);
       }
     }
 
@@ -1940,6 +1948,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const arr = Array.isArray(task && task.custom_review_texts) ? task.custom_review_texts : [];
     return arr.map(x => String(x || "").trim()).filter(Boolean);
   }
+  function getTaskImportantNote(task) {
+    const raw = String((task && task.instructions) || "");
+    const cleaned = raw
+      .replace(/(^|\n)\s*(TG_SUBTYPE|TARGET_GENDER|CUSTOM_REVIEW_MODE|CUSTOM_REVIEW_TEXTS)\s*:\s*.*(?=\n|$)/ig, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return cleaned;
+  }
+
 
   function buildPrettyTaskInstruction(task) {
     const type = String((task && task.type) || "").trim();
@@ -1968,17 +1985,20 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   function renderTaskInstructionHtml(task) {
     const prettyInstruction = buildPrettyTaskInstruction(task);
-    const baseText = safeText(getTaskInstructionText(task));
+    const importantTextRaw = getTaskImportantNote(task);
+    const importantText = safeText(importantTextRaw);
+    const importantBlock = importantText ? `<div class="important-task-note"><div class="important-task-note__title">⚠️ Важно от заказчика</div><div class="important-task-note__text">${importantText}</div></div>` : "";
+    const baseText = importantText ? "" : safeText(getTaskInstructionText(task));
     const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Текст</div><div>${baseText}</div></div>` : "";
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
     if (!reviewTexts.length || !["single", "per_item"].includes(mode)) {
-      return `${prettyInstruction}${base || safeText(getTaskInstructionText(task))}`;
+      return `${prettyInstruction}${importantBlock}${base || (!importantBlock ? safeText(getTaskInstructionText(task)) : "")}`;
     }
     const heading = "Текст отзыва";
     const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyTaskReviewText(this)" data-review-text="${encodeURIComponent(String(text || ''))}"><span class="review-text-index">★</span><span class="review-text-content">${safeText(text)}</span><span class="review-text-copy-icon">📋</span></button>`).join("");
     const reviewCard = `<div class="review-text-card"><div class="review-text-title">${heading}</div>${items}</div>`;
-    return `${prettyInstruction}${base}${reviewCard}`;
+    return `${prettyInstruction}${importantBlock}${base}${reviewCard}`;
   }
 
   window.copyTaskReviewText = async function (el) {
@@ -2000,6 +2020,36 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     } catch (e) {
       return false;
     }
+  };
+
+  function taskImportantAckReady() {
+    const wrap = $("td-important-ack-wrap");
+    if (!wrap || wrap.classList.contains("hidden")) return true;
+    const checkbox = $("td-important-ack");
+    return !!(checkbox && checkbox.checked);
+  }
+
+  function updateTaskActionState(task, isOwner, isAuto) {
+    const btn = $("td-action-btn");
+    if (!btn) return;
+    if (isOwner) {
+      btn.disabled = true;
+      btn.style.opacity = "0.65";
+      return;
+    }
+    if (isAuto) {
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      return;
+    }
+    const ready = taskImportantAckReady();
+    btn.disabled = !ready;
+    btn.style.opacity = ready ? "1" : "0.65";
+  }
+
+  window.toggleTaskImportantAck = function () {
+    if (!state.currentTask) return;
+    updateTaskActionState(state.currentTask, isTaskOwner(state.currentTask), String(state.currentTask.check_type || "") === "auto" && String(state.currentTask.type || "") === "tg");
   };
 
   window.copyLink = function () {
@@ -2150,6 +2200,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const file = $("p-file") && $("p-file").files ? $("p-file").files[0] : null;
 
     if (!nick) return tgAlert("Напиши никнейм/имя, как в сервисе.\nПример: Я.К.", "error", "Нужен никнейм");
+    if (!taskImportantAckReady()) return tgAlert("Подтверди, что ознакомился с важной информацией от заказчика.", "error", "Нужно подтверждение");
 
     // REQUIRED IMAGE (you asked)
     if (!file) return tgAlert("Нужен скриншот-доказательство.\nБез скрина отправить нельзя.", "error", "Прикрепи скрин");
@@ -2599,22 +2650,30 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (hint) hint.textContent = on ? `К сумме добавится ${TOP_FIXED_PRICE_RUB} ₽ за 24 часа.` : `Поднимет задание выше остальных на 24 часа.`;
   }
 
+
+  function syncTaskCommentUi(type) {
+    const wrap = $("task-comment-wrap");
+    const label = $("t-text-label");
+    const input = $("t-text");
+    if (!wrap || !label || !input) return;
+    const isReview = (type === "ya" || type === "gm");
+    label.textContent = isReview ? "Комментарий к отзыву / доп. информация" : "Текст задания / комментарий";
+    input.placeholder = isReview
+      ? "Например: что важно упомянуть в отзыве, какие нюансы учесть, что нельзя писать."
+      : "Например: выполните задание и отправьте отчёт.";
+  }
+
+  window.toggleTaskCommentBox = function () {
+    const wrap = $("task-comment-wrap");
+    if (!wrap) return;
+    wrap.classList.toggle("hidden");
+    syncTaskCommentUi(currentCreateType());
+  };
+
   function recalc() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
-    const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
-    const taskTextInput = $("t-text");
-    const shouldShowTaskText = !(type === "ya" || type === "gm");
-    if (taskTextLabel) {
-      const row = taskTextLabel.closest(".field") || taskTextLabel.parentElement;
-      if (row) row.style.display = shouldShowTaskText ? "" : "none";
-      taskTextLabel.textContent = "Текст задания / комментарий";
-    }
-    if (taskTextInput) {
-      const row = taskTextInput.closest(".field") || taskTextInput.parentElement;
-      if (row) row.style.display = shouldShowTaskText ? "" : "none";
-      taskTextInput.placeholder = "Например: выполните задание и отправьте отчёт.";
-    }
+    syncTaskCommentUi(type);
     const cur = $("t-cur") ? $("t-cur").value : "rub";
 
     const tgWrap = $("tg-subtype-wrapper");
@@ -2680,19 +2739,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   async function createTask() {
     const type = currentCreateType();
     const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
-    const taskTextLabel = document.querySelector('label[for="t-text"]') || document.getElementById("t-text-label");
-    const taskTextInput = $("t-text");
-    const shouldShowTaskText = !(type === "ya" || type === "gm");
-    if (taskTextLabel) {
-      const row = taskTextLabel.closest(".field") || taskTextLabel.parentElement;
-      if (row) row.style.display = shouldShowTaskText ? "" : "none";
-      taskTextLabel.textContent = "Текст задания / комментарий";
-    }
-    if (taskTextInput) {
-      const row = taskTextInput.closest(".field") || taskTextInput.parentElement;
-      if (row) row.style.display = shouldShowTaskText ? "" : "none";
-      taskTextInput.placeholder = "Например: выполните задание и отправьте отчёт.";
-    }
+    syncTaskCommentUi(type);
     const target = String(($("t-target") && $("t-target").value) || "").trim();
     const txt = String(($("t-text") && $("t-text").value) || "").trim();
     const reviewMode = getCustomReviewMode();
@@ -3354,14 +3401,27 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     let proofs = (res && res.proofs) ? res.proofs : [];
     const seen = new Set();
     proofs = proofs.filter(p => {
-      const sig = [p && p.user_id, p && p.task_id, p && p.proof_url, p && p.proof_text].join("|");
+      const sig = [p && p.id, p && p.user_id, p && p.task_id, p && p.proof_url, p && p.proof_text, p && p.status].join("|");
       if (seen.has(sig)) return false;
       seen.add(sig);
       return true;
     });
 
+    const rulesCard = adminCard(`
+      <div style="font-weight:900; margin-bottom:8px;">📘 Правила для админов</div>
+      <div style="font-size:12px; color:var(--text-dim); line-height:1.45; display:grid; gap:6px;">
+        <div>1. Проверяй совпадение задания, ника и скрина.</div>
+        <div>2. Для Яндекс/Google смотри, что отзыв размещён на нужной карточке и текст выглядит живым.</div>
+        <div>3. Если отчёт можно исправить — отправляй на доработку с понятной причиной.</div>
+        <div>4. Если отчёт не подходит — отклоняй и обязательно указывай причину.</div>
+        <div>5. Если есть явный обман или чужой/поддельный скрин — помечай как фейк и применяй санкции по регламенту.</div>
+      </div>
+      <a href="/app/admin_rules.html" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; text-decoration:none; justify-content:center;">Открыть полный регламент</a>
+    `);
+    box.appendChild(rulesCard);
+
     if (!proofs.length) {
-      box.innerHTML = `<div class="card" style="opacity:0.7;">Нет отчётов на проверку</div>`;
+      box.appendChild(adminCard(`<div style="opacity:0.7;">Нет отчётов на проверку</div>`));
       return;
     }
 
@@ -3394,7 +3454,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       `);
 
       c.querySelector('[data-approve="1"]').onclick = async () => decideProof(p.id, true, c);
-      c.querySelector('[data-approve="0"]').onclick = async () => decideProof(p.id, false, c);
+      c.querySelector('[data-approve="0"]').onclick = async () => {
+        const comment = (prompt("Причина отклонения:", "") || "").trim();
+        if (!comment) return tgAlert("Укажи причину отклонения.", "error", "Нужен комментарий");
+        await decideProof(p.id, false, c, { comment });
+      };
       const rw = c.querySelector('[data-rework="1"]');
       if (rw) rw.onclick = async () => {
         const comment = (prompt("Причина отправки на переработку:", "") || "").trim();
