@@ -1968,12 +1968,12 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   function renderTaskInstructionHtml(task) {
     const prettyInstruction = buildPrettyTaskInstruction(task);
-    const baseText = safeText(getTaskInstructionText(task)).REPL_TEMP;
+    const baseText = safeText(getTaskInstructionText(task));
     const base = baseText ? `<div class="task-info-card"><div class="task-info-title">Текст</div><div>${baseText}</div></div>` : "";
     const reviewTexts = getTaskReviewTexts(task);
     const mode = String((task && task.custom_review_mode) || "none");
     if (!reviewTexts.length || !["single", "per_item"].includes(mode)) {
-      return `${prettyInstruction}${base || safeText(getTaskInstructionText(task)).REPL_TEMP}`;
+      return `${prettyInstruction}${base || safeText(getTaskInstructionText(task))}`;
     }
     const heading = "Текст отзыва";
     const items = reviewTexts.map((text) => `<button type="button" class="review-text-item review-text-copy" onclick="copyTaskReviewText(this)" data-review-text="${encodeURIComponent(String(text || ''))}"><span class="review-text-index">★</span><span class="review-text-content">${safeText(text)}</span><span class="review-text-copy-icon">📋</span></button>`).join("");
