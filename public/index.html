@@ -669,8 +669,17 @@
         <div style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;">Для Telegram-заданий 2 дня удержания обязательны всегда. Подтипы +24/+48/+72 добавляют ещё 1/2/3 дня, а здесь можно увеличить срок дополнительно.</div>
       </div>
 
-      <div class="total-badge">
-        <div style="display:flex; flex-direction:column; gap:2px;">
+
+      <div style="margin-top:14px;">
+        <button type="button" class="btn btn-secondary" style="width:100%;" onclick="toggleTaskCommentBox()">📝 Доп. информация / комментарий к отзыву</button>
+        <div id="task-comment-wrap" class="hidden" style="margin-top:10px;">
+          <label class="input-label" id="t-text-label" for="t-text">Текст задания / комментарий</label>
+          <textarea id="t-text" rows="4" placeholder="Например: что учесть при выполнении, какие есть нюансы, что важно написать или проверить." style="margin-top:5px;"></textarea>
+          <div style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;">Поле необязательное. Исполнитель увидит этот комментарий внутри задания.</div>
+        </div>
+      </div>
+
+      <div class="total-badge">        <div style="display:flex; flex-direction:column; gap:2px;">
           <span style="font-weight:800; opacity:0.7;">Итого к оплате:</span>
           <span style="font-size:11px; color:var(--text-dim);">Включая комиссию сервиса</span>
         </div>
@@ -742,6 +751,13 @@
       <div class="detail-block">
         <label class="input-label">Инструкция:</label>
         <div id="td-text" style="background:var(--glass); padding:15px; border-radius:15px; margin-top:5px; font-size:14px; line-height:1.4;">...</div>
+      </div>
+
+      <div id="td-important-ack-wrap" class="task-important-ack hidden">
+        <label class="task-important-ack__label">
+          <input type="checkbox" id="td-important-ack" onchange="toggleTaskImportantAck()">
+          <span>Я ознакомился с блоком «Важно от заказчика» и учту эти условия при выполнении.</span>
+        </label>
       </div>
 
       <div id="td-proof-area" style="margin-top:25px; border-top:1px solid var(--glass-border); padding-top:20px;">
