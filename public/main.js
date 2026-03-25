@@ -3392,12 +3392,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     return d;
   }
 
+  let adminProofsLoadToken = 0;
+
   async function loadAdminProofs() {
     const box = $("admin-list");
     if (!box) return;
-    box.innerHTML = "";
+
+    const loadToken = ++adminProofsLoadToken;
+    box.innerHTML = `<div class="card" style="padding:14px; opacity:0.7;">Загрузка...</div>`;
 
     const res = await apiPost("/api/admin/proof/list", {});
+    if (loadToken !== adminProofsLoadToken) return;
+    box.innerHTML = "";
     let proofs = (res && res.proofs) ? res.proofs : [];
     const seen = new Set();
     proofs = proofs.filter(p => {
