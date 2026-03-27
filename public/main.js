@@ -370,6 +370,7 @@ function tgAlert(msg, kind = "info", title = "") {
   // Reviews payouts you asked for
   const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
   const GM = { costPer: 75, reward: 50, title: "Google Maps — отзыв" };
+  const DG = { costPer: 15, reward: 10, title: "2GIS — отзыв" };
 
   // --------------------
   // State
@@ -1349,11 +1350,11 @@ async function syncAll() {
   // Platform filter (All / Ya / Google / TG)
   // --------------------
   function setPlatformFilter(p) {
-    const v = (p === "ya" || p === "gm" || p === "tg") ? p : "all";
+    const v = (p === "ya" || p === "gm" || p === "dg" || p === "tg") ? p : "all";
     state.platformFilter = v;
     try { localStorage.setItem("rc_platform_filter", v); } catch (e) {}
 
-    const ids = ["pf-all", "pf-ya", "pf-gm", "pf-tg"];
+    const ids = ["pf-all", "pf-ya", "pf-gm", "pf-dg", "pf-tg"];
     ids.forEach(id => {
       const el = $(id);
       if (!el) return;
@@ -1467,10 +1468,10 @@ async function syncAll() {
 function brandIconHtml(taskOrType, sizePx = 38) {
     const tRaw = (typeof taskOrType === "string") ? taskOrType : (taskOrType && (taskOrType.type || taskOrType.platform));
     const t = String(tRaw || "").toLowerCase();
-    const key = (t === "ya" || t === "yandex") ? "ya" : (t === "gm" || t === "google") ? "gm" : "tg";
+    const key = (t === "ya" || t === "yandex") ? "ya" : (t === "gm" || t === "google") ? "gm" : (t === "dg" || t === "2gis" || t === "gis") ? "dg" : "tg";
     const s = Number(sizePx) || 38;
     const svg = BRAND_ICON_SVG[key] || BRAND_ICON_SVG.tg;
-    const alt = (key === "ya") ? "Яндекс" : (key === "gm") ? "Google" : "Telegram";
+    const alt = (key === "ya") ? "Яндекс" : (key === "gm") ? "Google" : (key === "dg") ? "2GIS" : "Telegram";
     return `<span class="brand-svg" role="img" aria-label="${alt}" style="width:${s}px;height:${s}px;">${svg}</span>`;
   }
 
@@ -1478,7 +1479,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const nodes = document.querySelectorAll("[data-pf-ico]");
     nodes.forEach(n => {
       const k = String(n.getAttribute("data-pf-ico") || "").toLowerCase();
-      if (k === "ya" || k === "gm" || k === "tg") n.innerHTML = brandIconHtml(k, 20);
+      if (k === "ya" || k === "gm" || k === "dg" || k === "tg") n.innerHTML = brandIconHtml(k, 20);
     });
   }
 
@@ -1488,6 +1489,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (type === "tg") return "✈️";
     if (type === "ya") return "📍";
     if (type === "gm") return "🌍";
+    if (type === "dg") return "🗺️";
     return "✅";
   }
 
@@ -1496,6 +1498,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (type === "tg") return "Telegram";
     if (type === "ya") return "Яндекс";
     if (type === "gm") return "Google";
+    if (type === "dg") return "2GIS";
     return type.toUpperCase();
   }
 
@@ -1825,6 +1828,14 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       return p.includes("/maps") || h.startsWith("maps.");
     } catch (e) { return false; }
   }
+  function is2GisUrl(u) {
+    try {
+      const url = new URL(normalizeUrl(u));
+      const h = url.hostname.toLowerCase();
+      if (h === "go.2gis.com") return true;
+      return h.includes("2gis");
+    } catch (e) { return false; }
+  }
   function isTaskOwner(task) {
     const uid = state.user ? state.user.user_id : null;
     if (!uid || !task) return false;
@@ -1877,7 +1888,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const fileInput = $("p-file");
     if (nickInput) {
       const t = String(task.type || "");
-      const isReview = (t === "ya" || t === "gm");
+      const isReview = (t === "ya" || t === "gm" || t === "dg");
       const label = manual ? manual.querySelector("label.input-label") : null;
       if (label) label.textContent = isReview ? "Никнейм автора отзыва (как в сервисе)" : "Ваш Никнейм / Имя";
 
@@ -1887,6 +1898,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       let key = "rc_last_nick_generic";
       if (t === "ya") key = "rc_last_nick_ya";
       if (t === "gm") key = "rc_last_nick_gm";
+      if (t === "dg") key = "rc_last_nick_dg";
       const saved = localStorage.getItem(key);
       if (saved) nickInput.value = saved;
       else {
@@ -1960,8 +1972,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   function buildPrettyTaskInstruction(task) {
     const type = String((task && task.type) || "").trim();
-    const isMaps = type === "ya" || type === "gm";
-    const place = type === "ya" ? "Яндекс" : (type === "gm" ? "Google" : "");
+    const isMaps = type === "ya" || type === "gm" || type === "dg";
+    const place = type === "ya" ? "Яндекс" : (type === "gm" ? "Google" : (type === "dg" ? "2GIS" : ""));
     const steps = [
       "Открой приложение",
       "Выбери задание",
@@ -2234,6 +2246,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         let key = "rc_last_nick_generic";
         if (t === "ya") key = "rc_last_nick_ya";
         if (t === "gm") key = "rc_last_nick_gm";
+      if (t === "dg") key = "rc_last_nick_dg";
         localStorage.setItem(key, nick);
 
         closeAllOverlays();
@@ -2280,8 +2293,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (!sel) return;
     const yaOpt = sel.querySelector('option[value="ya"]');
     const gmOpt = sel.querySelector('option[value="gm"]');
+    const dgOpt = sel.querySelector('option[value="dg"]');
     if (yaOpt) yaOpt.textContent = `📍 Яндекс Карты (${YA.costPer}₽)`;
     if (gmOpt) gmOpt.textContent = `🌍 Google Maps (${GM.costPer}₽)`;
+    if (dgOpt) dgOpt.textContent = `🗺️ 2GIS (${DG.costPer}₽)`;
   }
 
   function currentCreateType() {
@@ -2343,7 +2358,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const badge = $("review-mode-badge");
     const textarea = $("t-review-variants");
     const mode = getCustomReviewMode();
-    const isReviewType = (type === "ya" || type === "gm");
+    const isReviewType = (type === "ya" || type === "gm" || type === "dg");
 
     if (wrap) {
       wrap.classList.toggle("hidden", !isReviewType);
@@ -2656,7 +2671,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const label = $("t-text-label");
     const input = $("t-text");
     if (!wrap || !label || !input) return;
-    const isReview = (type === "ya" || type === "gm");
+    const isReview = (type === "ya" || type === "gm" || type === "dg");
     label.textContent = isReview ? "Комментарий к отзыву / доп. информация" : "Текст задания / комментарий";
     input.placeholder = isReview
       ? "Например: что важно упомянуть в отзыве, какие нюансы учесть, что нельзя писать."
@@ -2696,6 +2711,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     } else if (type === "gm") {
       reward = GM.reward;
       costPer = GM.costPer;
+      total = costPer * qty;
+      baseTotal = total;
+    } else if (type === "dg") {
+      reward = DG.reward;
+      costPer = DG.costPer;
       total = costPer * qty;
       baseTotal = total;
     } else {
@@ -2750,7 +2770,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         const sid = currentTgSubtype();
         if (tgNeedsChat(sid)) return tgAlert("Укажи @канал или @группу (пример: @MyChannel)", "error", "Нужно указать чат");
       } else {
-        return tgAlert("Укажи ссылку на карточку места (Яндекс/Google)", "error", "Нужна ссылка");
+        return tgAlert("Укажи ссылку на карточку места (Яндекс/Google/2GIS)", "error", "Нужна ссылка");
       }
     }
 
@@ -2778,12 +2798,16 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         tgAlert("Ссылка не похожа на Google Maps. Вставь ссылку на место/организацию в Google Maps.", "error", "Неподходящая ссылка");
         return;
       }
+      if (type === "dg" && !is2GisUrl(target)) {
+        tgAlert("Ссылка не похожа на 2GIS. Вставь ссылку на карточку места в 2GIS.", "error", "Неподходящая ссылка");
+        return;
+      }
     }
     if (qty <= 0) return tgAlert("Некорректное количество");
-    if ((type === "ya" || type === "gm") && reviewMode !== "none" && reviewTexts.length === 0) {
+    if ((type === "ya" || type === "gm" || type === "dg") && reviewMode !== "none" && reviewTexts.length === 0) {
       return tgAlert("Добавьте текст отзыва для выбранного режима.", "error", "Нужен текст отзыва");
     }
-    if ((type === "ya" || type === "gm") && reviewMode === "per_item" && reviewTexts.length < qty) {
+    if ((type === "ya" || type === "gm" || type === "dg") && reviewMode === "per_item" && reviewTexts.length < qty) {
       return tgAlert(`Для ${qty} отзывов добавьте минимум ${qty} отдельных строк текста.`, "error", "Не хватает вариантов");
     }
 
@@ -2805,6 +2829,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       title = GM.title;
       reward = GM.reward;
       cost = GM.costPer * qty;
+    } else if (type === "dg") {
+      title = DG.title;
+      reward = DG.reward;
+      cost = DG.costPer * qty;
     } else {
       const sid = currentTgSubtype();
       const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
@@ -3417,7 +3445,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       <div style="font-weight:900; margin-bottom:8px;">📘 Правила для админов</div>
       <div style="font-size:12px; color:var(--text-dim); line-height:1.45; display:grid; gap:6px;">
         <div>1. Проверяй совпадение задания, ника и скрина.</div>
-        <div>2. Для Яндекс/Google смотри, что отзыв размещён на нужной карточке и текст выглядит живым.</div>
+        <div>2. Для Яндекс/Google/2GIS смотри, что отзыв размещён на нужной карточке и текст выглядит живым.</div>
         <div>3. Если отчёт можно исправить — отправляй на доработку с понятной причиной.</div>
         <div>4. Если отчёт не подходит — отклоняй и обязательно указывай причину.</div>
         <div>5. Если есть явный обман или чужой/поддельный скрин — помечай как фейк и применяй санкции по регламенту.</div>
@@ -3437,7 +3465,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const proofUrl = p.proof_url ? normalizeUrl(p.proof_url) : "";
       const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
-      const isReview = ["ya", "gm"].includes(String(t.type || "").toLowerCase());
+      const isReview = ["ya", "gm", "dg"].includes(String(t.type || "").toLowerCase());
 
       const c = adminCard(`
         <div style="display:flex; justify-content:space-between; gap:10px;">
@@ -3970,7 +3998,6 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       scope.querySelectorAll(selector).forEach(enableDragScroll);
     });
   }
-
   document.addEventListener('DOMContentLoaded', () => {
     initDragScrollContainers(document);
     const mo = new MutationObserver(() => initDragScrollContainers(document));
