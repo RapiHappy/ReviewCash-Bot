@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
+DG_ALLOWED_HOST = ("2gis.ru", "go.2gis.com", "2gis.com")
 
 def _norm_url(raw: str) -> str:
     s = (raw or "").strip()
@@ -67,6 +68,11 @@ def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
                 return False, "", "Разрешены только ссылки Google Maps"
             if ("/maps" not in path) and (not host.startswith("maps.")):
                 return False, "", "Нужна ссылка именно на Google Maps (место/организация)"
+        elif ttype == "dg":
+            if ("2gis" not in host) and (host not in ("go.2gis.com",)):
+                return False, "", "Ссылка не похожа на 2GIS. Нужна ссылка на карточку в 2GIS"
+            if not _host_allowed(host, DG_ALLOWED_HOST):
+                return False, "", "Разрешены только ссылки 2GIS"
         return True, url, ""
     except Exception:
         return False, "", "Некорректная ссылка"
@@ -214,6 +220,7 @@ FIRST_WITHDRAW_MIN_PAID_TASKS = int(os.getenv("FIRST_WITHDRAW_MIN_PAID_TASKS", "
 # limits
 YA_COOLDOWN_SEC = int(os.getenv("YA_COOLDOWN_SEC", str(3 * 24 * 3600)).strip())
 GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
+DG_COOLDOWN_SEC = int(os.getenv("DG_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 
 # topup minimum
 MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "120").strip())
@@ -280,7 +287,7 @@ def task_xp(task: dict) -> int:
     # determine difficulty if not overridden
     diff = diff_override
     if not diff:
-        if ttype in ("ya", "gm"):
+        if ttype in ("ya", "gm", "dg"):
             diff = "hard" if reward >= 80 else "medium"
         elif ttype == "tg":
             if reward <= 5:
@@ -302,7 +309,7 @@ def task_xp(task: dict) -> int:
     # bonuses
     if check_type != "auto":
         base += int(XP_MANUAL_BONUS)
-    if ttype in ("ya", "gm"):
+    if ttype in ("ya", "gm", "dg"):
         base += int(XP_REVIEW_BONUS)
 
     # small scaling by reward (keeps "harder = more")
@@ -1285,7 +1292,7 @@ async def referral_paid_reviews_count(uid: int) -> int:
             ids_sql = ",".join(ids_sql_parts)
             tasks = await sb_select(T_TASKS, filters={"id": f"in.({ids_sql})"}, columns="id,type", limit=len(chunk))
             for task in (tasks.data or []):
-                if str(task.get("type") or "").lower() in ("ya", "gm"):
+                if str(task.get("type") or "").lower() in ("ya", "gm", "dg"):
                     review_count += 1
         return int(review_count)
     except Exception as e:
@@ -2505,7 +2512,7 @@ async def api_sync(req: web.Request):
             and (
                 int(t.get("owner_id") or 0) == uid
                 or expensive_ok
-                or str(t.get("type") or "") in ("ya", "gm")
+                or str(t.get("type") or "") in ("ya", "gm", "dg")
                 or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB
             )
             and (
@@ -2697,7 +2704,12 @@ async def api_task_create(req: web.Request):
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
-    if ttype not in ("tg", "ya", "gm"):
+    if ttype == "dg":
+        reward_rub = 10.0
+        cost_rub = 15.0 * qty_total
+        check_type = "manual"
+
+    if ttype not in ("tg", "ya", "gm", "dg"):
         raise web.HTTPBadRequest(text="Bad type")
     if not title:
         raise web.HTTPBadRequest(text="Missing title")
@@ -2705,7 +2717,7 @@ async def api_task_create(req: web.Request):
         raise web.HTTPBadRequest(text="Missing target_url")
 
     # Only links/@usernames allowed. For YA/GM: validate + ensure URL is reachable.
-    if ttype in ("ya", "gm"):
+    if ttype in ("ya", "gm", "dg"):
         ok_u, norm_u, err = validate_target_url(ttype, target_url)
         if not ok_u:
             return json_error(400, err, code="BAD_LINK")
@@ -2720,7 +2732,7 @@ async def api_task_create(req: web.Request):
     if not isinstance(custom_review_texts, list):
         custom_review_texts = [custom_review_texts]
     custom_review_texts = [str(x).strip() for x in custom_review_texts if str(x).strip()]
-    if ttype not in ("ya", "gm"):
+    if ttype not in ("ya", "gm", "dg"):
         custom_review_mode = "none"
         custom_review_texts = []
     if custom_review_mode == "single" and custom_review_texts:
@@ -2932,6 +2944,10 @@ async def api_task_submit(req: web.Request):
         ok_lim, rem = await check_limit(uid, "gm_review", GM_COOLDOWN_SEC)
         if not ok_lim:
             return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
+    if task.get("type") == "dg":
+        ok_lim, rem = await check_limit(uid, "dg_review", DG_COOLDOWN_SEC)
+        if not ok_lim:
+            return web.json_response({"ok": False, "error": f"Лимит: раз в день. Осталось ~{rem//3600}ч"}, status=400)
 
     # duplicate check: block only active/paid/fake completions; allow resubmit after rejected/rework
     dup = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": uid}, order="created_at", desc=True, limit=20)
@@ -3118,6 +3134,8 @@ async def api_task_submit(req: web.Request):
         await touch_limit(uid, "ya_review")
     if task.get("type") == "gm":
         await touch_limit(uid, "gm_review")
+    if task.get("type") == "dg":
+        await touch_limit(uid, "dg_review")
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     xp_expected = task_xp(task)
@@ -3466,6 +3484,7 @@ async def api_report_list(req: web.Request):
         "tg": "Telegram",
         "ya": "Яндекс",
         "gm": "Google",
+        "dg": "2GIS",
     }
 
     reports: list[dict] = []
@@ -3937,7 +3956,7 @@ async def api_admin_proof_decision(req: web.Request):
     task_type = str(task.get("type") or "").lower()
 
     if rework:
-        if task_type not in ("ya", "gm"):
+        if task_type not in ("ya", "gm", "dg"):
             return web.json_response({"ok": False, "error": "Доработка доступна только для Яндекс/Google отзывов"}, status=400)
         moderated_at = _now()
         await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
@@ -4016,7 +4035,7 @@ async def api_admin_proof_decision(req: web.Request):
             msg = "❌ Отчёт отклонён модератором."
             if comment:
                 msg += f"\n\nКомментарий: {comment}"
-            if task_type in ("ya", "gm"):
+            if task_type in ("ya", "gm", "dg"):
                 msg += "\n\n🗑 Удали свой отзыв как можно скорее. Если отклонённый отзыв не удалить, аккаунт могут забанить и применить штраф."
             await notify_user(user_id, msg)
 
