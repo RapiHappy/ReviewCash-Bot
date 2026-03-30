@@ -4174,9 +4174,7 @@ async def cmd_start(message: Message):
     sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
     if not sub_ok:
         await message.answer(
-            f"🔒 Для использования бота нужно подписаться на {sub_chat or 'канал'}
-
-{sub_msg}",
+            f"🔒 Для использования бота нужно подписаться на {sub_chat or 'канал'}\n\n{sub_msg}",
             reply_markup=required_subscribe_kb(),
         )
         return
@@ -4207,9 +4205,7 @@ async def handle_gender_pick(message: Message):
     sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
     if not sub_ok:
         await message.answer(
-            f"🔒 Сначала подпишись на {sub_chat or 'канал'}
-
-{sub_msg}",
+            f"🔒 Сначала подпишись на {sub_chat or 'канал'}\n\n{sub_msg}",
             reply_markup=required_subscribe_kb(),
         )
         return
