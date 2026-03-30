@@ -1766,13 +1766,23 @@ async def clear_task_click(uid: int, task_id: str):
 # -------------------------
 # Telegram auto-check: member status
 # -------------------------
+def _normalize_chat(chat: str) -> str:
+    if not chat:
+        return chat
+    chat = chat.strip()
+    chat = chat.replace("https://t.me/", "").replace("http://t.me/", "")
+    if not chat.startswith("@") and not chat.startswith("-100"):
+        chat = "@" + chat
+    return chat
+
 async def tg_is_member(chat: str, user_id: int) -> bool:
     try:
+        chat = _normalize_chat(chat)
         cm = await bot.get_chat_member(chat_id=chat, user_id=user_id)
-        status = getattr(cm, "status", None)
-        return status in ("member", "administrator", "creator")
+        status = str(getattr(cm, "status", "")).lower()
+        return status in ("member","administrator","creator","restricted")
     except Exception as e:
-        log.warning("get_chat_member failed: %s", e)
+        log.warning("subscription check error: %s", e)
         return False
 
 TG_HOLD_PREFIX = "tg_hold:"
