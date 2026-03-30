@@ -646,14 +646,22 @@ async def tg_check_required_subscription(user_id: int) -> tuple[bool, str | None
     chat = get_required_sub_channel()
     if not chat:
         return True, None, ""
+
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=int(user_id))
-        status = str(getattr(member, "status", "") or "").lower()
+        status = str(getattr(member, "status", "")).lower()
+
         if status in ("member", "administrator", "creator", "restricted"):
             return True, chat, ""
-        return False, chat, "Подпишись на канал, чтобы пользоваться ботом."
-    except Exception:
-        return False, chat, "Подпишись на канал, затем нажми «Проверить подписку». Убедись, что бот добавлен в канал админом."
+
+        if status in ("left", "kicked"):
+            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
+
+        return False, chat, "Не удалось определить подписку."
+
+    except Exception as e:
+        logging.warning(f"subscription check error: {e}")
+        return False, chat, "Не удалось проверить подписку. Подпишись на канал и нажми кнопку проверки ещё раз."
 
 
 def required_subscribe_kb() -> InlineKeyboardMarkup | None:
