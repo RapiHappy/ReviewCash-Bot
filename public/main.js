@@ -434,7 +434,8 @@ function tgAlert(msg, kind = "info", title = "") {
       if (sw && sw <= 430) score += 1;
 
       var ua = String(navigator.userAgent || "");
-      if (/Android/i.test(ua) && (!cores || cores <= 8)) score += 1;
+      var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+      if (isMobile && (!cores || cores <= 8)) score += 2; // Aggressively force low perf on phones to prevent lag
 
       return score >= 2 ? "low" : "normal";
     } catch (e) {}

@@ -554,6 +554,28 @@ async def open_app_cmd(m: Message):
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
+@dp.message()
+async def fallback_handler(m: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Начать заново", callback_data="start_again")
+    ]])
+    # We will just print the message and ask to start again
+    try:
+        await m.answer(
+            "Я не понимаю эту команду или сообщение. Нажми /start или кнопку ниже, чтобы начать заново.",
+            reply_markup=kb
+        )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data == "start_again")
+async def start_again_handler(cq: CallbackQuery):
+    await cq.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+    ]])
+    await cq.message.answer("Привет! Открывай Mini App кнопкой ниже:", reply_markup=kb)
+
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 crypto = None
