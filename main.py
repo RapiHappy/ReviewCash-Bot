@@ -649,18 +649,38 @@ async def tg_check_required_subscription(user_id: int) -> tuple[bool, str | None
 
     try:
         member = await bot.get_chat_member(chat_id=chat, user_id=int(user_id))
-        status = str(getattr(member, "status", "")).lower()
 
-        if status in ("member", "administrator", "creator", "restricted"):
+        # aiogram 3.x returns typed subclasses; check class name for reliable detection
+        cls_name = type(member).__name__.lower()  # e.g. "chatmembermember", "chatmemberadministrator"
+        # Also try extracting status string as fallback
+        raw_status = getattr(member, "status", None)
+        status = str(raw_status).lower() if raw_status is not None else ""
+
+        # Check by class name first (most reliable in aiogram 3.x)
+        subscribed_classes = ("chatmembermember", "chatmemberadministrator", "chatmemberowner", "chatmemberrestricted")
+        left_classes = ("chatmemberleft", "chatmemberbanned")
+
+        if cls_name in subscribed_classes:
             return True, chat, ""
-
-        if status in ("left", "kicked"):
+        if cls_name in left_classes:
             return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
 
+        # Fallback: check status string
+        if status in ("member", "administrator", "creator", "restricted"):
+            return True, chat, ""
+        if status in ("left", "kicked", "banned"):
+            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
+
+        logging.warning(f"subscription check: unknown member type={cls_name} status={status} for user={user_id}")
         return False, chat, "Не удалось определить подписку."
 
     except Exception as e:
-        logging.warning(f"subscription check error: {e}")
+        err_str = str(e).lower()
+        logging.warning(f"subscription check error for user={user_id} chat={chat}: {e}")
+        # If the bot is not admin / chat not found — this is a config problem, don't block the user
+        if "chat not found" in err_str or "bot is not a member" in err_str or "not enough rights" in err_str or "forbidden" in err_str:
+            logging.error(f"[SUBSCRIPTION] Bot cannot check membership in {chat}. Make sure the bot is an ADMIN of the channel. Allowing user through.")
+            return True, chat, ""
         return False, chat, "Не удалось проверить подписку. Подпишись на канал и нажми кнопку проверки ещё раз."
 
 
