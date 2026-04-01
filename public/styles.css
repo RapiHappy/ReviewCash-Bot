@@ -2480,3 +2480,178 @@ html.perf-low .brand-img{
   height: 16px;
   flex: 0 0 16px;
 }
+
+/* ===== FAQ / HELP SECTION ===== */
+.faq-card{
+  padding: 0 !important;
+  overflow: hidden;
+  cursor: pointer;
+}
+.faq-card-header{
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  transition: background .18s ease;
+}
+.faq-card-header:hover{
+  background: rgba(0,234,255,0.04);
+}
+.faq-card-icon{
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  background: linear-gradient(135deg, rgba(0,234,255,0.15), rgba(79,127,255,0.10));
+  border: 1px solid rgba(0,234,255,0.18);
+  flex: 0 0 42px;
+}
+.faq-card-title{
+  flex: 1;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.2px;
+}
+.faq-card-arrow{
+  font-size: 22px;
+  font-weight: 900;
+  opacity: 0.5;
+  transition: transform .25s ease;
+  flex: 0 0 auto;
+}
+.faq-open .faq-card-arrow{
+  transform: rotate(90deg);
+}
+.faq-card-body{
+  padding: 0 20px 20px;
+  cursor: default;
+}
+
+/* Steps */
+.faq-steps{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.faq-step{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.faq-step-num{
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-cyan), #4f7fff);
+  flex: 0 0 28px;
+  box-shadow: 0 4px 12px rgba(0,136,255,0.25);
+}
+
+/* Checklist */
+.faq-checklist{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.faq-check{
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+}
+
+/* Warning */
+.faq-warning{
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255,183,107,0.08);
+  border: 1px solid rgba(255,183,107,0.18);
+  color: #ffb76b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* Referral banner */
+.faq-ref-banner{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 16px;
+  margin-bottom: 14px;
+  background: linear-gradient(135deg, rgba(0,234,255,0.12), rgba(79,127,255,0.08));
+  border: 1px solid rgba(0,234,255,0.22);
+}
+.faq-ref-amount{
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--accent-green);
+  letter-spacing: -0.5px;
+}
+.faq-ref-text{
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+/* Q&A */
+.faq-qa{
+  padding: 12px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.faq-qa:last-child{
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.faq-q{
+  font-weight: 800;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: var(--accent-cyan);
+}
+.faq-a{
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* Light theme FAQ */
+html.theme-light .faq-card-icon{
+  background: linear-gradient(135deg, rgba(37,99,235,0.12), rgba(14,165,233,0.08));
+  border-color: rgba(37,99,235,0.18);
+}
+html.theme-light .faq-card-header:hover{
+  background: rgba(37,99,235,0.04);
+}
+html.theme-light .faq-ref-banner{
+  background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(14,165,233,0.06));
+  border-color: rgba(37,99,235,0.18);
+}
+html.theme-light .faq-warning{
+  background: rgba(245,158,11,0.08);
+  border-color: rgba(245,158,11,0.18);
+  color: #b45309;
+}
+html.theme-light .faq-q{
+  color: #2563eb;
+}
+
+/* Adjust nav-item for 4 tabs */
+@media (max-width: 520px){
+  .nav-item{ padding: 12px 14px; font-size: 12px; }
+}

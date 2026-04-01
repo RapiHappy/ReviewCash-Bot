@@ -97,6 +97,9 @@
   </script>
 
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=__APP_BUILD__-icons2">
 
   <style>
@@ -563,6 +566,151 @@
       </div>
     </section>
 
+    <!-- FAQ / HELP -->
+    <section id="view-help" class="hidden anim-entry">
+      <h2 style="font-size:28px; font-weight:900; margin-bottom:25px;">📚 FAQ и Инструкции</h2>
+
+      <!-- Quick Start -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">🚀</div>
+          <div class="faq-card-title">Как начать зарабатывать?</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-steps">
+            <div class="faq-step"><span class="faq-step-num">1</span><span>Перейди во вкладку <b>«Задания»</b></span></div>
+            <div class="faq-step"><span class="faq-step-num">2</span><span>Выбери задание из списка</span></div>
+            <div class="faq-step"><span class="faq-step-num">3</span><span>Нажми <b>«Перейти к выполнению»</b></span></div>
+            <div class="faq-step"><span class="faq-step-num">4</span><span>Выполни задание по инструкции</span></div>
+            <div class="faq-step"><span class="faq-step-num">5</span><span>Отправь отчёт (скриншот или авто-проверка)</span></div>
+            <div class="faq-step"><span class="faq-step-num">6</span><span>Получи деньги на баланс 💰</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reviews -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">📝</div>
+          <div class="faq-card-title">Как писать отзывы?</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <p style="color:var(--text-dim); font-size:14px; line-height:1.5; margin:0 0 12px;">Перед тем как оставить отзыв на Яндекс / Google / 2GIS:</p>
+          <div class="faq-checklist">
+            <div class="faq-check">✅ Лайкни 5 положительных отзывов</div>
+            <div class="faq-check">✅ Лайкни 5 фото организации</div>
+            <div class="faq-check">✅ Зайди на сайт организации</div>
+            <div class="faq-check">✅ Только потом пиши свой отзыв</div>
+          </div>
+          <div class="faq-warning">⚠️ Без этих действий отзыв может быть удалён платформой, и оплату вы не получите.</div>
+        </div>
+      </div>
+
+      <!-- TG Tasks -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">📲</div>
+          <div class="faq-card-title">Telegram-задания</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-checklist">
+            <div class="faq-check">🤖 Проверяются автоматически ботом</div>
+            <div class="faq-check">⏱ Нужно оставаться подписанным мин. 2-3 дня</div>
+            <div class="faq-check">💰 Оплата приходит после проверки удержания</div>
+            <div class="faq-check">❌ Отписался раньше → деньги не начислятся</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Withdraw -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">💸</div>
+          <div class="faq-card-title">Как вывести деньги?</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-checklist">
+            <div class="faq-check">💳 Вывод на карту или по номеру телефона</div>
+            <div class="faq-check">📊 Минимальная сумма для вывода: <b>300₽</b></div>
+            <div class="faq-check">⏳ Обработка заявки: до 24 часов</div>
+            <div class="faq-check">👤 Укажи имя и фамилию как на карте</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Referral -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">🎁</div>
+          <div class="faq-card-title">Реферальная программа</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-ref-banner">
+            <div class="faq-ref-amount">+50₽</div>
+            <div class="faq-ref-text">за каждого друга</div>
+          </div>
+          <div class="faq-checklist">
+            <div class="faq-check">👥 Отправь другу свою реферальную ссылку</div>
+            <div class="faq-check">📋 Друг регистрируется и выполняет первое задание</div>
+            <div class="faq-check">💰 Тебе автоматически начисляется <b>50₽</b></div>
+            <div class="faq-check">♾️ Без ограничений — приглашай сколько хочешь</div>
+          </div>
+          <p style="color:var(--text-dim); font-size:13px; margin:12px 0 0;">Ссылку найдёшь во вкладке «Друзья» 👥</p>
+        </div>
+      </div>
+
+      <!-- Rules -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">🚫</div>
+          <div class="faq-card-title">Правила и запреты</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-checklist">
+            <div class="faq-check">❌ Фейковые скриншоты</div>
+            <div class="faq-check">❌ Отзывы не со своего аккаунта</div>
+            <div class="faq-check">❌ Мульти-аккаунты</div>
+            <div class="faq-check">❌ Подделка доказательств</div>
+          </div>
+          <div class="faq-warning">За нарушения — блокировка аккаунта и штраф на баланс.</div>
+        </div>
+      </div>
+
+      <!-- Troubleshooting -->
+      <div class="card faq-card">
+        <div class="faq-card-header" onclick="toggleFaq(this)">
+          <div class="faq-card-icon">❓</div>
+          <div class="faq-card-title">Частые вопросы</div>
+          <div class="faq-card-arrow">›</div>
+        </div>
+        <div class="faq-card-body" style="display:none;">
+          <div class="faq-qa">
+            <div class="faq-q">Почему не вижу задания?</div>
+            <div class="faq-a">Задание уже выполнено, действует кулдаун, или для новых аккаунтов часть заданий появляется не сразу.</div>
+          </div>
+          <div class="faq-qa">
+            <div class="faq-q">Не могу отправить отчёт?</div>
+            <div class="faq-a">Сначала нажми «Перейти к выполнению» внутри задания. Без этого кнопка отчёта заблокирована.</div>
+          </div>
+          <div class="faq-qa">
+            <div class="faq-q">Когда придёт оплата?</div>
+            <div class="faq-a">TG-задания — сразу после авто-проверки. Отзывы — после модерации (обычно до 24 часов).</div>
+          </div>
+          <div class="faq-qa">
+            <div class="faq-q">Задание выполнено, но статус «на проверке»</div>
+            <div class="faq-a">Модератор проверяет отчёты вручную. Подожди до 24 часов.</div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
     <!-- HISTORY -->
     <section id="view-history" class="hidden anim-entry">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
@@ -584,6 +732,7 @@
   <nav class="nav-bar">
     <div class="nav-item active" id="tab-tasks" onclick="showTab('tasks')"><span>📋</span> Задания</div>
     <div class="nav-item" id="tab-friends" onclick="showTab('friends')"><span>👥</span> Друзья</div>
+    <div class="nav-item" id="tab-help" onclick="showTab('help')"><span>❓</span> FAQ</div>
     <div class="nav-item" id="tab-profile" onclick="showTab('profile')"><span>👤</span> Профиль</div>
   </nav>
 

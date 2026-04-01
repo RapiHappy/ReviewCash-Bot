@@ -1533,9 +1533,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         return !isTaskCompleted(t && t.id) && Number(t.qty_left || 0) > 0;
       });
       if (!isMy && state.platformFilter !== "all" && hasAnyTasks) {
-        box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">По текущему фильтру заданий нет.<br><br><button class="btn" onclick="setPlatformFilter('all')">Показать все задания</button></div>`;
+        box.innerHTML = `<div class="card" style="text-align:center; padding:30px 20px;">
+          <div style="font-size:40px; margin-bottom:12px;">🔍</div>
+          <div style="font-weight:800; font-size:16px; margin-bottom:8px;">Нет заданий по фильтру</div>
+          <div style="color:var(--text-dim); font-size:13px; margin-bottom:16px;">Попробуй другую платформу или посмотри все</div>
+          <button class="btn btn-main" style="margin:0 auto;" onclick="setPlatformFilter('all')">Показать все задания</button>
+        </div>`;
       } else {
-        box.innerHTML = `<div class="card" style="text-align:center; color:var(--text-dim);">${isMy ? "У вас пока нет созданных заданий." : "Пока нет активных заданий."}</div>`;
+        box.innerHTML = `<div class="card" style="text-align:center; padding:30px 20px;">
+          <div style="font-size:48px; margin-bottom:12px;">${isMy ? '📦' : '⏳'}</div>
+          <div style="font-weight:800; font-size:16px; margin-bottom:8px;">${isMy ? 'Нет созданных заданий' : 'Пока нет активных заданий'}</div>
+          <div style="color:var(--text-dim); font-size:13px; line-height:1.5;">${isMy ? 'Нажми ✨ «Создать» чтобы разместить первое задание' : 'Новые задания появляются регулярно.\nПопробуй обновить чуть позже ↻'}</div>
+        </div>`;
       }
       return;
     }
@@ -2966,6 +2975,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   function showTab(tab) {
     if (tab === "friends") showSection("friends");
     else if (tab === "profile") showSection("profile");
+    else if (tab === "help") showSection("help");
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
     if (state.currentSection === "tasks") {
@@ -2974,6 +2984,19 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
   }
   window.showTab = showTab;
+
+  // FAQ accordion toggle
+  window.toggleFaq = function (headerEl) {
+    var card = headerEl.closest(".faq-card");
+    if (!card) return;
+    var body = card.querySelector(".faq-card-body");
+    var arrow = card.querySelector(".faq-card-arrow");
+    if (!body) return;
+    var isOpen = body.style.display !== "none";
+    body.style.display = isOpen ? "none" : "block";
+    if (arrow) arrow.style.transform = isOpen ? "rotate(0deg)" : "rotate(90deg)";
+    card.classList.toggle("faq-open", !isOpen);
+  };
 
   // --------------------
   // Friends: copy/share invite
