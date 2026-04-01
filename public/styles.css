@@ -322,7 +322,7 @@ html.theme-light body::after{
   display: flex; gap: 5px; z-index: 1000;
   box-shadow: 0 10px 40px rgba(0,0,0,0.3);
 }
-.nav-item { padding: 14px 24px; border-radius: 26px; color: var(--text-dim); font-weight: 700; cursor: pointer; transition: 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; text-align:center; }
+.nav-item { padding: 12px 16px; border-radius: 26px; color: var(--text-dim); font-weight: 700; cursor: pointer; transition: 0.3s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; text-align:center; white-space:nowrap; }
 .nav-item span{ display:inline-flex; align-items:center; justify-content:center; min-width:18px; }
 .nav-item.active {
   background: linear-gradient(135deg, var(--accent-cyan), #4f7fff);
@@ -1159,7 +1159,9 @@ body.light-mode .phone-copy-box__action{
 
 @media (max-width: 520px){
   .total-badge{ flex-direction:column; align-items:flex-start; gap:10px; }
-  .nav-item{ padding: 12px 16px; }
+  .nav-item{ padding: 10px 12px; font-size: 11px; gap: 4px; }
+  .nav-item span{ min-width: 16px; font-size: 14px; }
+  .nav-bar{ padding: 6px; gap: 3px; bottom: 20px; }
 }
 
 
@@ -1578,30 +1580,68 @@ html.perf-low .anim-entry,
 html.perf-low .theme-toggle::after{
   animation: none !important;
 }
+html.perf-low body{
+  background: var(--bg) !important;
+}
+html.perf-low body::before,
+html.perf-low body::after{
+  display: none !important;
+}
 html.perf-low .card,
 html.perf-low .modal,
 html.perf-low .nav-bar,
 html.perf-low .copy-box,
 html.perf-low .qa-card,
 html.perf-low .top-option-card,
-html.perf-low .pf-bar{
+html.perf-low .faq-card,
+html.perf-low .pf-bar,
+html.perf-low .overlay{
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  box-shadow: 0 8px 18px rgba(0,0,0,0.14) !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.10) !important;
 }
 html.perf-low .btn:hover,
 html.perf-low .card:hover,
 html.perf-low .phone-copy-box--fancy:hover,
-html.perf-low .fab-btn:hover{
+html.perf-low .fab-btn:hover,
+html.perf-low .faq-card-header:hover,
+html.perf-low .menu-item:hover,
+html.perf-low .task-item:hover,
+html.perf-low .pay-opt:hover,
+html.perf-low .top-option-card:hover{
   transform: none !important;
   filter: none !important;
 }
 html.perf-low .fab-btn{
-  box-shadow: 0 10px 22px rgba(74, 95, 255, 0.28), inset 0 1px 0 rgba(255,255,255,0.32);
+  box-shadow: 0 6px 16px rgba(74, 95, 255, 0.22), inset 0 1px 0 rgba(255,255,255,0.25);
 }
 html.perf-low .task-item,
-html.perf-low .card{
+html.perf-low .card,
+html.perf-low .faq-card,
+html.perf-low .menu-item,
+html.perf-low .pay-opt,
+html.perf-low .btn,
+html.perf-low .nav-item,
+html.perf-low .theme-toggle{
   transition: none !important;
+}
+html.perf-low .overlay{
+  background: rgba(0,0,0,0.88) !important;
+}
+html.perf-low .modal{
+  animation: none !important;
+}
+html.perf-low .loader-logo{
+  animation: none !important;
+}
+html.perf-low .loader-bar::after{
+  animation: none !important;
+}
+html.perf-low .avatar-ring{
+  background: var(--accent-cyan) !important;
+}
+html.perf-low .faq-step-num{
+  box-shadow: none !important;
 }
 
 @media (max-width: 520px){
@@ -2649,9 +2689,4 @@ html.theme-light .faq-warning{
 }
 html.theme-light .faq-q{
   color: #2563eb;
-}
-
-/* Adjust nav-item for 4 tabs */
-@media (max-width: 520px){
-  .nav-item{ padding: 12px 14px; font-size: 12px; }
 }
