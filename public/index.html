@@ -501,7 +501,10 @@
             <div class="level-badge" id="u-lvl-badge">LVL 1</div>
           </div>
           <div class="balance-stack">
-            <div id="u-name" style="color:var(--text-dim); font-size:14px; font-weight:800;">...</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div id="u-name" style="color:var(--text-dim); font-size:14px; font-weight:800;">...</div>
+              <div id="u-vip-badge" class="vip-badge" style="display:none; font-size:10px; font-weight:900; background:linear-gradient(135deg, #ffd700, #ffaa00); color:#000; padding:2px 6px; border-radius:6px; cursor:pointer;" onclick="openModal('m-vip')">VIP 👑</div>
+            </div>
             <div id="u-bal-rub" class="bal-rub">0 ₽</div>
             <div id="u-bal-star" class="bal-star">0 ⭐</div>
           </div>
@@ -1115,6 +1118,33 @@
       <div style="margin-top:30px;">
         <h3 style="font-size:16px;">Мои заявки</h3>
         <div id="withdrawals-list" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIP MODAL -->
+  <div id="m-vip" class="overlay">
+    <div class="modal m-vip-content" style="background: linear-gradient(145deg, rgba(20,20,25,0.95), rgba(30,25,20,0.95)); border: 1px solid rgba(255, 215, 0, 0.3);">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0; background: linear-gradient(135deg, #ffd700, #ffaa00); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">👑 VIP Статус</h2>
+        <div style="opacity:0.5; font-size:20px; cursor:pointer;" onclick="closeModal()">✕</div>
+      </div>
+      <div style="margin:15px 0; text-align:center;">
+        <div style="font-size:48px; margin-bottom:10px; animation: float 3s ease-in-out infinite;">💎</div>
+        <p style="color:var(--text-dim); font-size:14px; margin-bottom:20px;">Один статус, огромные преимущества!</p>
+      </div>
+      <ul style="list-style:none; padding:0; margin:0 0 20px 0; text-align:left; font-size: 14px;">
+        <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">💰</span> <span><b>+10%</b> к доходу за задания</span></li>
+        <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">🚀</span> <span><b>+50%</b> к получаемому опыту</span></li>
+        <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">🌟</span> <span>Доступ к <b>эксклюзивным</b> VIP-заданиям</span></li>
+        <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">👑</span> <span>Уникальный <b>VIP-бейджик</b> в профиле</span></li>
+      </ul>
+      <div style="background: rgba(255, 215, 0, 0.05); border-radius:12px; padding:15px; margin-bottom:20px;">
+        <p style="font-size:13px; margin:0 0 10px; text-align:center;">Стоимость на <b>30 дней</b>:</p>
+        <div style="display:flex; justify-content:center; gap:10px;">
+          <button class="btn btn-main" style="background: linear-gradient(135deg, #ffd700, #ffaa00); color: #000; box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);" onclick="buyVip('rub')">🔥 299 ₽</button>
+          <button class="btn btn-secondary" style="border-color: rgba(255, 215, 0, 0.5);" onclick="buyVip('stars')">⭐ 150</button>
+        </div>
       </div>
     </div>
   </div>

@@ -231,6 +231,11 @@ PROOF_BUCKET = os.getenv("PROOF_BUCKET", "proofs").strip() or "proofs"
 MAX_PROOF_MB = int(os.getenv("MAX_PROOF_MB", "8").strip())
 
 # Levels / XP
+VIP_PRICE_RUB = float(os.getenv("VIP_PRICE_RUB", "299").strip())
+VIP_PRICE_STARS = int(os.getenv("VIP_PRICE_STARS", "150").strip())
+VIP_INCOME_MULT = float(os.getenv("VIP_INCOME_MULT", "1.1").strip())
+VIP_XP_MULT = float(os.getenv("VIP_XP_MULT", "1.5").strip())
+
 XP_PER_LEVEL = int(os.getenv("XP_PER_LEVEL", "100").strip())          # базовый XP для LVL 1 -> 2
 XP_LEVEL_STEP = int(os.getenv("XP_LEVEL_STEP", "2").strip())     # множитель роста XP на каждый следующий уровень
 XP_PER_TASK_PAID = int(os.getenv("XP_PER_TASK_PAID", "10").strip())   # за оплаченный отзыв/задачу
@@ -1712,6 +1717,20 @@ async def clear_limit(uid: int, key: str):
     except Exception:
         pass
 
+VIP_UNTIL_KEY = "vip_until"
+
+async def get_vip_until(uid: int):
+    return await get_limit_until(uid, VIP_UNTIL_KEY)
+
+async def set_vip_until(uid: int, days: int = 30):
+    until = _now() + timedelta(days=days)
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(uid), "limit_key": VIP_UNTIL_KEY, "last_at": until.isoformat()},
+        on_conflict="user_id,limit_key",
+    )
+    return until
+
 async def get_global_ban_until(uid: int):
     return await get_limit_until(uid, GLOBAL_BAN_KEY)
 
@@ -2614,6 +2633,10 @@ async def api_sync(req: web.Request):
         reopen_task_ids = []
 
     session_token = _make_session_token(uid)
+
+    vip_until_dt = await get_vip_until(uid)
+    is_vip = vip_until_dt is not None
+
     return web.json_response({
         "ok": True,
         "auth": True,
@@ -2625,6 +2648,8 @@ async def api_sync(req: web.Request):
             "last_name": user.get("last_name"),
             "photo_url": user.get("photo_url"),
             "gender": user_gender,
+            "is_vip": is_vip,
+            "vip_until": vip_until_dt.isoformat() if vip_until_dt else None,
         },
         "balance": bal,
         "tasks": tasks,
@@ -3007,9 +3032,15 @@ async def api_task_submit(req: web.Request):
     if is_auto:
         async def _auto_pay(ok_code: str):
             reward = float(task.get("reward_rub") or 0)
+            xp_added = task_xp(task)
+            
+            vip_until_dt = await get_vip_until(uid)
+            if vip_until_dt:
+                reward = round(reward * VIP_INCOME_MULT, 2)
+                xp_added = int(round(xp_added * VIP_XP_MULT))
+
             await add_rub(uid, reward)
             await stats_add("payouts_rub", reward)
-            xp_added = task_xp(task)
             await add_xp(uid, xp_added)
             await maybe_pay_referral_bonus(uid)
             try:
@@ -3159,6 +3190,8 @@ async def api_task_submit(req: web.Request):
 
     await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     xp_expected = task_xp(task)
+    if await get_vip_until(uid):
+        xp_expected = int(round(xp_expected * VIP_XP_MULT))
     await mark_submit_attempt(uid, ok=True)
     return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
 
@@ -3533,6 +3566,32 @@ async def api_report_clear(req: web.Request):
     uid = int(user["id"])
     await sb_delete(T_COMP, {"user_id": uid})
     return web.json_response({"ok": True})
+
+async def api_vip_buy(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    body = await safe_json(req)
+
+    currency = str(body.get("currency") or "rub").strip().lower()
+
+    if currency == "stars":
+        price = VIP_PRICE_STARS
+        ok = await sub_stars(uid, price)
+        if not ok:
+            return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {price} ⭐"}, status=400)
+    else:
+        price = VIP_PRICE_RUB
+        ok = await sub_rub(uid, price)
+        if not ok:
+            return web.json_response({"ok": False, "error": f"Недостаточно средств. Нужно {price} ₽"}, status=400)
+
+    until = await set_vip_until(uid, 30)
+    msg = (f"👑 <b>Поздравляем! Вы приобрели VIP-статус на 30 дней.</b>\n\n"
+           f"Ваш VIP активен до {until.strftime('%d.%m %H:%M UTC')}.\n"
+           f"Теперь вы получаете <b>+{(VIP_INCOME_MULT-1)*100:.0f}%</b> к доходу и <b>+{(VIP_XP_MULT-1)*100:.0f}%</b> к опыту!")
+    await notify_user(uid, msg)
+
+    return web.json_response({"ok": True, "vip_until": until.isoformat()})
 
 async def api_ops_list(req: web.Request):
     _, user = await require_init(req)
@@ -3993,6 +4052,10 @@ async def api_admin_proof_decision(req: web.Request):
         return web.json_response({"ok": True, "status": "rework"})
 
     if approved:
+        vip_until_dt = await get_vip_until(user_id)
+        if vip_until_dt:
+            reward = round(reward * VIP_INCOME_MULT, 2)
+
         try:
             await add_rub(user_id, reward)
         except Exception as e:
@@ -4006,6 +4069,8 @@ async def api_admin_proof_decision(req: web.Request):
         await stats_add("payouts_rub", reward)
         try:
             xp_added = task_xp(task)
+            if vip_until_dt:
+                xp_added = int(round(xp_added * VIP_XP_MULT))
             await add_xp(user_id, xp_added)
         except Exception as e:
             log.warning("add_xp skipped: %s", e)
@@ -4890,6 +4955,8 @@ def make_app():
     app.router.add_post("/api/ops/list", api_ops_list)
     app.router.add_post("/api/report/list", api_report_list)
     app.router.add_post("/api/report/clear", api_report_clear)
+
+    app.router.add_post("/api/vip/buy", api_vip_buy)
 
     # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
