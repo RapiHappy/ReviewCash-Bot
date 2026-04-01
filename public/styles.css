@@ -429,6 +429,22 @@ html.theme-light .nav-item.active {
   box-shadow: none;
 }
 
+@media (max-width: 420px) {
+  .nav-bar {
+    width: calc(100% - 24px); /* Provide room near edges */
+    padding: 6px;
+    gap: 2px;
+  }
+  .nav-item {
+    padding: 10px 8px; /* Less horizontal padding */
+    font-size: 11px; /* Smaller font to fit texts firmly */
+    flex: 1; /* Auto distribute evenly */
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .nav-item span { min-width: 16px; margin-right: 2px; }
+}
+
 /* --- MODALS --- */
 .overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
