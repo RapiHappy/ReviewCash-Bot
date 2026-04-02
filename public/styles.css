@@ -2895,3 +2895,66 @@ html.theme-light .faq-warning{
 html.theme-light .faq-q{
   color: #2563eb;
 }
+
+/* VIP & Pricing Updates */
+.vip-card-btn {
+  background: linear-gradient(135deg, #ffd700, #ffaa00);
+  color: #000;
+  font-weight: 900;
+  border: none;
+  border-radius: 16px;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: 0.3s;
+  box-shadow: 0 10px 20px rgba(255, 215, 0, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vip-card-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 30px rgba(255, 215, 0, 0.4);
+}
+.vip-badge-profile {
+  background: linear-gradient(135deg, #ffd700, #ffaa00);
+  color: #000;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  box-shadow: 0 4px 10px rgba(255, 215, 0, 0.2);
+}
+.price-calc-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.price-calc-row.total {
+  color: var(--text-main);
+  font-weight: 800;
+  font-size: 16px;
+  margin-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 10px;
+}
+.vip-toggle-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 215, 0, 0.05);
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  margin-top: 15px;
+}
+.commission-toggle-admin {
+  border: 1px dashed var(--accent-gold);
+  padding: 16px;
+  border-radius: 20px;
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}

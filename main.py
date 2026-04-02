@@ -1489,6 +1489,7 @@ async def touch_limit(uid: int, key: str):
 # -------------------------
 MUTE_NOTIFY_KEY = "mute_notify"
 FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
+COMMISSION_DISABLED_KEY = "feature_commission_disabled"
 
 
 def _feature_flags_user_id() -> int:
@@ -1533,6 +1534,43 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
         {
             "user_id": ff_uid,
             "limit_key": FEATURE_STARS_PAY_DISABLED_KEY,
+            "last_at": _now().isoformat(),
+        },
+        on_conflict="user_id,limit_key"
+    )
+    return False
+
+
+async def is_commission_enabled() -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return True
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": COMMISSION_DISABLED_KEY}, limit=1)
+        return not bool(r.data)
+    except Exception:
+        return True
+
+
+async def set_commission_enabled(enabled: bool) -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return bool(enabled)
+    try:
+        await sb_upsert(T_USERS, {"user_id": ff_uid}, on_conflict="user_id")
+    except Exception:
+        pass
+    if enabled:
+        try:
+            await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": COMMISSION_DISABLED_KEY})
+        except Exception:
+            pass
+        return True
+    await sb_upsert(
+        T_LIMITS,
+        {
+            "user_id": ff_uid,
+            "limit_key": COMMISSION_DISABLED_KEY,
             "last_at": _now().isoformat(),
         },
         on_conflict="user_id,limit_key"
@@ -2623,21 +2661,20 @@ async def api_sync(req: web.Request):
                 assigned_text = pick_review_text_for_task(t, slot_index)
                 t["custom_review_texts"] = [assigned_text] if assigned_text else []
                 t["assigned_review_text"] = assigned_text
-        tasks.sort(key=lambda x: (0 if is_top_active(x) else 1, -(top_bought_at(x).timestamp() if top_bought_at(x) else 0), str(x.get("created_at") or "")), reverse=False)
-
-        deduped_tasks = []
-        seen_tg_display_keys: set[str] = set()
-        for t in tasks:
-            if int(t.get("owner_id") or 0) == uid:
-                deduped_tasks.append(t)
-                continue
-            tg_key = tg_display_dedupe_key(t)
-            if tg_key:
-                if tg_key in seen_tg_display_keys:
-                    continue
-                seen_tg_display_keys.add(tg_key)
-            deduped_tasks.append(t)
-        tasks = deduped_tasks
+    if is_vip:
+        # VIP sorting: Top active first, then highest reward first
+        tasks.sort(key=lambda x: (
+            0 if is_top_active(x) else 1,
+            -float(x.get("reward_rub") or 0),
+            str(x.get("created_at") or "")
+        ), reverse=False)
+    else:
+        # Default sorting
+        tasks.sort(key=lambda x: (
+            0 if is_top_active(x) else 1,
+            -(top_bought_at(x).timestamp() if top_bought_at(x) else 0),
+            str(x.get("created_at") or "")
+        ), reverse=False)
 
     reopen_task_ids = []
     try:
@@ -2686,8 +2723,20 @@ async def api_sync(req: web.Request):
         "config": {
             "stars_rub_rate": STARS_RUB_RATE,
             "stars_payments_enabled": await is_stars_payments_enabled(),
+            "commission_enabled": await is_commission_enabled(),
         },
     })
+
+
+# -------------------------
+# API: admin toggle commission
+# -------------------------
+async def api_admin_toggle_commission(req: web.Request):
+    await require_main_admin(req)
+    body = await safe_json(req)
+    enabled = bool(body.get("enabled", True))
+    await set_commission_enabled(enabled)
+    return web.json_response({"ok": True, "commission_enabled": enabled})
 
 # -------------------------
 # Proof upload (Supabase Storage)
@@ -2765,9 +2814,29 @@ async def api_task_create(req: web.Request):
     title = str(body.get("title") or "").strip()
     target_url = str(body.get("target_url") or "").strip()
     instructions = str(body.get("instructions") or "").strip()
-    reward_rub = float(body.get("reward_rub") or 0)
-    cost_rub = float(body.get("cost_rub") or 0)
+    
+    # NEW PRICING LOGIC
+    price_per_unit = float(body.get("price_per_unit") or 100)
+    if price_per_unit < 100:
+        return json_error(400, "Минимальная цена за 1 шт. — 100 ₽", code="MIN_PRICE")
+    
     qty_total = int(body.get("qty_total") or 1)
+    if qty_total <= 0:
+        return json_error(400, "Количество должно быть больше 0")
+
+    vip_for_all = bool(body.get("vip_for_all") or False)
+    comm_enabled = await is_commission_enabled()
+    
+    # Base cost
+    base_cost = price_per_unit * qty_total
+    
+    # Calculate modifiers
+    comm_rate = 0.20 if comm_enabled else 0.0
+    vip_rate = 0.10 if vip_for_all else 0.0
+    
+    total_cost_rub = base_cost * (1 + comm_rate + vip_rate)
+    reward_rub = price_per_unit  # Performer gets the base price per unit
+    
     check_type = str(body.get("check_type") or "manual").strip()
     tg_chat = str(body.get("tg_chat") or "").strip() or None
     tg_kind = str(body.get("tg_kind") or "").strip() or None
@@ -2779,7 +2848,7 @@ async def api_task_create(req: web.Request):
     retention_extra_days = max(0, int(body.get("retention_extra_days") or 0))
     custom_review_texts = body.get("custom_review_texts") or []
     custom_review_mode = str(body.get("custom_review_mode") or "none").strip().lower()
-    vip_only = bool(body.get("vip_only") or False)
+    
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
@@ -2799,8 +2868,7 @@ async def api_task_create(req: web.Request):
         if not ok_alive:
             return json_error(400, f"Ссылка не открывается или не подходит: {why}", code="LINK_DEAD")
         target_url = norm_u
-    if reward_rub <= 0 or qty_total <= 0:
-        raise web.HTTPBadRequest(text="Bad reward/qty")
+
     if custom_review_mode not in ("none", "single", "per_item"):
         custom_review_mode = "none"
     if not isinstance(custom_review_texts, list):
@@ -2817,8 +2885,6 @@ async def api_task_create(req: web.Request):
         custom_review_texts = custom_review_texts[:qty_total]
 
     # TG task:
-    # - принимаем только @юзернейм или ссылку t.me/...
-    # - авто-проверка возможна только если это НЕ бот и наш бот добавлен в чат/канал (для канала — админ)
     if ttype == "tg":
         sub_type = (sub_type or TG_SUB_CHANNEL_KEY).strip().lower()
         if sub_type not in (TG_MEMBER_SUBTYPES | TG_EVENT_SUBTYPES):
@@ -2866,30 +2932,25 @@ async def api_task_create(req: web.Request):
             if not target_url:
                 target_url = "https://t.me/ReviewCashOrg_Bot"
 
-
-    if cost_rub <= 0:
-        cost_rub = reward_rub * qty_total * 2.0
-    if float(cost_rub) < 50:
-        return json_error(400, "Минимальный бюджет задания — 50 ₽", code="MIN_BUDGET")
-
-    total_cost = float(cost_rub)
     if want_top:
-        total_cost += max(0.0, float(top_price_rub or 250))
-    charged_amount = total_cost
+        total_cost_rub += max(0.0, float(top_price_rub or 250))
+    
+    charged_amount = total_cost_rub
     charged_currency = "rub"
 
     if pay_currency == "star":
         if not await is_stars_payments_enabled():
-            return web.json_response({"ok": False, "error": "Оплата Stars временно отключена администратором"}, status=403)
+            return web.json_response({"ok": False, "error": "Оплата Stars временно отключена"}, status=403)
         charged_currency = "star"
-        charged_amount = max(1, int(round(total_cost / max(STARS_RUB_RATE, 0.000001))))
+        # Since total_cost_rub is what the user would pay in RUB, we convert to stars
+        charged_amount = max(1, int(round(total_cost_rub / max(STARS_RUB_RATE, 0.000001))))
         ok = await sub_stars(uid, charged_amount)
         if not ok:
             return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {int(charged_amount)}⭐"}, status=400)
     else:
-        ok = await sub_rub(uid, total_cost)
+        ok = await sub_rub(uid, total_cost_rub)
         if not ok:
-            return web.json_response({"ok": False, "error": f"Недостаточно RUB. Нужно {total_cost:.2f}"}, status=400)
+            return web.json_response({"ok": False, "error": f"Недостаточно RUB. Нужно {total_cost_rub:.2f}"}, status=400)
 
     row = {
         "owner_id": uid,
@@ -2900,7 +2961,7 @@ async def api_task_create(req: web.Request):
         "target_url": target_url,
         "instructions": instructions,
         "reward_rub": reward_rub,
-        "cost_rub": cost_rub,
+        "cost_rub": total_cost_rub,
         "qty_total": qty_total,
         "qty_left": qty_total,
         "check_type": check_type,
@@ -2912,7 +2973,7 @@ async def api_task_create(req: web.Request):
         meta_lines.append("TG_SUBTYPE: " + sub_type)
     if target_gender != TASK_GENDER_ANY:
         meta_lines.append("TARGET_GENDER: " + target_gender)
-    if vip_only:
+    if vip_for_all:
         meta_lines.append("VIP_ONLY: 1")
     if ttype == "tg":
         meta_lines.append(f"RETENTION_DAYS: {tg_required_retention_days(sub_type or TG_SUB_CHANNEL_KEY, retention_extra_days)}")
@@ -2922,6 +2983,25 @@ async def api_task_create(req: web.Request):
         meta_lines.append("CUSTOM_REVIEW_TEXTS: " + encoded_review_texts)
     if meta_lines:
         row["instructions"] = (instructions + "\n\n" + "\n".join(meta_lines)).strip()
+
+    ins = await sb_insert(T_TASKS, row)
+    task = (ins.data or [row])[0]
+
+    await stats_add("revenue_rub", total_cost_rub)
+    pay_text = f"{int(charged_amount)}⭐" if charged_currency == "star" else f"{charged_amount:.2f}₽"
+    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда исполнителю: {reward_rub}₽\n• Оплата заказчиком: {pay_text}")
+    try:
+        asyncio.create_task(broadcast_new_task(task))
+    except Exception:
+        pass
+
+    return web.json_response({
+        "ok": True,
+        "task": task,
+        "charged_amount": int(charged_amount) if charged_currency == "star" else charged_amount,
+        "charged_currency": charged_currency,
+        "cost_rub": total_cost_rub,
+    })
 
     ins = await sb_insert(T_TASKS, row)
     task = (ins.data or [row])[0]
@@ -3609,21 +3689,28 @@ async def api_vip_buy(req: web.Request):
 
     currency = str(body.get("currency") or "rub").strip().lower()
 
-    if currency == "stars":
-        price = VIP_PRICE_STARS
+    if currency == "star":
+        price = int(VIP_PRICE_STARS)
         ok = await sub_stars(uid, price)
         if not ok:
             return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {price} ⭐"}, status=400)
+        rev = price * STARS_RUB_RATE
     else:
-        price = VIP_PRICE_RUB
+        price = float(VIP_PRICE_RUB)
         ok = await sub_rub(uid, price)
         if not ok:
             return web.json_response({"ok": False, "error": f"Недостаточно средств. Нужно {price} ₽"}, status=400)
+        rev = price
 
     until = await set_vip_until(uid, 30)
-    msg = (f"👑 <b>Поздравляем! Вы приобрели VIP-статус на 30 дней.</b>\n\n"
-           f"Ваш VIP активен до {until.strftime('%d.%m %H:%M UTC')}.\n"
-           f"Теперь вы получаете <b>+{(VIP_INCOME_MULT-1)*100:.0f}%</b> к доходу и <b>+{(VIP_XP_MULT-1)*100:.0f}%</b> к опыту!")
+    await stats_add("revenue_rub", rev)
+    
+    msg = (f"👑 <b>Поздравляем! Ваш VIP-статус активирован до {until.strftime('%d.%m %H:%M UTC')}.</b>\n\n"
+           f"Ваши привилегии:\n"
+           f"✅ <b>+10%</b> к доходу за задания\n"
+           f"✅ <b>+50%</b> к получаемому опыту\n"
+           f"✅ Доступ к эксклюзивным VIP-заданиям\n"
+           f"✅ Приоритет: самые дорогие задания всегда сверху!")
     await notify_user(uid, msg)
 
     return web.json_response({"ok": True, "vip_until": until.isoformat()})
@@ -4992,6 +5079,7 @@ def make_app():
     app.router.add_post("/api/report/clear", api_report_clear)
 
     app.router.add_post("/api/vip/buy", api_vip_buy)
+    app.router.add_post("/api/admin/config/toggle_commission", api_admin_toggle_commission)
 
     # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)

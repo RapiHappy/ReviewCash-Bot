@@ -565,6 +565,7 @@
             <div id="u-bal-rub" class="bal-rub">0 ₽</div>
             <div id="u-bal-star" class="bal-star">0 ⭐</div>
           </div>
+          <button id="buy-vip-btn" class="vip-card-btn" style="margin-left:auto; font-size:12px; padding:8px 14px;" onclick="openModal('m-vip')">💎 Купить VIP</button>
         </div>
 
         <div class="xp-track"><div class="xp-fill" id="u-xp-fill"></div></div>
@@ -613,6 +614,10 @@
       </div>
 
       <div id="admin-panel-card" class="card" style="display:none; padding:15px; border:1px dashed var(--accent-gold); background:rgba(255,204,0,0.05);">
+        <div class="commission-toggle-admin" id="admin-comm-toggle-wrap" style="display:none;">
+          <div style="font-size:12px; font-weight:700; color:var(--accent-gold);">Комиссия 20%: <span id="admin-comm-status">ВКЛ</span></div>
+          <button class="btn btn-sm btn-secondary" onclick="adminToggleCommission()">Переключить</button>
+        </div>
         <div class="menu-item" onclick="openAdminPanel()" style="margin:0; background:transparent; border:none; padding:5px;">
           <span style="color: var(--accent-gold);">🛡️ Панель администратора</span>
           <span id="admin-badge" style="background:var(--accent-gold); color:#000; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:900; opacity:0;">0</span>
@@ -854,32 +859,62 @@
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
         <div>
+          <label class="input-label">Цена за 1 шт. (min 100)</label>
+          <input type="number" id="t-price-per-unit" value="100" min="100" oninput="recalc()" style="margin-top:5px;">
+        </div>
+        <div>
           <label class="input-label">Количество</label>
           <input type="number" id="t-qty" value="10" min="1" oninput="recalc()" style="margin-top:5px;">
         </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px;">
         <div>
-          <label class="input-label">Валюта</label>
+          <label class="input-label">Валюта оплаты</label>
           <select id="t-cur" onchange="recalc()" style="margin-top:5px;">
             <option value="rub">RUB (₽)</option>
             <option value="star">Stars (⭐)</option>
           </select>
         </div>
+        <div id="retention-config-wrap">
+          <label class="input-label">Доп. удержание</label>
+          <select id="t-retention-extra" onchange="recalc()" style="margin-top:5px;">
+            <option value="0">Стандарт</option>
+            <option value="1">+1 день</option>
+            <option value="3">+3 дня</option>
+            <option value="7">+7 дней</option>
+          </select>
+        </div>
       </div>
 
-      <div id="retention-config" style="margin-top:14px;">
-        <label class="input-label" style="margin-top:0;">Доп. дни без выхода</label>
-        <select id="t-retention-extra" onchange="recalc()" style="margin-top:5px;">
-          <option value="0">Только обязательный срок</option>
-          <option value="1">+1 день</option>
-          <option value="2">+2 дня</option>
-          <option value="3">+3 дня</option>
-          <option value="5">+5 дней</option>
-          <option value="7">+7 дней</option>
-          <option value="14">+14 дней</option>
-        </select>
-        <div style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;">Для Telegram-заданий 2 дня удержания обязательны всегда. Подтипы +24/+48/+72 добавляют ещё 1/2/3 дня, а здесь можно увеличить срок дополнительно.</div>
+      <div class="vip-toggle-wrap" style="margin-top:20px;">
+        <div style="flex:1;">
+          <div style="font-weight:900; color:var(--accent-gold); font-size:14px;">👑 VIP Задание (+10%)</div>
+          <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Только для VIP-исполнителей. Высшее качество.</div>
+        </div>
+        <input type="checkbox" id="t-vip-only" onchange="recalc()" style="width:24px; height:24px; margin:0; appearance:checkbox; -webkit-appearance:checkbox; background-image:none;">
       </div>
 
+      <div class="total-badge" style="margin-top:20px; flex-direction:column; align-items:stretch; gap:12px; padding:20px;">
+        <div class="price-calc-row">
+          <span>Базовая стоимость:</span>
+          <span id="calc-base">0 ₽</span>
+        </div>
+        <div class="price-calc-row" id="calc-comm-row">
+          <span>Комиссия сервиса (20%):</span>
+          <span id="calc-comm">0 ₽</span>
+        </div>
+        <div class="price-calc-row" id="calc-vip-row" style="display:none;">
+          <span>VIP-наценка (10%):</span>
+          <span id="calc-vip">0 ₽</span>
+        </div>
+        <div class="price-calc-row total">
+          <span>Итого к оплате:</span>
+          <span id="t-total">0 ₽</span>
+        </div>
+      </div>
+
+      <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальная цена за 1 шт. — 100 ₽.</div>
 
       <div style="margin-top:14px;">
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="toggleTaskCommentBox()">📝 Доп. информация / комментарий к отзыву</button>
@@ -889,23 +924,6 @@
           <div style="font-size:12px; color:var(--text-dim); margin:7px 4px 0; line-height:1.35;">Поле необязательное. Исполнитель увидит этот комментарий внутри задания.</div>
         </div>
       </div>
-
-      <div class="total-badge">        <div style="display:flex; flex-direction:column; gap:2px;">
-          <span style="font-weight:800; opacity:0.7;">Итого к оплате:</span>
-          <span style="font-size:11px; color:var(--text-dim);">Включая комиссию сервиса</span>
-        </div>
-        <span id="t-total" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0 ₽</span>
-      </div>
-      <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; color:var(--text-dim);">
-        <span>Стоимость за 1 выполнение</span>
-        <span id="t-per-one" style="font-weight:900; color:var(--text);">0 ₽</span>
-      </div>
-      <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальный бюджет задания — 50 ₽.</div>
-
-      <label class="task-important-ack__label" style="margin-top: 15px; display: flex; align-items: center; gap: 8px; background: rgba(255, 215, 0, 0.05); border: 1px solid rgba(255, 215, 0, 0.2); padding: 12px; border-radius: 12px; cursor: pointer;">
-        <input type="checkbox" id="t-vip-only" onchange="recalc()">
-        <span style="font-size: 13px; color: var(--text);">👑 Сделать задание <b>только для VIP</b> (Более качественная аудитория)</span>
-      </label>
 
       <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()" style="margin-top: 15px;">
         <span class="top-option-glow" aria-hidden="true"></span>

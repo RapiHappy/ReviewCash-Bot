@@ -629,7 +629,6 @@ function tgAlert(msg, kind = "info", title = "") {
   }
   return data;
 }
-
   // --------------------
   // Utils
   // --------------------
@@ -2438,10 +2437,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
     // Username-based detection: @something_bot or ...bot
     if (chat && (chat.endsWith("bot") || chat.endsWith("_bot"))) return true;
-    if (rawL.match(/^@?[a-z0-9_]+bot/i)) return true;
+    if (rawL.match(/^@?[a-z0-9_]+bot /i)) return true;
 
     // Links to bots
-    if (rawL.includes("t.me/") && rawL.match(/t\.me\/(?:s\/)?[a-z0-9_]+bot/i)) return true;
+    if (rawL.includes("t.me/") && rawL.match(/t\.me\/(?:s\/)?[a-z0-9_]+bot /i)) return true;
 
     // Any start parameter or explicit /start mention -> bot flow
     if (rawL.includes("?start=") || rawL.includes("&start=") || rawL.includes("/start")) return true;
@@ -2711,83 +2710,76 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
   function recalc() {
     const type = currentCreateType();
-    const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
-    syncTaskCommentUi(type);
+    const qtyInput = $("t-qty");
+    const qty = clamp(Number((qtyInput && qtyInput.value) || 1), 1, 1000000);
+    
+    const priceInput = $("t-price-per-unit");
+    const pricePerUnit = clamp(Number((priceInput && priceInput.value) || 100), 100, 1000000);
+    
+    const vipOnlyInput = $("t-vip-only");
+    const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
+    
     const cur = $("t-cur") ? $("t-cur").value : "rub";
+    const commissionEnabled = state.config && state.config.feature_commission_disabled ? false : true;
 
+    syncTaskCommentUi(type);
+    
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
-    const retentionWrap = $("retention-config");
+    const retentionWrap = $("retention-config-wrap");
     if (tgWrap) tgWrap.classList.toggle("hidden", type !== "tg");
     if (tgOpt) tgOpt.classList.toggle("hidden", type !== "tg");
     if (retentionWrap) retentionWrap.classList.toggle("hidden", type !== "tg");
 
-    let total = 0;
-    let reward = 0;
-    let costPer = 0;
-    let baseTotal = 0;
+    // Base cost
+    const baseTotal = pricePerUnit * qty;
+    
+    // Commission (20%)
+    const commTotal = commissionEnabled ? (baseTotal * 0.20) : 0;
+    
+    // VIP surcharge (10%)
+    const vipTotal = isVipOnly ? (baseTotal * 0.10) : 0;
+    
+    const grandTotal = baseTotal + commTotal + vipTotal;
 
-    if (type === "ya") {
-      reward = YA.reward;
-      costPer = YA.costPer;
-      total = costPer * qty;
-      baseTotal = total;
-    } else if (type === "gm") {
-      reward = GM.reward;
-      costPer = GM.costPer;
-      total = costPer * qty;
-      baseTotal = total;
-    } else if (type === "dg") {
-      reward = DG.reward;
-      costPer = DG.costPer;
-      total = costPer * qty;
-      baseTotal = total;
-    } else {
-      const sid = currentTgSubtype();
-      const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
-      const retentionExtra = currentRetentionExtraDays();
-      reward = Number(conf.reward || 0) + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-      costPer = Number(conf.cost || Math.max(12, reward * 2)) + (retentionExtra * TG_EXTRA_RETENTION_COST_PER_DAY);
-      total = costPer * qty;
-      baseTotal = total;
-      const descEl = $("tg-subtype-desc");
-      if (descEl) descEl.textContent = `${conf.desc} • Удержание: ${tgTotalRetentionDays(sid, retentionExtra)} дн. • Исполнитель получит ${reward}₽ • Цена за 1 шт: ${costPer}₽`;
-    }
-
-    updateTgHint();
-    syncReviewTextsHint();
-    const perOneEl = $("t-per-one");
-    if (perOneEl) perOneEl.textContent = fmtRub(costPer || 0);
-
-    const minWarn = $("t-min-budget-warning");
-    if (minWarn) {
-      if (baseTotal > 0 && baseTotal < TASK_MIN_BUDGET_RUB) {
-        minWarn.textContent = `Минимальный бюджет задания — ${TASK_MIN_BUDGET_RUB} ₽.`;
-        minWarn.style.display = "block";
+    // Display breakdown
+    if ($("calc-base")) $("calc-base").textContent = fmtRub(baseTotal);
+    if ($("calc-comm")) $("calc-comm").textContent = fmtRub(commTotal);
+    if ($("calc-comm-row")) $("calc-comm-row").style.display = commissionEnabled ? "flex" : "none";
+    if ($("calc-vip")) $("calc-vip").textContent = fmtRub(vipTotal);
+    if ($("calc-vip-row")) $("calc-vip-row").style.display = isVipOnly ? "flex" : "none";
+    
+    const totalEl = $("t-total");
+    if (totalEl) {
+      if (cur === "star") {
+        totalEl.textContent = rubToStars(grandTotal) + " ⭐";
       } else {
-        minWarn.style.display = "none";
+        totalEl.textContent = fmtRub(grandTotal);
       }
     }
 
-    if (isTopWanted()) total += TOP_FIXED_PRICE_RUB;
-    updateTopUi();
+    const minWarn = $("t-min-budget-warning");
+    if (minWarn) {
+      minWarn.style.display = pricePerUnit < 100 ? "block" : "none";
+    }
 
-    const totalEl = $("t-total");
-    if (totalEl) totalEl.textContent = cur === "star" ? (rubToStars(total) + " ⭐") : fmtRub(total);
-
-    const s = $("t-target-status");
-    if (s) s.textContent = "";
+    syncReviewTextsHint();
   }
   window.recalc = recalc;
 
   async function createTask() {
     const type = currentCreateType();
-    const qty = clamp(Number(($("t-qty") && $("t-qty").value) || 1), 1, 1000000);
-    syncTaskCommentUi(type);
+    const qty = Number(($("t-qty") && $("t-qty").value) || 1);
     const target = String(($("t-target") && $("t-target").value) || "").trim();
     const txt = String(($("t-text") && $("t-text").value) || "").trim();
     const reviewMode = getCustomReviewMode();
     const reviewTexts = getCustomReviewTexts();
+    
+    const vipOnlyInput = $("t-vip-only");
+    const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
+    const pricePerUnitInput = $("t-price-per-unit");
+    const pricePerUnit = Number((pricePerUnitInput && pricePerUnitInput.value) || 100);
+    const cur = ($("t-cur") && $("t-cur").value) || "rub";
 
     if (!target) {
       if (type === "tg") {
@@ -2798,182 +2790,58 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       }
     }
 
-    // При создании задания допускаются только ссылки и @юзернеймы
-    if (type === "tg") {
-      const sid = currentTgSubtype();
-      if (tgNeedsChat(sid)) {
-        const tgChatTry = normalizeTgChatInput(target);
-        if (!tgChatTry) {
-          tgAlert("Можно только @юзернейм или ссылка t.me.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Некорректный Telegram");
-          scheduleTgCheck();
-          return;
-        }
-      }
-    } else {
-      if (!isProbablyUrl(target)) {
-        tgAlert("Можно только рабочая ссылка. Просто текст нельзя.", "error", "Некорректная ссылка");
-        return;
-      }
-      if (type === "ya" && !isYandexMapsUrl(target)) {
-        tgAlert("Ссылка не похожа на Яндекс Карты. Вставь ссылку на место/организацию в Яндекс Картах.", "error", "Неподходящая ссылка");
-        return;
-      }
-      if (type === "gm" && !isGoogleMapsUrl(target)) {
-        tgAlert("Ссылка не похожа на Google Maps. Вставь ссылку на место/организацию в Google Maps.", "error", "Неподходящая ссылка");
-        return;
-      }
-      if (type === "dg" && !is2GisUrl(target)) {
-        tgAlert("Ссылка не похожа на 2GIS. Вставь ссылку на карточку места в 2GIS.", "error", "Неподходящая ссылка");
-        return;
-      }
-    }
-    if (qty <= 0) return tgAlert("Некорректное количество");
-    if ((type === "ya" || type === "gm" || type === "dg") && reviewMode !== "none" && reviewTexts.length === 0) {
-      return tgAlert("Добавьте текст отзыва для выбранного режима.", "error", "Нужен текст отзыва");
-    }
-    if ((type === "ya" || type === "gm" || type === "dg") && reviewMode === "per_item" && reviewTexts.length < qty) {
-      return tgAlert(`Для ${qty} отзывов добавьте минимум ${qty} отдельных строк текста.`, "error", "Не хватает вариантов");
-    }
+    if (pricePerUnit < 100) return tgAlert("Минимальная цена за 1 шт. — 100 ₽.");
 
-    let title = "";
-    let reward = 0;
-    let cost = 0;
-    const wantTop = isTopWanted();
-    let checkType = "manual";
+    // TG validation
     let tgChat = null;
     let tgKind = null;
     let subType = null;
-    const payCurrency = $("t-cur") ? String($("t-cur").value || "rub").toLowerCase() : "rub";
+    let checkType = "manual";
 
-    if (type === "ya") {
-      title = YA.title;
-      reward = YA.reward;
-      cost = YA.costPer * qty;
-    } else if (type === "gm") {
-      title = GM.title;
-      reward = GM.reward;
-      cost = GM.costPer * qty;
-    } else if (type === "dg") {
-      title = DG.title;
-      reward = DG.reward;
-      cost = DG.costPer * qty;
-    } else {
-      const sid = currentTgSubtype();
-      const conf = TG_TASK_TYPES.find(x => x.id === sid) || TG_TASK_TYPES[0];
-      title = "Telegram — " + conf.title;
-      const retentionExtra = currentRetentionExtraDays();
-      reward = Number(conf.reward || 0) + (retentionExtra * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-      const baseCostPer = Number(conf.cost || Math.max(12, reward * 2));
-      cost = (baseCostPer + retentionExtra * TG_EXTRA_RETENTION_COST_PER_DAY) * qty;
-      subType = conf.id;
-
-      tgChat = normalizeTgChatInput(target);
-      tgKind = tgNeedsChat(subType) ? (tgIsBotTarget(target, tgChat) ? "bot" : "chat") : "bot";
-      const manualOnly = (tgKind === "bot" && tgNeedsChat(subType)) || TG_MANUAL_ONLY.has(subType);
-      checkType = manualOnly ? "manual" : (tgAutoPossible(subType, tgKind) ? "auto" : "manual");
-    }
-
-    // Nice TG validation before sending request (so user doesn't see raw 400)
     if (type === "tg") {
+      subType = currentTgSubtype();
+      tgChat = normalizeTgChatInput(target);
       if (tgNeedsChat(subType)) {
         if (!tgChat) {
-          tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.\nПример: @MyChannel или https://t.me/MyChannel", "error", "Укажи чат");
-          scheduleTgCheck();
+          tgAlert("Для Telegram-задания нужен @юзернейм канала/группы.", "error", "Укажи чат");
           return;
         }
-
-        const manualOnly = (tgKind === "bot") || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind);
-        if (manualOnly) {
-          const label = tgKind === "bot" ? `Бот: ${tgChat}` : `TG: ${tgChat}`;
-          setTargetStatus("err", label, "Создание невозможно: для TG доступна только авто-проверка.");
-          state._tgCheck.valid = false;
-          state._tgCheck.chat = tgChat;
-          state._tgCheck.forceManual = true;
-          updateTgHint();
-          tgAlert("Для TG задания доступна только авто-проверка. Укажи канал/группу, где бот может проверить подписку.", "error", "Проверка Telegram");
-          return;
+        tgKind = tgIsBotTarget(target, tgChat) ? "bot" : "chat";
+        if (tgKind === "bot" || TG_MANUAL_ONLY.has(subType) || !tgAutoPossible(subType, tgKind)) {
+           tgAlert("Для этого подтипа Telegram доступна только авто-проверка. Бот должен быть в канале/группе.", "error", "Telegram");
+           return;
         }
-
-        try {
-          setTargetStatus("loading", "Проверяем…", "Проверяем доступ бота для авто-проверки");
-          const chk = await apiPost("/api/tg/check_chat", { target: tgChat });
-          if (chk && chk.ok && chk.valid) {
-            const nm = chk.title ? String(chk.title) : tgChat;
-            const tp = chk.type ? (String(chk.type) === "channel" ? "Канал" : "Группа") : "Чат";
-            setTargetStatus("ok", `${tp}: ${nm}`, "Авто-проверка доступна ✅");
-            state._tgCheck.valid = true;
-            state._tgCheck.chat = chk.chat || tgChat;
-            state._tgCheck.forceManual = false;
-            checkType = "auto";
-            updateTgHint();
-          } else {
-            const msg = (chk && (chk.message || chk.error)) ? String(chk.message || chk.error) : "Авто-проверка недоступна";
-            setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
-            updateTgHint();
-            tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
-            return;
-          }
-        } catch (e) {
-          const msg = prettifyErrText(String(e.message || e));
-          setTargetStatus("err", `TG: ${tgChat}`, "Авто-проверка недоступна. Добавь бота в чат/канал и выдай нужные права.");
-          updateTgHint();
-          tgAlert(msg + "\nСоздание невозможно: для TG доступна только авто-проверка.", "error", "Проверка Telegram");
-          return;
-        }
+        checkType = "auto";
       } else {
         checkType = "auto";
       }
     }
 
-    if (Number(cost || 0) < TASK_MIN_BUDGET_RUB) {
-      return tgAlert(`Минимальный бюджет задания — ${TASK_MIN_BUDGET_RUB} ₽`, "error", "Слишком маленький бюджет");
-    }
-    const chargedRub = Number(cost || 0) + (wantTop ? TOP_FIXED_PRICE_RUB : 0);
-    const neededRub = chargedRub;
-    const neededStars = rubToStars(neededRub);
-    const bal = state.balance || {};
-    if (payCurrency === "star" && !starsPaymentsEnabled()) {
-      return tgAlert("Оплата Stars временно отключена администратором", "error", "Stars выключены");
-    }
-    if (payCurrency === "star") {
-      if (Number(bal.stars_balance || 0) < neededStars) {
-        return tgAlert(`Недостаточно Stars. Нужно ${neededStars} ⭐`, "error", "Недостаточно баланса");
-      }
-    } else if (Number(bal.rub_balance || 0) < neededRub) {
-      return tgAlert(`Недостаточно RUB. Нужно ${fmtRub(neededRub)}`, "error", "Недостаточно баланса");
-    }
+    const payload = {
+      type,
+      qty_total: qty,
+      reward_rub: pricePerUnit,
+      target_url: (type === "tg") ? tgTargetToUrl(target) : normalizeUrl(target),
+      title: (type === 'tg' ? 'Активность TG' : (type === 'ya' ? 'Отзыв Яндекс' : (type === 'gm' ? 'Отзыв Google' : 'Отзыв 2GIS'))),
+      currency: cur,
+      vip_only: isVipOnly,
+      tg_subtype: subType,
+      tg_chat: tgChat,
+      check_type: checkType,
+      retention_days: type === 'tg' ? tgTotalRetentionDays(subType) : 0,
+      gender: ($("t-gender") && $("t-gender").value) || "any",
+      comment: txt,
+      custom_review_mode: reviewMode,
+      custom_review_texts: reviewTexts,
+    };
 
     try {
       tgHaptic("impact");
-      const res = await apiPost("/api/task/create", {
-        type: type,
-        title: title,
-        target_url: (type === "tg") ? tgTargetToUrl(target) : normalizeUrl(target),
-        instructions: txt,
-        reward_rub: reward,
-        cost_rub: cost,
-        want_top: wantTop,
-        top_price_rub: wantTop ? TOP_FIXED_PRICE_RUB : 0,
-        pay_currency: payCurrency,
-        qty_total: qty,
-        check_type: checkType,
-        tg_chat: tgChat,
-        tg_kind: tgKind,
-        sub_type: subType,
-        target_gender: (($("t-gender") && $("t-gender").value) ? String($("t-gender").value) : "any"),
-        retention_extra_days: currentRetentionExtraDays(),
-        custom_review_mode: reviewMode,
-        custom_review_texts: reviewTexts,
-        vip_only: !!($("t-vip-only") && $("t-vip-only").checked),
-      });
-
+      const res = await apiPost("/api/task/create", payload);
       if (res && res.ok) {
-        closeAllOverlays();
         tgHaptic("success");
-        const paidText = (res.charged_currency === "star")
-          ? `${Number(res.charged_amount || 0)} ⭐`
-          : fmtRub(res.charged_amount || chargedRub);
-        tgAlert(`Задание создано ✅\nСписано: ${paidText}`);
+        closeModal();
+        tgAlert(`✅ Задание создано! Списано: ${res.charged_amount} ${res.charged_currency === 'star' ? '⭐' : '₽'}`);
         await syncAll();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка создания");
@@ -2984,6 +2852,40 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
   }
   window.createTask = createTask;
+
+  async function buyVip(currency) {
+    try {
+      tgHaptic("impact");
+      const res = await apiPost("/api/vip/buy", { currency });
+      if (res && res.ok) {
+        tgHaptic("success");
+        closeModal();
+        tgAlert("👑 VIP-статус успешно активирован!");
+        await syncAll();
+      } else {
+        throw new Error(res && res.error ? res.error : "Ошибка покупки");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e));
+    }
+  }
+  window.buyVip = buyVip;
+
+  async function adminToggleCommission() {
+    try {
+      const current = state.config && state.config.feature_commission_disabled ? false : true;
+      const next = !current;
+      const res = await apiPost("/api/admin/config/toggle_commission", { enabled: next });
+      if (res && res.ok) {
+        tgHaptic("success");
+        await syncAll();
+      }
+    } catch (e) {
+      tgAlert("Ошибка управления комиссией");
+    }
+  }
+  window.adminToggleCommission = adminToggleCommission;
 
   // --------------------
   // Tabs
