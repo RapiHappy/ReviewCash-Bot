@@ -565,7 +565,9 @@
             <div id="u-bal-rub" class="bal-rub">0 ₽</div>
             <div id="u-bal-star" class="bal-star">0 ⭐</div>
           </div>
-          <button id="buy-vip-btn" class="vip-card-btn" style="margin-left:auto; font-size:12px; padding:8px 14px;" onclick="openModal('m-vip')">💎 Купить VIP</button>
+        </div>
+        <div style="margin-top:12px; display:flex; justify-content:flex-end; position:relative; z-index:1;">
+          <button id="buy-vip-btn" class="vip-card-btn" style="font-size:12px; padding:8px 14px;" onclick="openModal('m-vip')">💎 Купить VIP</button>
         </div>
 
         <div class="xp-track"><div class="xp-fill" id="u-xp-fill"></div></div>
@@ -1213,7 +1215,7 @@
         <div style="font-size:48px; margin-bottom:10px; animation: float 3s ease-in-out infinite;">💎</div>
         <p style="color:var(--text-dim); font-size:14px; margin-bottom:20px;">Один статус, огромные преимущества!</p>
       </div>
-      <ul style="list-style:none; padding:0; margin:0 0 20px 0; text-align:left; font-size: 14px;">
+      <ul style="list-style:none; padding:0; margin:0 0 20px 0; text-align:left; font-size: 14px; color: #fff;">
         <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">💰</span> <span><b>+10%</b> к доходу за задания</span></li>
         <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">🚀</span> <span><b>+50%</b> к получаемому опыту</span></li>
         <li style="margin-bottom:12px; display:flex; gap:10px; align-items:center;"><span style="font-size:18px;">🌟</span> <span>Доступ к <b>эксклюзивным</b> VIP-заданиям</span></li>
@@ -1223,7 +1225,7 @@
         <p style="font-size:13px; margin:0 0 10px; text-align:center;">Стоимость на <b>30 дней</b>:</p>
         <div style="display:flex; justify-content:center; gap:10px;">
           <button class="btn btn-main" style="background: linear-gradient(135deg, #ffd700, #ffaa00); color: #000; box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);" onclick="buyVip('rub')">🔥 299 ₽</button>
-          <button class="btn btn-secondary" style="border-color: rgba(255, 215, 0, 0.5);" onclick="buyVip('stars')">⭐ 150</button>
+          <button class="btn btn-secondary" style="border-color: rgba(255, 215, 0, 0.5);" onclick="buyVip('star')">⭐ 150</button>
         </div>
       </div>
     </div>

@@ -3689,7 +3689,7 @@ async def api_vip_buy(req: web.Request):
 
     currency = str(body.get("currency") or "rub").strip().lower()
 
-    if currency == "star":
+    if currency in ["star", "stars"]:
         price = int(VIP_PRICE_STARS)
         ok = await sub_stars(uid, price)
         if not ok:
