@@ -1563,6 +1563,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const subtypeText = tgSubtypeLabel(t) || taskTypeLabel(t);
       const topActive = isTaskTopActive(t);
       const finished = left <= 0 || String(t.status || "") !== "active";
+      const isVipTask = t.vip_only || String(t.instructions || "").match(/VIP_ONLY\s*:\s*(1|true)/i);
+
+      let badgesHtml = '';
+      if (topActive) badgesHtml += `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(255,180,0,.14);color:#ffd36b;margin-left:4px;">🔥 Топ</span>`;
+      if (isVipTask) badgesHtml += `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(168,85,247,.14);color:#c084fc;margin-left:4px;">👑 VIP Задание</span>`;
 
       const card = document.createElement("div");
       card.className = "card";
@@ -1579,7 +1584,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
               <div style="min-width:0;flex:1;">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                   <div style="font-weight:900;font-size:15px;line-height:1.2;">${safeText(t.title || "Задание")}</div>
-                  ${topActive ? `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(255,180,0,.14);color:#ffd36b;">🔥 В топе</span>` : ``}
+                  ${badgesHtml}
                   <span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:${finished ? 'rgba(255,99,132,.14);color:#ff9bb0' : 'rgba(0,234,255,.12);color:var(--accent-cyan)'};">${finished ? "Завершено" : "Активно"}</span>
                 </div>
                 <div style="margin-top:4px;font-size:12px;color:var(--text-dim);">${safeText(subtypeText)}</div>
@@ -1611,14 +1616,23 @@ function brandIconHtml(taskOrType, sizePx = 38) {
               <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                 <div class="brand-box" style="width:38px; height:38px; font-size:18px;">${brandIconHtml(t, 38)}</div>
                 <div style="min-width:0;">
-                  <div style="font-weight:900; font-size:14px; line-height:1.2;">${safeText(t.title || "Задание")}</div>
+                  <div style="font-weight:900; font-size:14px; line-height:1.2; display:flex; align-items:center; flex-wrap:wrap;">
+                    ${safeText(t.title || "Задание")}
+                    ${badgesHtml}
+                  </div>
                   <div style="font-size:12px; color:var(--text-dim);">${safeText(subtypeText)}</div>
                 </div>
               </div>
             </div>
             <div style="font-weight:900; color:var(--accent-green); white-space:nowrap;">+${fmtRub(reward)}</div>
           </div>`;
-        card.addEventListener("click", () => openTaskDetails(t));
+        card.addEventListener("click", () => {
+          if (isVipTask && !(state.user && state.user.is_vip)) {
+            tgAlert("Это задание могут выполнять только VIP-пользователи. Перейдите в Профиль, чтобы купить статус.", "error", "Только для VIP");
+            return;
+          }
+          openTaskDetails(t);
+        });
       }
 
       frag.appendChild(card);
@@ -2950,6 +2964,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         retention_extra_days: currentRetentionExtraDays(),
         custom_review_mode: reviewMode,
         custom_review_texts: reviewTexts,
+        vip_only: !!($("t-vip-only") && $("t-vip-only").checked),
       });
 
       if (res && res.ok) {

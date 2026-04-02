@@ -902,7 +902,12 @@
       </div>
       <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальный бюджет задания — 50 ₽.</div>
 
-      <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()">
+      <label class="task-important-ack__label" style="margin-top: 15px; display: flex; align-items: center; gap: 8px; background: rgba(255, 215, 0, 0.05); border: 1px solid rgba(255, 215, 0, 0.2); padding: 12px; border-radius: 12px; cursor: pointer;">
+        <input type="checkbox" id="t-vip-only" onchange="recalc()">
+        <span style="font-size: 13px; color: var(--text);">👑 Сделать задание <b>только для VIP</b> (Более качественная аудитория)</span>
+      </label>
+
+      <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()" style="margin-top: 15px;">
         <span class="top-option-glow" aria-hidden="true"></span>
         <div class="top-option-main">
           <div class="top-option-icon-wrap">

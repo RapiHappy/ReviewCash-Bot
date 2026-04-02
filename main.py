@@ -2779,6 +2779,7 @@ async def api_task_create(req: web.Request):
     retention_extra_days = max(0, int(body.get("retention_extra_days") or 0))
     custom_review_texts = body.get("custom_review_texts") or []
     custom_review_mode = str(body.get("custom_review_mode") or "none").strip().lower()
+    vip_only = bool(body.get("vip_only") or False)
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
@@ -2911,6 +2912,8 @@ async def api_task_create(req: web.Request):
         meta_lines.append("TG_SUBTYPE: " + sub_type)
     if target_gender != TASK_GENDER_ANY:
         meta_lines.append("TARGET_GENDER: " + target_gender)
+    if vip_only:
+        meta_lines.append("VIP_ONLY: 1")
     if ttype == "tg":
         meta_lines.append(f"RETENTION_DAYS: {tg_required_retention_days(sub_type or TG_SUB_CHANNEL_KEY, retention_extra_days)}")
     if custom_review_mode != "none" and custom_review_texts:
@@ -2965,6 +2968,11 @@ async def api_task_click(req: web.Request):
     if int(task.get("owner_id") or 0) == uid:
         return web.json_response({"ok": False, "error": "Нельзя выполнять своё задание"}, status=403)
 
+    is_vip_task = "VIP_ONLY: 1" in str(task.get("instructions") or "")
+    if is_vip_task:
+        if not await get_vip_until(uid):
+            return web.json_response({"ok": False, "error": "Это задание доступно только для VIP-пользователей"}, status=403)
+
     await touch_task_click(uid, task_id)
     return web.json_response({"ok": True})
 
@@ -3007,6 +3015,11 @@ async def api_task_submit(req: web.Request):
 
     if task.get("status") != "active" or int(task.get("qty_left") or 0) <= 0:
         return web.json_response({"ok": False, "error": "Task closed"}, status=400)
+
+    is_vip_task = "VIP_ONLY: 1" in str(task.get("instructions") or "")
+    if is_vip_task:
+        if not await get_vip_until(uid):
+            return web.json_response({"ok": False, "error": "Это задание доступно только для VIP-пользователей"}, status=403)
 
     # cooldown for reviews
     if task.get("type") == "ya":
