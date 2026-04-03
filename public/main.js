@@ -1244,7 +1244,7 @@ async function syncAll() {
       if (vipBadge) {
         vipBadge.style.display = "inline-flex";
         vipBadge.className = "vip-badge-premium";
-        vipBadge.innerHTML = "VIP 👑";
+        vipBadge.innerHTML = `<span style="font-size:14px; margin-right:4px;">👑</span> VIP`;
         
         // Add expiration info if available
         if (u.vip_until) {
@@ -1256,9 +1256,10 @@ async function syncAll() {
                 expEl = document.createElement("div");
                 expEl.id = "u-vip-expiry";
                 expEl.className = "vip-expiry-text";
+                // Insert after the badge's container or sibling
                 vipBadge.parentNode.appendChild(expEl);
             }
-            expEl.textContent = `До ${fmt}`;
+            expEl.textContent = `Активен до ${fmt}`;
             expEl.style.display = "block";
         }
       }

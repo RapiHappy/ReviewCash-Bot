@@ -3780,6 +3780,11 @@ async def api_vip_buy(req: web.Request):
 
     currency = str(body.get("currency") or "rub").strip().lower()
 
+    # Prevent double purchase if already VIP
+    v_dt = await get_vip_until(uid)
+    if v_dt and v_dt > _now():
+        return web.json_response({"ok": False, "error": "У вас уже есть активный VIP-статус"}, status=400)
+
     if currency in ["star", "stars"]:
         price = int(VIP_PRICE_STARS)
         ok = await sub_stars(uid, price)
