@@ -908,6 +908,10 @@
           <span>VIP-наценка (10%):</span>
           <span id="calc-vip">0 ₽</span>
         </div>
+        <div class="price-calc-row" id="calc-top-row" style="display:none;">
+          <span>Поднятие в топ (24ч):</span>
+          <span id="calc-top">0 ₽</span>
+        </div>
         <div class="price-calc-row total">
           <span>Итого к оплате:</span>
           <span id="t-total">0 ₽</span>
@@ -1229,6 +1233,12 @@
     </div>
   </div>
 
+
+  <div id="image-zoom-overlay" class="image-zoom-overlay" onclick="closeImageZoom()">
+    <img id="image-zoom-img" class="image-zoom-img" src="" alt="Enlarged proof" />
+  </div>
+
   <script src="./main.js?v=__APP_BUILD__-icons2" defer></script>
 </body>
 </html>
+

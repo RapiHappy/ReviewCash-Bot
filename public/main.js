@@ -775,7 +775,26 @@ function tgAlert(msg, kind = "info", title = "") {
   function closeAllOverlays() {
     qsa(".overlay").forEach(el => { el.style.display = "none"; });
     document.body.style.overflow = "";
+    closeImageZoom();
   }
+
+  function openImageZoom(src) {
+    const ov = $("image-zoom-overlay");
+    const img = $("image-zoom-img");
+    if (!ov || !img) return;
+    img.src = src;
+    ov.classList.add("active");
+    tgHaptic("impact", "light");
+    document.body.style.overflow = "hidden";
+  }
+  window.openImageZoom = openImageZoom;
+
+  function closeImageZoom() {
+    const ov = $("image-zoom-overlay");
+    if (ov) ov.classList.remove("active");
+    document.body.style.overflow = "";
+  }
+  window.closeImageZoom = closeImageZoom;
 
 
 
@@ -2800,7 +2819,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const vipTotal = isVipOnly ? Math.floor(baseTotal * 0.10) : 0;
     
     // Top visibility (250 RUB)
-    const topPrice = state.wantTop ? 250 : 0;
+    const topPrice = isTopWanted() ? 250 : 0;
     
     const grandTotal = baseTotal + commTotal + vipTotal + topPrice;
 
@@ -2810,6 +2829,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if ($("calc-comm-row")) $("calc-comm-row").style.display = commissionEnabled ? "flex" : "none";
     if ($("calc-vip")) $("calc-vip").textContent = fmtRub(vipTotal);
     if ($("calc-vip-row")) $("calc-vip-row").style.display = isVipOnly ? "flex" : "none";
+    
+    if ($("calc-top")) $("calc-top").textContent = fmtRub(topPrice);
+    if ($("calc-top-row")) $("calc-top-row").style.display = isTopWanted() ? "flex" : "none";
     
     const totalEl = $("t-total");
     if (totalEl) {
@@ -2904,6 +2926,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       comment: txt,
       custom_review_mode: reviewMode,
       custom_review_texts: reviewTexts,
+      want_top: isTopWanted(),
+      top_price_rub: 250,
     };
 
     try {
@@ -3475,7 +3499,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const t = p.task || {};
       const taskLink = t.target_url ? normalizeUrl(t.target_url) : "";
       const proofUrl = p.proof_url ? normalizeUrl(p.proof_url) : "";
-      const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
+      const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" onclick="openImageZoom('${safeText(proofUrl)}')" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03); cursor:zoom-in;" title="Нажми, чтобы увеличить" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
       const isReview = ["ya", "gm", "dg"].includes(String(t.type || "").toLowerCase());
 
@@ -3492,7 +3516,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         </div>
         ${linkHtml}
         ${imgHtml}
-        <div style="display:grid; grid-template-columns:${isReview ? '1fr 1fr 1fr' : '1fr 1fr'}; gap:10px; margin-top:12px;">
+        <div class="admin-actions-grid">
           <button class="btn btn-main" data-approve="1">✅ Принять</button>
           <button class="btn btn-secondary" data-approve="0">❌ Отклонить</button>
           ${isReview ? '<button class="btn btn-secondary" data-rework="1">🛠 На переработку</button>' : ''}

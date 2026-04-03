@@ -3072,6 +3072,12 @@ async def api_task_create(req: web.Request):
         encoded_review_texts = base64.b64encode(json.dumps(custom_review_texts, ensure_ascii=False).encode("utf-8")).decode("utf-8")
         meta_lines.append("CUSTOM_REVIEW_MODE: " + custom_review_mode)
         meta_lines.append("CUSTOM_REVIEW_TEXTS: " + encoded_review_texts)
+    if want_top:
+        now = _now()
+        until = now + timedelta(hours=24)
+        meta_lines.append(f"TOP_BOUGHT_AT: {now.isoformat()}")
+        meta_lines.append(f"TOP_ACTIVE_UNTIL: {until.isoformat()}")
+        meta_lines.append(f"TOP_PRICE_RUB: {float(top_price_rub or 250)}")
     if meta_lines:
         row["instructions"] = (instructions + "\n\n" + "\n".join(meta_lines)).strip()
 
