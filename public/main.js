@@ -1233,9 +1233,9 @@ async function syncAll() {
     const fill = $("u-xp-fill");
     if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
 
-    // VIP Logic
+    // VIP Logic (Ultra Luxe)
     const isVip = !!u.is_vip;
-    const vipBadge = $("u-vip-badge");
+    const vipBadge = $("u-vip-badge"); // We'll repurpose this as container if needed, but better to clear it
     const buyVipBtn = $("buy-vip-btn");
     const profileCard = $("profile-main-card");
 
@@ -1243,33 +1243,29 @@ async function syncAll() {
       if (buyVipBtn) buyVipBtn.style.display = "none";
       if (vipBadge) {
         vipBadge.style.display = "inline-flex";
-        vipBadge.className = "vip-badge-premium";
-        vipBadge.innerHTML = `<span style="font-size:14px; margin-right:4px;">👑</span> VIP`;
+        vipBadge.className = "vip-status-group";
         
-        // Add expiration info if available
-        if (u.vip_until) {
-            const vdt = new Date(u.vip_until);
-            const fmt = vdt.toLocaleDateString("ru-RU", {day:"2-digit", month:"2-digit"});
-            // Check if we already have expiration text
-            let expEl = $("u-vip-expiry");
-            if (!expEl) {
-                expEl = document.createElement("div");
-                expEl.id = "u-vip-expiry";
-                expEl.className = "vip-expiry-text";
-                // Insert after the badge's container or sibling
-                vipBadge.parentNode.appendChild(expEl);
-            }
-            expEl.textContent = `Активен до ${fmt}`;
-            expEl.style.display = "block";
-        }
+        const dateStr = u.vip_until ? new Date(u.vip_until).toLocaleDateString("ru-RU", {day:"2-digit", month:"2-digit"}) : "";
+        
+        vipBadge.innerHTML = `
+            <div class="vip-badge-luxe"><span>👑</span> VIP</div>
+            ${dateStr ? `<div class="vip-expiry-label">до ${dateStr}</div>` : ""}
+        `;
+        
+        // Remove old expiry text if it exists
+        const oldExp = $("u-vip-expiry");
+        if (oldExp) oldExp.remove();
       }
       if (profileCard) profileCard.classList.add("vip-card-glow");
     } else {
       if (buyVipBtn) buyVipBtn.style.display = "block";
-      if (vipBadge) vipBadge.style.display = "none";
+      if (vipBadge) {
+          vipBadge.style.display = "none";
+          vipBadge.innerHTML = "";
+      }
       if (profileCard) profileCard.classList.remove("vip-card-glow");
-      const expEl = $("u-vip-expiry");
-      if (expEl) expEl.style.display = "none";
+      const oldExp = $("u-vip-expiry");
+      if (oldExp) oldExp.remove();
     }
   }
   function renderInvite() {

@@ -2898,51 +2898,65 @@ html.theme-light .faq-q{
 
 /* VIP & Pricing Updates */
 .vip-card-glow {
-  box-shadow: 0 20px 40px var(--shadow), 0 0 25px rgba(255, 215, 0, 0.25), inset 0 1px 1px rgba(255,255,255,0.1) !important;
-  border-color: rgba(255, 215, 0, 0.4) !important;
+  box-shadow: 0 20px 60px rgba(255, 214, 10, 0.12), 0 0 30px rgba(255, 214, 10, 0.08) !important;
+  border-color: rgba(255, 214, 10, 0.25) !important;
 }
 
-.vip-badge-premium {
-  position: relative;
-  overflow: hidden;
-  background: linear-gradient(135deg, #bf953f, #fcf6ba, #b38728, #fbf5b7, #aa771c);
-  background-size: 200% auto;
-  animation: shimmer 3s infinite alternate ease-in-out;
+/* Glassmorphism Luxe Badge */
+.vip-status-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 4px 12px 4px 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 214, 10, 0.15);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    margin-top: 4px;
+}
+
+.vip-badge-luxe {
+  background: linear-gradient(135deg, #ffd700, #ffaa00);
+  background-size: 200% 200%;
+  animation: bgMove 4s infinite alternate;
   color: #000;
-  padding: 5px 14px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 900;
-  box-shadow: 0 4px 15px rgba(191, 149, 63, 0.5), inset 0 1px 1px rgba(255,255,255,0.8);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  display: inline-flex;
+  letter-spacing: 0.6px;
+  box-shadow: 0 4px 12px rgba(255, 214, 10, 0.4);
+  display: flex;
   align-items: center;
   gap: 5px;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
-  border: 1px solid rgba(191, 149, 63, 0.3);
+  position: relative;
+  overflow: hidden;
 }
 
-.vip-badge-premium::after {
+.vip-badge-luxe::after {
   content: "";
   position: absolute;
-  top: 0; left: 0; right: 0; height: 50%;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.4), rgba(255,255,255,0));
-  pointer-events: none;
+  top: 0; left: -100%; width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+  transform: skewX(-25deg);
+  animation: glassShine 4s infinite;
 }
 
-@keyframes shimmer {
-  0% { background-position: 0% center; }
-  100% { background-position: 100% center; }
+.vip-expiry-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--accent-gold);
+    opacity: 0.9;
+    letter-spacing: 0.2px;
 }
 
-.vip-expiry-text {
-  font-size: 10px;
-  color: var(--accent-gold);
-  margin-top: 4px;
-  font-weight: 800;
-  opacity: 0.9;
-}
+@keyframes bgMove { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
+@keyframes glassShine { 0% { left: -100%; } 20% { left: 150%; } 100% { left: 150%; } }
+
+.vip-expiry-text { display:none; } /* old style */
 
 .vip-card-btn {
   background: linear-gradient(135deg, #ffd700, #ffaa00);
