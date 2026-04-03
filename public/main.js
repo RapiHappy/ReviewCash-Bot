@@ -2968,15 +2968,22 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   window.buyVip = buyVip;
 
   async function adminToggleCommission() {
+    if (!state.isMainAdmin) return;
     try {
+      tgHaptic("impact");
       const current = state.config && state.config.feature_commission_disabled ? false : true;
       const next = !current;
       const res = await apiPost("/api/admin/config/toggle_commission", { enabled: next });
       if (res && res.ok) {
         tgHaptic("success");
-        await syncAll();
+        tgAlert(res.commission_enabled ? "✅ Комиссия ВКЛЮЧЕНА (20%)" : "❌ Комиссия ВЫКЛЮЧЕНА (0%)");
+        await checkAdmin(); // Refresh status (this will also update the UI)
+        await syncAll();    // Refresh prices
+      } else {
+        throw new Error(res.error || "Ошибка");
       }
     } catch (e) {
+      tgHaptic("error");
       tgAlert("Ошибка управления комиссией");
     }
   }
@@ -3380,10 +3387,24 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         if (res.features && Object.prototype.hasOwnProperty.call(res.features, "stars_payments_enabled")) {
           state.config = Object.assign({}, state.config || {}, { stars_payments_enabled: !!res.features.stars_payments_enabled });
         }
+        if (res.features && Object.prototype.hasOwnProperty.call(res.features, "commission_enabled")) {
+          state.config = Object.assign({}, state.config || {}, { feature_commission_disabled: !res.features.commission_enabled });
+        }
         renderAdminBadge();
         applyStarsUiState();
         const apc = $("admin-panel-card");
         if (apc) apc.style.display = "block";
+        
+        const actw = $("admin-comm-toggle-wrap");
+        if (actw) {
+          actw.style.display = state.isMainAdmin ? "flex" : "none";
+          const statusEl = $("admin-comm-status");
+          if (statusEl) {
+             const en = res.features ? res.features.commission_enabled : true;
+             statusEl.textContent = en ? "ВКЛ" : "ВЫКЛ";
+             statusEl.style.color = en ? "var(--accent-green, #22c55e)" : "var(--accent-red, #ef4444)";
+          }
+        }
       } else {
         state.isAdmin = false;
         state.isMainAdmin = false;

@@ -3955,6 +3955,7 @@ async def api_admin_summary(req: web.Request):
         "is_main_admin": int(MAIN_ADMIN_ID or 0) == int(user["id"]),
         "features": {
             "stars_payments_enabled": await is_stars_payments_enabled(),
+            "commission_enabled": await is_commission_enabled(),
         },
         "counts": {
             "proofs": len(proofs.data or []),
