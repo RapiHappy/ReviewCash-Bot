@@ -2951,9 +2951,10 @@ html.theme-light .faq-q{
 .vip-expiry-label {
     font-size: 11px;
     font-weight: 800;
-    color: #4a370e; /* Dark brown for high contrast on gold/yellow-ish glass */
+    color: var(--text-main);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     letter-spacing: 0.1px;
-    opacity: 0.85;
+    opacity: 0.9;
 }
 
 @keyframes bgMove { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }

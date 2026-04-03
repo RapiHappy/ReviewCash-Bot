@@ -1247,9 +1247,16 @@ async function syncAll() {
         
         const dateStr = u.vip_until ? new Date(u.vip_until).toLocaleDateString("ru-RU", {day:"2-digit", month:"2-digit"}) : "";
         
+        let durStr = "";
+        if (u.vip_until) {
+            const diff = new Date(u.vip_until) - new Date();
+            const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+            durStr = days > 0 ? `${days} дн.` : "< 1дн.";
+        }
+
         vipBadge.innerHTML = `
             <div class="vip-badge-luxe"><span>👑</span> VIP</div>
-            ${dateStr ? `<div class="vip-expiry-label">до ${dateStr}</div>` : ""}
+            ${durStr ? `<div class="vip-expiry-label">осталось ${durStr}</div>` : ""}
         `;
         
         // Remove old expiry text if it exists
