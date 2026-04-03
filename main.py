@@ -2569,6 +2569,14 @@ async def api_sync(req: web.Request):
     expensive_ok, expensive_reason = await can_access_expensive_tasks(uid)
 
     banned_until = await get_task_ban_until(uid)
+    
+    is_vip = False
+    vip_until = urow.get("vip_until")
+    if vip_until:
+        v_dt = _parse_dt(vip_until)
+        if v_dt and v_dt > _now():
+            is_vip = True
+
     tasks = []
     user_gender = normalize_task_gender(await tg_get_gender(uid))
     if not banned_until:

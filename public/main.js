@@ -2757,7 +2757,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     // VIP surcharge (10%) - round down
     const vipTotal = isVipOnly ? Math.floor(baseTotal * 0.10) : 0;
     
-    const grandTotal = baseTotal + commTotal + vipTotal;
+    // Top visibility (250 RUB)
+    const topPrice = state.wantTop ? 250 : 0;
+    
+    const grandTotal = baseTotal + commTotal + vipTotal + topPrice;
 
     // Display breakdown
     if ($("calc-base")) $("calc-base").textContent = fmtRub(baseTotal);
@@ -2782,6 +2785,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (minWarn) {
       minWarn.style.display = actualCostPer < minCostTarget ? "block" : "none";
       minWarn.textContent = `Минимальная цена задания — ${minCostTarget} ₽.`;
+    }
+
+    const priceLabel = $("t-price-label");
+    if (priceLabel) {
+      priceLabel.textContent = `Цена за 1 шт. (мин ${minCostTarget} ₽)`;
     }
 
     syncReviewTextsHint();
