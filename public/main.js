@@ -354,23 +354,24 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 3, cost: 12, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
-  { id: "join_group", title: "Вступление в группу", reward: 3, cost: 12, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
-  { id: "sub_24h", title: "Тг подписка +24ч", reward: 4, cost: 16, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
-  { id: "sub_48h", title: "Тг подписка +48ч", reward: 5, cost: 20, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
-  { id: "sub_72h", title: "Тг подписка +72ч", reward: 6, cost: 24, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
-  { id: "join_group_24h", title: "Вступление в группу +24ч", reward: 4, cost: 16, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
-  { id: "join_group_48h", title: "Вступление в группу +48ч", reward: 5, cost: 20, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
-  { id: "join_group_72h", title: "Вступление в группу +72ч", reward: 6, cost: 24, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
+  { id: "sub_channel", title: "Подписка на канал", reward: 5, cost: 6, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
+  { id: "join_group", title: "Вступление в группу", reward: 5, cost: 6, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
+  { id: "sub_24h", title: "Тг подписка +24ч", reward: 6, cost: 7, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
+  { id: "sub_48h", title: "Тг подписка +48ч", reward: 7, cost: 8, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
+  { id: "sub_72h", title: "Тг подписка +72ч", reward: 8, cost: 9, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
+  { id: "join_group_24h", title: "Вступление в группу +24ч", reward: 6, cost: 7, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
+  { id: "join_group_48h", title: "Вступление в группу +48ч", reward: 7, cost: 8, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
+  { id: "join_group_72h", title: "Вступление в группу +72ч", reward: 8, cost: 9, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
   ];
   const TG_BASE_RETENTION_DAYS = 2;
   const TG_EXTRA_RETENTION_REWARD_PER_DAY = 1;
   const TG_EXTRA_RETENTION_COST_PER_DAY = 3;
 
   // Reviews payouts you asked for
-  const YA = { costPer: 120, reward: 100, title: "Яндекс Карты — отзыв" };
-  const GM = { costPer: 75, reward: 50, title: "Google Maps — отзыв" };
-  const DG = { costPer: 15, reward: 10, title: "2GIS — отзыв" };
+  // Reviews payouts (Updated for total cost 100/70)
+  const YA = { costPer: 100, reward: 84, title: "Яндекс Карты — отзыв" };
+  const GM = { costPer: 70, reward: 59, title: "Google Maps — отзыв" };
+  const DG = { costPer: 15, reward: 10, title: "2GIS — отзыв" }; // User didn't specify DG, keeping original proportions
 
   // --------------------
   // State
@@ -2711,10 +2712,26 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   function recalc() {
     const type = currentCreateType();
     const qtyInput = $("t-qty");
-    const qty = clamp(Number((qtyInput && qtyInput.value) || 1), 1, 1000000);
     
+    // Limits
+    let minQty = 1;
+    let minReward = 100; // default for YA
+    if (type === "tg") {
+       minQty = 10;
+       const sid = currentTgSubtype();
+       const st = TG_TASK_TYPES.find(x => x.id === sid);
+       minReward = st ? st.reward : 5;
+    } else if (type === "ya") {
+       minReward = 84; // Cost 100
+    } else if (type === "gm") {
+       minReward = 59; // Cost 70
+    } else if (type === "dg") {
+       minReward = 10;
+    }
+
+    const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
     const priceInput = $("t-price-per-unit");
-    const pricePerUnit = clamp(Number((priceInput && priceInput.value) || 100), 100, 1000000);
+    const pricePerUnit = clamp(Number((priceInput && priceInput.value) || minReward), minReward, 1000000);
     
     const vipOnlyInput = $("t-vip-only");
     const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
@@ -2734,11 +2751,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     // Base cost
     const baseTotal = pricePerUnit * qty;
     
-    // Commission (20%)
-    const commTotal = commissionEnabled ? (baseTotal * 0.20) : 0;
+    // Commission (20%) - round down
+    const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
     
-    // VIP surcharge (10%)
-    const vipTotal = isVipOnly ? (baseTotal * 0.10) : 0;
+    // VIP surcharge (10%) - round down
+    const vipTotal = isVipOnly ? Math.floor(baseTotal * 0.10) : 0;
     
     const grandTotal = baseTotal + commTotal + vipTotal;
 
@@ -2759,8 +2776,12 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     const minWarn = $("t-min-budget-warning");
+    const minCostTarget = (type === "ya" ? 100 : (type === "gm" ? 70 : (type === "tg" ? 5 : 15)));
+    const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + Math.floor(pricePerUnit * (isVipOnly ? 0.1 : 0));
+    
     if (minWarn) {
-      minWarn.style.display = pricePerUnit < 100 ? "block" : "none";
+      minWarn.style.display = actualCostPer < minCostTarget ? "block" : "none";
+      minWarn.textContent = `Минимальная цена задания — ${minCostTarget} ₽.`;
     }
 
     syncReviewTextsHint();

@@ -1181,10 +1181,12 @@ async def anti_fraud_check_and_touch(
 # levels / balances
 # -------------------------
 def xp_needed_for_levelup(level: int) -> int:
-    level = max(1, int(level or 1))
-    base = max(1, int(XP_PER_LEVEL))
+    level = max(1, min(int(level or 1), 60))  # Cap level growth calculation to avoid overflow
+    base = max(1, int(XP_PER_LEVEL or 100))
     mult = max(1, int(XP_LEVEL_STEP or 2))
-    return int(base * (mult ** (level - 1)))
+    # Cap result to something safe for INT4/BIGINT
+    val = int(base * (mult ** (level - 1)))
+    return min(val, 2000000000)  # Max ~2B (safe for INT4)
 
 def calc_level_progress(xp: int) -> dict:
     x = max(0, int(xp or 0))
@@ -2824,18 +2826,42 @@ async def api_task_create(req: web.Request):
     if qty_total <= 0:
         return json_error(400, "Количество должно быть больше 0")
 
+    # Minimum Quantity for Telegram
+    if ttype == "tg" and qty_total < 10:
+        return json_error(400, "Минимальное количество для Telegram — 10 штук", code="MIN_QTY")
+
     vip_for_all = bool(body.get("vip_for_all") or False)
     comm_enabled = await is_commission_enabled()
     
-    # Base cost
-    base_cost = price_per_unit * qty_total
-    
-    # Calculate modifiers
+    # Commission (20%) - round down as requested
     comm_rate = 0.20 if comm_enabled else 0.0
-    vip_rate = 0.10 if vip_for_all else 0.0
+    comm_per_unit = math.floor(price_per_unit * comm_rate)
     
-    total_cost_rub = base_cost * (1 + comm_rate + vip_rate)
-    reward_rub = price_per_unit  # Performer gets the base price per unit
+    # VIP rate (10%)
+    vip_rate = 0.10 if vip_for_all else 0.0
+    vip_per_unit = math.floor(price_per_unit * vip_rate)
+    
+    total_cost_per_unit = price_per_unit + comm_per_unit + vip_per_unit
+    
+    # Validation of TOTAL COST (Advertiser Price)
+    if ttype == "ya" and total_cost_per_unit < 100:
+        return json_error(400, "Минимальная цена за создание (Яндекс) — 100 ₽", code="MIN_COST_YA")
+    if ttype == "gm" and total_cost_per_unit < 70:
+        return json_error(400, "Минимальная цена за создание (Google) — 70 ₽", code="MIN_COST_GM")
+    
+    if ttype == "tg":
+        sub_type = str(body.get("tg_subtype") or "").strip()
+        min_tg_cost = 5
+        if sub_type == "sub_24h": min_tg_cost = 6
+        elif sub_type == "sub_48h": min_tg_cost = 7
+        elif sub_type == "sub_72h": min_tg_cost = 8
+        
+        if total_cost_per_unit < min_tg_cost:
+            return json_error(400, f"Минимальная цена за создание ({sub_type}) — {min_tg_cost} ₽", code="MIN_COST_TG")
+
+    # Base cost and total
+    total_cost_rub = (price_per_unit + comm_per_unit + vip_per_unit) * qty_total
+    reward_rub = price_per_unit  # Performer gets the price per unit
     
     check_type = str(body.get("check_type") or "manual").strip()
     tg_chat = str(body.get("tg_chat") or "").strip() or None

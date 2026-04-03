@@ -815,16 +815,16 @@
       <label class="input-label">Платформа</label>
       <select id="t-type" onchange="recalc()">
         <option value="tg">✈️ Telegram (Активность)</option>
-        <option value="ya" data-p="120">📍 Яндекс Карты (120₽)</option>
-        <option value="gm" data-p="75">🌍 Google Maps (75₽)</option>
-        <option value="dg" data-p="15">🗺️ 2GIS (15₽)</option>
+        <option value="ya">📍 Яндекс Карты (от 100₽)</option>
+        <option value="gm">🌍 Google Maps (от 70₽)</option>
+        <option value="dg">🗺️ 2GIS (от 15₽)</option>
       </select>
 
       <div id="tg-subtype-wrapper" style="margin-top:10px;">
         <label class="input-label">Тип задания Telegram</label>
         <select id="t-tg-subtype" onchange="recalc()"></select>
         <div style="font-size:11px; color:var(--text-dim); margin:5px 0 0 5px;" id="tg-subtype-desc">
-          Исполнитель получит ~50% от стоимости
+          Оплата за 1 подписку
         </div>
       </div>
 
@@ -861,8 +861,8 @@
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
         <div>
-          <label class="input-label">Цена за 1 шт. (min 100)</label>
-          <input type="number" id="t-price-per-unit" value="100" min="100" oninput="recalc()" style="margin-top:5px;">
+          <label class="input-label">Цена за 1 шт.</label>
+          <input type="number" id="t-price-per-unit" value="100" min="5" oninput="recalc()" style="margin-top:5px;">
         </div>
         <div>
           <label class="input-label">Количество</label>
@@ -916,7 +916,7 @@
         </div>
       </div>
 
-      <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальная цена за 1 шт. — 100 ₽.</div>
+      <div id="t-min-budget-warning" style="display:none; margin-top:8px; font-size:12px; color:#ffb76b; background:rgba(255,183,107,.08); border:1px solid rgba(255,183,107,.18); padding:9px 11px; border-radius:12px;">Минимальная цена задания зависит от типа.</div>
 
       <div style="margin-top:14px;">
         <button type="button" class="btn btn-secondary" style="width:100%;" onclick="toggleTaskCommentBox()">📝 Доп. информация / комментарий к отзыву</button>
