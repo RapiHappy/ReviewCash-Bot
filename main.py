@@ -2198,9 +2198,66 @@ async def notify_user(uid: int, text: str, force: bool = False):
         except Exception:
             pass
     try:
-        await bot.send_message(uid, text)
+        await bot.send_message(uid, text, parse_mode="HTML")
     except Exception:
         pass
+
+
+# -------------------------
+# VIP Expiration Reminders
+# -------------------------
+async def vip_expiry_worker():
+    """Background worker to send VIP expiration reminders."""
+    while True:
+        try:
+            now = _now()
+            # Users who have vip_until set
+            # We use markers in 'user_limits' to avoid duplicate notifications.
+            
+            users_res = await sb_exec(lambda: sb.table(T_USERS).select("*").not_.is_("vip_until", "null").execute())
+            for u in (users_res.data or []):
+                uid = int(u.get("user_id") or 0)
+                if not uid: continue
+                
+                v_str = u.get("vip_until")
+                if not v_str: continue
+                v_dt = _parse_dt(v_str)
+                if not v_dt: continue
+                
+                diff = v_dt - now
+                hours_left = diff.total_seconds() / 3600
+                
+                # Check 3 days (72h)
+                if 0 < hours_left <= 72:
+                    reminded = await get_limit_until(uid, "vip_remind_3d")
+                    if not reminded:
+                        msg = (f"👑 <b>Ваш VIP-статус заканчивается через {int(hours_left/24) + 1} дн.</b>\n\n"
+                               f"Продлите его в профиле, чтобы сохранить бонус +10% к доходу и +50% к опыту! ✨")
+                        await notify_user(uid, msg)
+                        await set_limit_until(uid, "vip_remind_3d", now + timedelta(days=7))
+                
+                # Check 24h
+                if 0 < hours_left <= 24:
+                    reminded = await get_limit_until(uid, "vip_remind_1d")
+                    if not reminded:
+                        msg = (f"👑 <b>Внимание! Ваш VIP-статус закончится через 24 часа.</b>\n\n"
+                               f"Успейте выполнить все VIP-задания и продлить статус! 🚀")
+                        await notify_user(uid, msg)
+                        await set_limit_until(uid, "vip_remind_1d", now + timedelta(days=7))
+                
+                # Check expired (within last hour)
+                if -1 < hours_left <= 0:
+                    reminded = await get_limit_until(uid, "vip_remind_expired")
+                    if not reminded:
+                        msg = (f"🚫 <b>Ваш VIP-статус закончился.</b>\n\n"
+                               f"Бонусы к доходу и опыту больше не действуют. Ждем вас снова! 👋")
+                        await notify_user(uid, msg)
+                        await set_limit_until(uid, "vip_remind_expired", now + timedelta(days=30))
+
+        except Exception as e:
+            log.warning("VIP worker tick failed: %s", e)
+        
+        await asyncio.sleep(3600) # Check once an hour
 
 
 # -------------------------
@@ -5148,6 +5205,7 @@ async def on_startup(app: web.Application):
     hook_base = SERVER_BASE_URL or BASE_URL
     if TG_HOLD_WORKER_TASK is None or TG_HOLD_WORKER_TASK.done():
         TG_HOLD_WORKER_TASK = asyncio.create_task(tg_hold_worker())
+        VIP_WORKER_TASK = asyncio.create_task(vip_expiry_worker())
 
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH

@@ -1232,6 +1232,44 @@ async function syncAll() {
     if ($("u-xp-next")) $("u-xp-next").textContent = `Нужно на уровень: ${nextNeedXp} XP`;
     const fill = $("u-xp-fill");
     if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
+
+    // VIP Logic
+    const isVip = !!u.is_vip;
+    const vipBadge = $("u-vip-badge");
+    const buyVipBtn = $("buy-vip-btn");
+    const profileCard = $("profile-main-card");
+
+    if (isVip) {
+      if (buyVipBtn) buyVipBtn.style.display = "none";
+      if (vipBadge) {
+        vipBadge.style.display = "inline-flex";
+        vipBadge.className = "vip-badge-premium";
+        vipBadge.innerHTML = "VIP 👑";
+        
+        // Add expiration info if available
+        if (u.vip_until) {
+            const vdt = new Date(u.vip_until);
+            const fmt = vdt.toLocaleDateString("ru-RU", {day:"2-digit", month:"2-digit"});
+            // Check if we already have expiration text
+            let expEl = $("u-vip-expiry");
+            if (!expEl) {
+                expEl = document.createElement("div");
+                expEl.id = "u-vip-expiry";
+                expEl.className = "vip-expiry-text";
+                vipBadge.parentNode.appendChild(expEl);
+            }
+            expEl.textContent = `До ${fmt}`;
+            expEl.style.display = "block";
+        }
+      }
+      if (profileCard) profileCard.classList.add("vip-card-glow");
+    } else {
+      if (buyVipBtn) buyVipBtn.style.display = "block";
+      if (vipBadge) vipBadge.style.display = "none";
+      if (profileCard) profileCard.classList.remove("vip-card-glow");
+      const expEl = $("u-vip-expiry");
+      if (expEl) expEl.style.display = "none";
+    }
   }
   function renderInvite() {
     // Simple link with your bot username (can be replaced if you want)
