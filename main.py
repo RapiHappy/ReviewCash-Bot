@@ -554,28 +554,6 @@ async def open_app_cmd(m: Message):
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
-@dp.message()
-async def fallback_handler(m: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Начать заново", callback_data="start_again")
-    ]])
-    # We will just print the message and ask to start again
-    try:
-        await m.answer(
-            "Я не понимаю эту команду или сообщение. Нажми /start или кнопку ниже, чтобы начать заново.",
-            reply_markup=kb
-        )
-    except Exception:
-        pass
-
-@dp.callback_query(F.data == "start_again")
-async def start_again_handler(cq: CallbackQuery):
-    await cq.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
-    ]])
-    await cq.message.answer("Привет! Открывай Mini App кнопкой ниже:", reply_markup=kb)
-
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 crypto = None
@@ -4977,15 +4955,36 @@ async def track_any_callback(cq: CallbackQuery):
         pass
 
 @dp.message()
-async def track_any_message(message: Message):
+async def fallback_handler(m: Message):
+    # First, we track (previously track_any_message)
     try:
-        uid = int(message.from_user.id)
+        uid = int(m.from_user.id)
         await tg_evt_touch(uid, "message_any")
-        txt = str(message.text or message.caption or "").strip()
+        txt = str(m.text or m.caption or "").strip()
         if txt:
             await tg_evt_touch(uid, "message_text", txt.lower())
     except Exception:
         pass
+
+    # Then, we respond
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Начать заново", callback_data="start_again")
+    ]])
+    try:
+        await m.answer(
+            "Я не понимаю эту команду или сообщение. Нажми /start или кнопку ниже, чтобы начать заново.",
+            reply_markup=kb
+        )
+    except Exception:
+        pass
+
+@dp.callback_query(F.data == "start_again")
+async def start_again_handler(cq: CallbackQuery):
+    await cq.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+    ]])
+    await cq.message.answer("Привет! Открывай Mini App кнопкой ниже:", reply_markup=kb)
 
 @dp.poll_answer()
 async def track_poll_answer(answer):
