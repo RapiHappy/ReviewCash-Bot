@@ -2906,32 +2906,35 @@ html.theme-light .faq-q{
 .vip-status-group {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    background: rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    padding: 4px 12px 4px 6px;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    padding: 5px 12px 5px 5px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 214, 10, 0.15);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-    margin-top: 4px;
+    border: 1px solid rgba(255, 214, 10, 0.12);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    margin: 6px 0;
+    cursor: pointer;
+    transition: transform 0.2s ease;
 }
+.vip-status-group:active { transform: scale(0.98); }
 
 .vip-badge-luxe {
   background: linear-gradient(135deg, #ffd700, #ffaa00);
   background-size: 200% 200%;
   animation: bgMove 4s infinite alternate;
   color: #000;
-  padding: 4px 12px;
+  padding: 4px 14px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  box-shadow: 0 4px 12px rgba(255, 214, 10, 0.4);
+  letter-spacing: 1px;
+  box-shadow: 0 4px 10px rgba(255, 214, 10, 0.35);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   position: relative;
   overflow: hidden;
 }
@@ -2940,7 +2943,7 @@ html.theme-light .faq-q{
   content: "";
   position: absolute;
   top: 0; left: -100%; width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
   transform: skewX(-25deg);
   animation: glassShine 4s infinite;
 }
@@ -2948,9 +2951,9 @@ html.theme-light .faq-q{
 .vip-expiry-label {
     font-size: 11px;
     font-weight: 800;
-    color: var(--accent-gold);
-    opacity: 0.9;
-    letter-spacing: 0.2px;
+    color: #4a370e; /* Dark brown for high contrast on gold/yellow-ish glass */
+    letter-spacing: 0.1px;
+    opacity: 0.85;
 }
 
 @keyframes bgMove { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
