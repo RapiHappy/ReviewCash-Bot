@@ -10,6 +10,7 @@ import logging
 import html
 from datetime import datetime, timezone, date, timedelta, time as dt_time
 from typing import Any
+import google.generativeai as genai
 
 # Build/version string used for cache-busting in Telegram WebView
 APP_BUILD = (
@@ -225,6 +226,58 @@ STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
 
 # Debug bypass (НЕ включай в проде)
 DISABLE_INITDATA = os.getenv("DISABLE_INITDATA", "0").strip() == "1"
+
+# Gemini AI for reviews
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+PAYOUT_REVIEWS_CHANNEL = "@ReviewCashPayout"
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+async def check_review_ai(text: str) -> tuple[bool, str]:
+    """Use Gemini to evaluate if the review is constructive and good.
+    Returns (ok, reason).
+    """
+    if not GEMINI_API_KEY:
+        # Fallback if no API key: basic length check
+        if len(text.split()) < 3:
+            return False, "Слишком короткий отзыв. Напиши хотя бы пару слов."
+        return True, ""
+
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = (
+            "Ты — модератор отзывов для сервиса ReviewCash (бот в Telegram для заработка на отзывах).\n"
+            "Твоя задача — проверить отзыв пользователя, который он написал перед получением выплаты.\n"
+            "Отзыв должен быть:\n"
+            "1. Понятным и на русском языке.\n"
+            "2. Содержать конструктивное мнение о боте (а не просто «ок», «123», «дайте деньги»).\n"
+            "3. Быть длиной не менее 5-8 слов.\n"
+            "4. В целом положительным или нейтрально-конструктивным.\n\n"
+            f"ТЕКСТ ОТЗЫВА:\n\"\"\"{text}\"\"\"\n\n"
+            "ОТВЕТЬ СТРОГО В ТАКОМ ФОРМАТЕ (JSON):\n"
+            "{\"ok\": true, \"reason\": \"\"} — если отзыв принят.\n"
+            "{\"ok\": false, \"reason\": \"краткое пояснение на русском почему не принят\"} — если не принят."
+        )
+        
+        # Generation with timeout
+        response = await asyncio.to_thread(model.generate_content, prompt)
+        res_text = response.text.strip()
+        
+        # basic json cleanup if LLM adds markdown
+        if "```json" in res_text:
+            res_text = res_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in res_text:
+            res_text = res_text.split("```")[1].split("```")[0].strip()
+            
+        data = json.loads(res_text)
+        return bool(data.get("ok")), str(data.get("reason", "Пожалуйста, напишите более подробный отзыв."))
+    except Exception as e:
+        log.warning(f"Gemini check failed: {e}")
+        # Soft fallback: if AI is down, let's just check length
+        if len(text.split()) < 3:
+            return False, "Слишком короткий отзыв. Попробуй чуть подробнее."
+        return True, ""
 
 # Proof upload (Supabase Storage)
 PROOF_BUCKET = os.getenv("PROOF_BUCKET", "proofs").strip() or "proofs"
@@ -3460,18 +3513,20 @@ async def api_withdraw_create(req: web.Request):
             "user_id": uid,
             "amount_rub": amount,
             "details": details,
-            "status": "pending",
+            "status": "awaiting_review",
         })
         wd_row = (wd.data or [None])[0]
 
         try:
-            await notify_admin(
-                f"🏦 Заявка на вывод: {amount}₽\n"
-                f"User: {uid}\n"
-                f"ФИО: {full_name}\n"
-                f"Способ: {payout_method}\n"
-                f"Реквизиты: {payout_value}\n"
-                f"ID: {wd_row.get('id') if wd_row else 'n/a'}"
+            # Prompt user in bot
+            await bot.send_message(
+                chat_id=uid,
+                text=(
+                    f"🎉 Ваша заявка на **{amount}₽** создана!\n\n"
+                    "Для того чтобы мы обработали выплату, пожалуйста, **напишите хороший и подробный отзыв** о нашем боте прямо здесь, в этом чате.\n\n"
+                    "Ваш отзыв проверит ИИ, и после этого заявка будет передана на выплату."
+                ),
+                parse_mode=ParseMode.MARKDOWN
             )
         except Exception:
             pass
@@ -3489,6 +3544,7 @@ async def api_withdraw_create(req: web.Request):
 async def api_withdraw_list(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
+    # List all for the user
     r = await sb_select(T_WD, {"user_id": uid}, order="created_at", desc=True, limit=100)
     return web.json_response({"ok": True, "withdrawals": r.data or []})
 
@@ -4334,7 +4390,8 @@ async def api_admin_proof_decision(req: web.Request):
 
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
-    r = await sb_select(T_WD, {}, order="created_at", desc=True, limit=200)
+    # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
+    r = await sb.from_(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
     return web.json_response({"ok": True, "withdrawals": r.data or []})
 
 async def api_admin_withdraw_decision(req: web.Request):
@@ -4460,6 +4517,8 @@ async def send_main_welcome(message: Message, uid: int):
         "Друг выполняет первое задание → тебе моментально "
         f"капает *{REF_BONUS_RUB:.0f}₽* на баланс\.\n"
         "Ссылку для приглашения найдёшь во вкладке *Друзья* 👥\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 *Наши выплаты:* @ReviewCashPayout — здесь реальные отзывы и подтверждения выплат пользователям\.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🤖 *TG\-задания* проверяются автоматически\n"
         "📝 *Отзывы* проверяет модератор \(обычно до 24ч\)\n\n"
@@ -4956,9 +5015,60 @@ async def track_any_callback(cq: CallbackQuery):
 
 @dp.message()
 async def fallback_handler(m: Message):
-    # First, we track (previously track_any_message)
+    uid = int(m.from_user.id)
+    # First, let's see if this user has a withdrawal awaiting review
     try:
-        uid = int(m.from_user.id)
+        wds = await sb.from_(T_WD).select("*").match({"user_id": uid, "status": "awaiting_review"}).order("created_at", desc=True).limit(1).execute()
+        if wds.data:
+            wd = wds.data[0]
+            txt = str(m.text or m.caption or "").strip()
+            
+            # AI Check
+            ok, reason = await check_review_ai(txt)
+            if not ok:
+                await m.reply(f"❌ **Ваш отзыв не прошел проверку ИИ:**\n{reason}\n\nПожалуйста, напишите более подробный и честный отзыв, чтобы мы могли подтвердить вашу выплату.")
+                return
+
+            # Success! Forward to channel
+            amount = wd.get("amount_rub")
+            user_display = f"ID {uid}"
+            if m.from_user.username:
+                user_display += f" (@{m.from_user.username})"
+            if m.from_user.full_name:
+                user_display += f" - {m.from_user.full_name}"
+
+            channel_text = (
+                f"💰 **НОВАЯ ВЫПЛАТА: {amount}₽**\n"
+                f"👤 Пользователь: {user_display}\n"
+                f"💬 **ОТЗЫВ:**\n{txt}\n\n"
+                f"🚀 Заработай на отзывах в @ReviewCashOrg_Bot"
+            )
+            
+            try:
+                await bot.send_message(chat_id=PAYOUT_REVIEWS_CHANNEL, text=channel_text, parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                log.warning(f"Failed to forward review to channel: {e}")
+
+            # Update status to pending
+            await sb_update(T_WD, {"id": wd["id"]}, {"status": "pending"})
+            
+            # Notify ADMIN about new pending withdrawal (original logic from api_withdraw_create)
+            try:
+                await notify_admin(
+                    f"🏦 Заявка на вывод (ОТЗЫВ ПОЛУЧЕН): {amount}₽\n"
+                    f"User: {uid}\n"
+                    f"ID: {wd.get('id')}"
+                )
+            except Exception:
+                pass
+
+            await m.answer("✅ **Отзыв принят и проверен ИИ!**\n\nВаша заявка передана в очередь на выплату. Обычно это занимает от пары часов до 2-х дней в выходные.")
+            return
+    except Exception as e:
+        log.exception(f"Error in review fallback handler: {e}")
+
+    # Default fallback tracking
+    try:
         await tg_evt_touch(uid, "message_any")
         txt = str(m.text or m.caption or "").strip()
         if txt:

@@ -3,3 +3,4 @@ aiohttp==3.9.5
 supabase==2.16.0
 aiocryptopay==0.4.8
 gunicorn==22.0.0
+google-generativeai==0.7.2
