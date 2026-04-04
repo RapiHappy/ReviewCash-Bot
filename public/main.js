@@ -3424,7 +3424,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   function renderAdminBadge() {
     const b = $("admin-badge");
     if (!b) return;
-    const n = (Number(state.adminCounts.proofs || 0) + Number(state.adminCounts.withdrawals || 0) + Number(state.adminCounts.tbank || 0) + Number(state.adminCounts.tasks || 0));
+    const n = (Number(state.adminCounts.proofs || 0) + Number(state.adminCounts.withdrawals || 0) + Number(state.adminCounts.tbank || 0));
     b.textContent = String(n);
     b.style.opacity = n > 0 ? "1" : "0";
   }
