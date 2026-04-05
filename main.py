@@ -5062,16 +5062,16 @@ async def fallback_handler(m: Message):
 
             # Success! Forward to channel
             amount = wd.get("amount_rub")
-            user_display = f"ID {uid}"
+            user_display = f"Пользователь"
             if m.from_user.username:
-                user_display += f" (@{m.from_user.username})"
-            if m.from_user.full_name:
-                user_display += f" - {m.from_user.full_name}"
+                user_display = f"@{m.from_user.username}"
 
             channel_text = (
-                f"💰 **НОВАЯ ВЫПЛАТА: {amount}₽**\n"
-                f"👤 Пользователь: {user_display}\n"
-                f"💬 **ОТЗЫВ:**\n{txt}\n\n"
+                f"💸 **НОВАЯ ВЫПЛАТА: {amount}₽**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"👤 **{user_display}**\n"
+                f"💬 **ОТЗЫВ:**\n_{txt}_\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
                 f"🚀 Заработай на отзывах в @ReviewCashOrg_Bot"
             )
             
@@ -5093,7 +5093,11 @@ async def fallback_handler(m: Message):
             except Exception:
                 pass
 
-            await m.answer("✅ **Отзыв принят и проверен ИИ!**\n\nВаша заявка передана в очередь на выплату. Обычно это занимает от пары часов до 2-х дней в выходные.")
+            await m.answer(
+                "✨ **Отзыв принят и проверен ИИ!**\n\n"
+                "Ваша заявка передана в очередь на выплату. Обычно это занимает от пары часов до 2-х дней в выходные.\n\n"
+                "Спасибо за честное мнение! ❤️"
+            )
             return
     except Exception as e:
         log.exception(f"Error in review fallback handler: {e}")
