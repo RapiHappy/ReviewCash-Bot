@@ -5035,15 +5035,20 @@ async def fallback_handler(m: Message):
     uid = int(m.from_user.id)
     # First, let's see if this user has a withdrawal awaiting review
     try:
-        wds = await sb.from_(T_WD).select("*").match({"user_id": uid, "status": "awaiting_review"}).order("created_at", desc=True).limit(1).execute()
-        if wds.data:
-            wd = wds.data[0]
+        # Search by both possible columns
+        r = await sb.from_(T_WD).select("*").or_(f"user_id.eq.{uid},tg_user_id.eq.{uid}").eq("status", "awaiting_review").order("created_at", desc=True).limit(1).execute()
+        
+        if r.data:
+            wd = r.data[0]
             txt = str(m.text or m.caption or "").strip()
+            
+            if not txt:
+                return # Ignore empty messages
             
             # AI Check
             ok, reason = await check_review_ai(txt)
             if not ok:
-                await m.reply(f"❌ **Ваш отзыв не прошел проверку ИИ:**\n{reason}\n\nПожалуйста, напишите более подробный и честный отзыв, чтобы мы могли подтвердить вашу выплату.")
+                await m.reply(f"❌ **Ваш отзыв не прошел проверку:**\n{reason}\n\nПожалуйста, напишите более подробный и честный отзыв о боте (минимум 5-8 слов), чтобы мы могли подтвердить вашу выплату.")
                 return
 
             # Success! Forward to channel
