@@ -1476,8 +1476,18 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         upd["referrer_id"] = referrer_id
 
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
-    # Also save username to balance for direct visibility
-    await sb_upsert(T_BAL, {"user_id": uid, "username": username}, on_conflict="user_id")
+    # Also save username to balance for direct visibility (handle missing column)
+    try:
+        await sb_upsert(T_BAL, {"user_id": uid, "username": username}, on_conflict="user_id")
+    except Exception as e:
+        if not _is_pgrst_missing_column(e, "username"):
+            log.warning("ensure_user: balances_upsert failed: %s", e)
+        else:
+            # retry without username
+            try:
+                await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
+            except Exception:
+                pass
 
     # создаём referral_event (pending) только если новый и referrer есть
     if is_new and referrer_id and referrer_id != uid:
@@ -3547,7 +3557,14 @@ async def api_withdraw_create(req: web.Request):
         }
         
         log.info("Attempting withdrawal insert for uid=%s: %s", uid, wd_payload)
-        wd = await sb_insert(T_WD, wd_payload)
+        try:
+            wd = await sb_insert(T_WD, wd_payload)
+        except Exception as e:
+            if _is_pgrst_missing_column(e, "username"):
+                wd_payload.pop("username", None)
+                wd = await sb_insert(T_WD, wd_payload)
+            else:
+                raise e
         
         if not wd or not wd.data:
             log.error("Withdrawal insert returned empty data: %s", wd)
