@@ -219,7 +219,7 @@ GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 # topup minimum
 MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "100").strip())
 # Stars topup minimum (in RUB)
-MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "120").strip())
+MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "100").strip())
 
 # Stars rate: сколько рублей даёт 1 Star
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
