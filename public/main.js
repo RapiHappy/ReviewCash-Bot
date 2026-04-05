@@ -3534,7 +3534,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         <div style="display:flex; justify-content:space-between; gap:10px;">
           <div style="flex:1;">
             <div style="font-weight:900;">${safeText(t.title || "Задание")}</div>
-            <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(p.user_id)} • Reward: ${fmtRub(t.reward_rub || 0)}</div>
+            <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(p.username ? p.user_id + ' (@' + p.username + ')' : p.user_id)} • Reward: ${fmtRub(t.reward_rub || 0)}</div>
             <div style="margin-top:8px; font-size:13px; background:var(--glass); padding:10px; border-radius:12px;">
               <b>Ник:</b> ${safeText(p.proof_text || "")}
             </div>
@@ -3594,9 +3594,11 @@ async function loadAdminWithdrawals() {
     list.filter(w => w.status === "pending").forEach(w => {
       const info = parseWithdrawDetails(w.details || "");
       const methodLabel = info.method === "card" ? "Карта" : (info.method === "phone" ? "Телефон" : "Реквизиты");
+      const userDisplay = w.username ? `${w.user_id} (@${w.username})` : w.user_id;
+      
       const c = adminCard(`
         <div style="font-weight:900;">Вывод ${fmtRub(w.amount_rub || 0)}</div>
-        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(w.user_id)}</div>
+        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(userDisplay)}</div>
         <div style="margin-top:6px; font-size:13px;">👤 ${safeText(info.fullName || "—")}</div>
         <div style="margin-top:4px; font-size:12px; color:var(--text-dim);">${methodLabel}: ${safeText(info.value || "—")}</div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
@@ -3655,9 +3657,10 @@ async function loadAdminWithdrawals() {
       const phone = (p.meta && p.meta.phone) ? p.meta.phone : "";
       const proofUrl = (p.meta && p.meta.proof_url) ? normalizeUrl(p.meta.proof_url) : "";
       const proofHtml = proofUrl ? `<img src="${safeText(proofUrl)}" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03);" />` : "";
+      const userDisplay = p.username ? `${p.user_id} (@${p.username})` : p.user_id;
       const c = adminCard(`
         <div style="font-weight:900;">T-Bank ${fmtRub(p.amount_rub || 0)}</div>
-        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(p.user_id)} • Code: ${safeText(p.provider_ref || "")}</div>
+        <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(userDisplay)} • Code: ${safeText(p.provider_ref || "")}</div>
         <div style="font-size:12px; color:var(--text-dim);">Sender: ${safeText(sender)}</div>
         <div style="font-size:12px; color:var(--text-dim);">Phone: ${safeText(phone || "—")}</div>
         ${proofHtml}
@@ -3704,19 +3707,17 @@ async function loadAdminWithdrawals() {
   // Admin sanctions (ban / fine)
   // --------------------
   async function adminPunish(userId, action, kind, extra = {}) {
-    const uid = Number(userId || 0);
-    if (!uid) throw new Error("bad user_id");
-    const payload = Object.assign({ user_id: uid, action: String(action || ""), kind: String(kind || "global") }, extra || {});
+    if (!userId) throw new Error("bad user_id");
+    const payload = Object.assign({ user_id: userId, action: String(action || ""), kind: String(kind || "global") }, extra || {});
     return await apiPost("/api/admin/user/punish", payload);
   }
 
   async function adminBanQuick(userId, kind = "global", days = 1) {
     try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
+      if (!userId) return;
       const reason = (prompt("Причина бана (необязательно):", "") || "").trim();
       tgHaptic("impact");
-      await adminPunish(uid, "ban", kind, { days: Number(days || 1), reason });
+      await adminPunish(userId, "ban", kind, { days: Number(days || 1), reason });
       tgHaptic("success");
       tgAlert(`Бан (${kind}) выдан ✅`, "success", "Админка");
       await checkAdmin();
@@ -3728,10 +3729,9 @@ async function loadAdminWithdrawals() {
 
   async function adminUnbanQuick(userId, kind = "global") {
     try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
+      if (!userId) return;
       tgHaptic("impact");
-      await adminPunish(uid, "unban", kind, {});
+      await adminPunish(userId, "unban", kind, {});
       tgHaptic("success");
       tgAlert(`Бан (${kind}) снят ✅`, "success", "Админка");
       await checkAdmin();
@@ -3743,14 +3743,13 @@ async function loadAdminWithdrawals() {
 
   async function adminFineQuick(userId) {
     try {
-      const uid = Number(userId || 0);
-      if (!uid) return;
+      if (!userId) return;
       const raw = (prompt("Штраф в ₽ (введите число):", "100") || "").trim();
       const n = Number(raw.replace(",", "."));
       if (!isFinite(n) || n <= 0) { tgAlert("Некорректная сумма", "error"); return; }
       const reason = (prompt("Причина штрафа (необязательно):", "") || "").trim();
       tgHaptic("impact");
-      await adminPunish(uid, "fine", "global", { amount_rub: -Math.abs(n), reason });
+      await adminPunish(userId, "fine", "global", { amount_rub: -Math.abs(n), reason });
       tgHaptic("success");
       tgAlert(`Штраф -${Math.abs(n)} ₽ применён ✅`, "success", "Админка");
       await checkAdmin();
@@ -3783,7 +3782,7 @@ async function loadAdminTasks() {
       const um = adminCard(`
         <div style="font-weight:900; margin-bottom:8px;">⚠️ Санкции пользователю</div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <input id="admin-user-id" placeholder="User ID" inputmode="numeric" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text);" />
+          <input id="admin-user-id" placeholder="User ID или @ник" style="flex:1; min-width:140px; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:var(--text);" />
           <button class="btn btn-secondary" data-um-ban="1" style="padding:10px 12px;">⛔ Бан 1д</button>
           <button class="btn btn-secondary" data-um-unban="1" style="padding:10px 12px;">✅ Разбан</button>
           <button class="btn btn-secondary" data-um-fine="1" style="padding:10px 12px;">💸 Штраф</button>
@@ -3792,7 +3791,7 @@ async function loadAdminTasks() {
       `);
       const getUid = () => {
         const uidInput = um.querySelector("#admin-user-id");
-        return Number((((uidInput && uidInput.value) || "").trim()) || 0);
+        return ((uidInput && uidInput.value) || "").trim();
       };
       const bban = um.querySelector('[data-um-ban="1"]');
       if (bban) bban.onclick = () => { const u = getUid(); if (u) adminBanQuick(u, "global", 1); else tgAlert("Введите User ID", "error"); };

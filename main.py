@@ -1456,6 +1456,7 @@ async def referrals_summary(uid: int):
 # -------------------------
 async def ensure_user(user: dict, referrer_id: int | None = None):
     uid = int(user.get("id") or user.get("user_id") or user.get("tg_user_id"))
+    username = user.get("username")
 
     # узнаём новый ли пользователь
     existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
@@ -1463,7 +1464,7 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
 
     upd = {
         "user_id": uid,
-        "username": user.get("username"),
+        "username": username,
         "first_name": user.get("first_name"),
         "last_name": user.get("last_name"),
         "photo_url": user.get("photo_url"),
@@ -1475,7 +1476,8 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         upd["referrer_id"] = referrer_id
 
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
-    await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
+    # Also save username to balance for direct visibility
+    await sb_upsert(T_BAL, {"user_id": uid, "username": username}, on_conflict="user_id")
 
     # создаём referral_event (pending) только если новый и referrer есть
     if is_new and referrer_id and referrer_id != uid:
@@ -1489,6 +1491,31 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
     if "user_id" not in row:
         row["user_id"] = uid
     return row
+
+async def resolve_user_id(input_str: str) -> int | None:
+    """Resolve numeric ID or @username to an integer Telegram ID."""
+    s = str(input_str or "").strip()
+    if not s:
+        return None
+    
+    # Standard numeric ID
+    if s.isdigit():
+        return int(s)
+    
+    # @username or username
+    uname = s.lstrip("@").lower()
+    if not uname:
+        return None
+        
+    try:
+        # Search by username in users table
+        r = await sb.from_(T_USERS).select("user_id").ilike("username", uname).limit(1).execute()
+        if r.data:
+            return int(r.data[0].get("user_id"))
+    except Exception as e:
+        log.warning(f"resolve_user_id failed for '{s}': {e}")
+        
+    return None
 
 # -------------------------
 # limits (ya/gm cooldown)
@@ -3513,6 +3540,7 @@ async def api_withdraw_create(req: web.Request):
         wd_payload = {
             "user_id": uid,
             "tg_user_id": uid,
+            "username": user.get("username"),
             "amount_rub": amount,
             "details": details,
             "status": "awaiting_review"
@@ -4040,25 +4068,22 @@ async def api_admin_stars_pay_set(req: web.Request):
 
 async def api_admin_balance_credit(req: web.Request):
     admin = await require_admin(req)
-    # only MAIN admin can credit balances
-    if int(MAIN_ADMIN_ID or 0) and int(admin["id"]) != int(MAIN_ADMIN_ID or 0):
-        raise web.HTTPForbidden(text="Only main admin")
-
     body = await safe_json(req)
-    user_id = int(body.get("user_id") or body.get("uid") or 0)
+    raw_uid = body.get("user_id") or body.get("uid")
+    uid = await resolve_user_id(str(raw_uid))
+    
+    if not uid:
+        return web.json_response({"ok": False, "error": f"Пользователь '{raw_uid}' не найден"}, status=400)
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))
     if amount is None or amount <= 0:
         return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
     reason = str(body.get("reason") or body.get("comment") or "Начисление админом").strip()
 
-    if user_id <= 0:
-        return web.json_response({"ok": False, "error": "Некорректный user_id"}, status=400)
-
-    await add_rub(user_id, float(amount))
+    await add_rub(uid, float(amount))
     try:
         await sb_insert(T_PAY, {
-            "user_id": user_id,
+            "user_id": uid,
             "provider": "admin_credit",
             "status": "paid",
             "amount_rub": float(amount),
@@ -4069,7 +4094,7 @@ async def api_admin_balance_credit(req: web.Request):
         pass
 
     try:
-        await notify_user(user_id, f"💸 Начисление: +{float(amount):.2f}₽\nПричина: {reason}")
+        await notify_user(uid, f"💸 Начисление: +{float(amount):.2f}₽\nПричина: {reason}")
     except Exception:
         pass
 
@@ -4091,12 +4116,11 @@ async def api_admin_user_punish(req: web.Request):
     admin = await require_admin(req)
     body = await safe_json(req)
 
-    try:
-        uid = int(body.get("user_id") or body.get("uid") or 0)
-    except Exception:
-        uid = 0
-    if uid <= 0:
-        return web.json_response({"ok": False, "error": "Некорректный user_id"}, status=400)
+    raw_uid = body.get("user_id") or body.get("uid")
+    uid = await resolve_user_id(str(raw_uid))
+    
+    if not uid:
+        return web.json_response({"ok": False, "error": f"Пользователь '{raw_uid}' не найден"}, status=400)
 
     action = str(body.get("action") or "").strip().lower()
     if not action:
@@ -4264,11 +4288,24 @@ async def api_admin_proof_list(req: web.Request):
             "id": c.get("id"),
             "task_id": c.get("task_id"),
             "user_id": c.get("user_id"),
+            "username": c.get("username"), # Added username lookup below
             "proof_text": c.get("proof_text"),
             "proof_url": c.get("proof_url"),
             "created_at": c.get("created_at"),
             "task": t,
         })
+    
+    # Batch fetch usernames for these proofs
+    if out:
+        uids = list({o["user_id"] for o in out if o.get("user_id")})
+        if uids:
+            try:
+                ur = await sb.from_(T_USERS).select("user_id, username").in_("user_id", uids).execute()
+                u_map = {u["user_id"]: u["username"] for u in (ur.data or [])}
+                for o in out:
+                    o["username"] = u_map.get(o["user_id"])
+            except Exception:
+                pass
 
     return web.json_response({"ok": True, "proofs": out})
 
@@ -4408,8 +4445,14 @@ async def api_admin_proof_decision(req: web.Request):
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
     # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
-    r = await sb.from_(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
-    return web.json_response({"ok": True, "withdrawals": r.data or []})
+    # Join with users to get username
+    r = await sb.from_(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+    # Flatten the result if needed or handle in JS
+    data = r.data or []
+    for item in data:
+        user_obj = item.pop("user", {}) or {}
+        item["username"] = user_obj.get("username")
+    return web.json_response({"ok": True, "withdrawals": data})
 
 async def api_admin_withdraw_decision(req: web.Request):
     await require_admin(req)
@@ -4445,11 +4488,14 @@ async def api_admin_withdraw_decision(req: web.Request):
 
 async def api_admin_tbank_list(req: web.Request):
     await require_admin(req)
-
-    def _f():
-        return sb.table(T_PAY).select("*").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
-    r = await sb_exec(_f)
-    return web.json_response({"ok": True, "tbank": r.data or []})
+    
+    # Join with users to get username
+    r = await sb.from_(T_PAY).select("*, user:users(username)").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
+    data = r.data or []
+    for item in data:
+        user_obj = item.pop("user", {}) or {}
+        item["username"] = user_obj.get("username")
+    return web.json_response({"ok": True, "tbank": data})
 
 async def api_admin_tbank_decision(req: web.Request):
     await require_admin(req)
