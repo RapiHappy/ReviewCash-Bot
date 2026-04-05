@@ -217,7 +217,7 @@ YA_COOLDOWN_SEC = int(os.getenv("YA_COOLDOWN_SEC", str(3 * 24 * 3600)).strip())
 GM_COOLDOWN_SEC = int(os.getenv("GM_COOLDOWN_SEC", str(1 * 24 * 3600)).strip())
 
 # topup minimum
-MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "120").strip())
+MIN_TOPUP_RUB = float(os.getenv("MIN_TOPUP_RUB", "100").strip())
 # Stars topup minimum (in RUB)
 MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "120").strip())
 
@@ -3471,7 +3471,7 @@ async def api_withdraw_create(req: web.Request):
     payout_method = str(body.get("payout_method") or "").strip().lower()
 
     if amount < 300:
-        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
+        return web.json_response({"ok": False, "error": "Минимальная сумма для вывода — 300 ₽"}, status=400)
     if not full_name or len(full_name) < 5 or " " not in full_name:
         return web.json_response({"ok": False, "error": "Укажи имя и фамилию"}, status=400)
     if not payout_value:
