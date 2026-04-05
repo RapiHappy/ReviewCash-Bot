@@ -2798,7 +2798,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
     
     const cur = $("t-cur") ? $("t-cur").value : "rub";
-    const commissionEnabled = state.config && state.config.feature_commission_disabled ? false : true;
+    const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
 
     syncTaskCommentUi(type);
     
