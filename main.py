@@ -3509,14 +3509,27 @@ async def api_withdraw_create(req: web.Request):
         await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
         debited = True
 
-        wd = await sb_insert(T_WD, {
+        # Provide redundant fields for different DB schemas
+        wd_payload = {
             "user_id": uid,
             "tg_user_id": uid,
             "amount_rub": amount,
+            "amount": amount,
             "details": details,
             "status": "awaiting_review",
-        })
-        wd_row = (wd.data or [None])[0]
+            "method": payout_method,
+            "payout_method": payout_method
+        }
+        
+        log.info("Attempting withdrawal insert for uid=%s: %s", uid, wd_payload)
+        wd = await sb_insert(T_WD, wd_payload)
+        
+        if not wd or not wd.data:
+            log.error("Withdrawal insert returned empty data: %s", wd)
+            # Try a skeleton insert if full one failed? No, better to fail and rollback.
+            raise Exception("Empty data from Supabase")
+
+        wd_row = wd.data[0]
 
         try:
             # Prompt user in bot
@@ -3529,18 +3542,24 @@ async def api_withdraw_create(req: web.Request):
                 ),
                 parse_mode=ParseMode.MARKDOWN
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Failed to send bot message to user %s: %s", uid, e)
 
         return web.json_response({"ok": True, "withdrawal": wd_row})
-    except Exception:
-        log.exception("withdraw create failed uid=%s amount=%s", uid, amount)
+    except Exception as e:
+        log.exception("withdraw create failed uid=%s amount=%s error=%s", uid, amount, e)
         if debited:
             try:
                 await add_rub(uid, amount)
             except Exception:
                 log.exception("withdraw rollback failed uid=%s amount=%s", uid, amount)
-        return web.json_response({"ok": False, "error": "Ошибка сервера при создании заявки. Баланс восстановлен."}, status=500)
+        
+        # Extract more info from Supabase error if possible
+        err_msg = str(e)
+        if "null value" in err_msg and "tg_user_id" in err_msg:
+             err_msg = "Ошибка БД: отсутствует колонка или права (tg_user_id). Обратитесь к админу."
+             
+        return web.json_response({"ok": False, "error": f"Ошибка сервера при создании заявки: {err_msg}"}, status=500)
 
 async def api_withdraw_list(req: web.Request):
     _, user = await require_init(req)
