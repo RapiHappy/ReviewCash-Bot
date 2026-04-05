@@ -3838,7 +3838,7 @@ async def api_report_list(req: web.Request):
     task_ids = list({c.get("task_id") for c in comps if c.get("task_id") is not None})
     tasks_map: dict[str, dict] = {}
     if task_ids:
-        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,type,target_url,tg_subtype", limit=500)
+        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,type,target_url,instructions", limit=500)
         for t in (tr.data or []):
             tasks_map[str(t.get("id"))] = t
 
@@ -3859,7 +3859,7 @@ async def api_report_list(req: web.Request):
             "type_label": type_labels.get(str(task.get("type") or "").lower(), str(task.get("type") or "Задание")),
             "reward_rub": float(task.get("reward_rub") or 0),
             "target_url": task.get("target_url"),
-            "tg_subtype": task.get("tg_subtype"),
+            "tg_subtype": get_tg_subtype(task),
             "status": c.get("status"),
             "proof_text": c.get("proof_text"),
             "proof_url": c.get("proof_url"),
@@ -4407,7 +4407,7 @@ async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
     # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
     # Join with users to get username
-    r = await sb.from_(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+    r = await sb_exec(lambda: sb.from_(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
     # Flatten the result if needed or handle in JS
     data = r.data or []
     for item in data:
@@ -4451,7 +4451,7 @@ async def api_admin_tbank_list(req: web.Request):
     await require_admin(req)
     
     # Join with users to get username
-    r = await sb.from_(T_PAY).select("*, user:users(username)").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
+    r = await sb_exec(lambda: sb.from_(T_PAY).select("*, user:users(username)").eq("provider", "tbank").eq("status", "pending").order("created_at", desc=True).limit(200).execute())
     data = r.data or []
     for item in data:
         user_obj = item.pop("user", {}) or {}
@@ -5048,7 +5048,7 @@ async def fallback_handler(m: Message):
     try:
         # Search by both possible columns
         log.info("fallback_handler: check withdrawal review for uid=%s", uid)
-        r = await sb.from_(T_WD).select("*").or_(f"user_id.eq.{uid},tg_user_id.eq.{uid}").eq("status", "awaiting_review").order("created_at", desc=True).limit(1).execute()
+        r = await sb_exec(lambda: sb.from_(T_WD).select("*").or_(f"user_id.eq.{uid},tg_user_id.eq.{uid}").eq("status", "awaiting_review").order("created_at", desc=True).limit(1).execute())
         
         if r.data:
             wd = r.data[0]
