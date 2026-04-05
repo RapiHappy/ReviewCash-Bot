@@ -3514,11 +3514,8 @@ async def api_withdraw_create(req: web.Request):
             "user_id": uid,
             "tg_user_id": uid,
             "amount_rub": amount,
-            "amount": amount,
             "details": details,
-            "status": "awaiting_review",
-            "method": payout_method,
-            "payout_method": payout_method
+            "status": "awaiting_review"
         }
         
         log.info("Attempting withdrawal insert for uid=%s: %s", uid, wd_payload)
