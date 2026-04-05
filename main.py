@@ -5067,16 +5067,14 @@ async def fallback_handler(m: Message):
                 user_display = f"@{m.from_user.username}"
 
             channel_text = (
-                f"💸 **НОВАЯ ВЫПЛАТА: {amount}₽**\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"👤 **{user_display}**\n"
-                f"💬 **ОТЗЫВ:**\n_{txt}_\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💸 <b>НОВАЯ ВЫПЛАТА: {amount}₽</b>\n\n"
+                f"👤 <b>{user_display}</b>\n"
+                f"💬 <b>ОТЗЫВ:</b>\n<i>«{html.escape(txt)}»</i>\n\n"
                 f"🚀 Заработай на отзывах в @ReviewCashOrg_Bot"
             )
             
             try:
-                await bot.send_message(chat_id=PAYOUT_REVIEWS_CHANNEL, text=channel_text, parse_mode=ParseMode.MARKDOWN)
+                await bot.send_message(chat_id=PAYOUT_REVIEWS_CHANNEL, text=channel_text, parse_mode=ParseMode.HTML)
             except Exception as e:
                 log.warning(f"Failed to forward review to channel: {e}")
 
@@ -5094,9 +5092,10 @@ async def fallback_handler(m: Message):
                 pass
 
             await m.answer(
-                "✨ **Отзыв принят и проверен ИИ!**\n\n"
+                "✨ <b>Отзыв принят и проверен ИИ!</b>\n\n"
                 "Ваша заявка передана в очередь на выплату. Обычно это занимает от пары часов до 2-х дней в выходные.\n\n"
-                "Спасибо за честное мнение! ❤️"
+                "<i>Спасибо за честное мнение! ❤️</i>",
+                parse_mode=ParseMode.HTML
             )
             return
     except Exception as e:
