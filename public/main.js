@@ -3529,12 +3529,13 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const imgHtml = proofUrl ? `<img src="${safeText(proofUrl)}" onclick="openImageZoom('${safeText(proofUrl)}')" style="width:100%; max-height:240px; object-fit:contain; border-radius:14px; margin-top:10px; background:rgba(255,255,255,0.03); cursor:zoom-in;" title="Нажми, чтобы увеличить" />` : "";
       const linkHtml = taskLink ? `<a href="${safeText(taskLink)}" target="_blank" class="btn btn-secondary" style="width:100%; margin-top:10px; padding:10px; text-decoration:none; justify-content:center;">🔗 Ссылка на место отзыва</a>` : "";
       const isReview = ["ya", "gm", "dg"].includes(String(t.type || "").toLowerCase());
+      const userDisplay = p.username ? `${p.user_id} (@${p.username})` : p.user_id;
 
       const c = adminCard(`
         <div style="display:flex; justify-content:space-between; gap:10px;">
           <div style="flex:1;">
             <div style="font-weight:900;">${safeText(t.title || "Задание")}</div>
-            <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(p.username ? p.user_id + ' (@' + p.username + ')' : p.user_id)} • Reward: ${fmtRub(t.reward_rub || 0)}</div>
+            <div style="font-size:12px; color:var(--text-dim);">User: ${safeText(userDisplay)} • Reward: ${fmtRub(t.reward_rub || 0)}</div>
             <div style="margin-top:8px; font-size:13px; background:var(--glass); padding:10px; border-radius:12px;">
               <b>Ник:</b> ${safeText(p.proof_text || "")}
             </div>

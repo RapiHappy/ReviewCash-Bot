@@ -261,7 +261,8 @@ async def check_review_ai(text: str) -> tuple[bool, str]:
         )
         
         # Generation with timeout
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        # Using wait_for to prevent hanging
+        response = await asyncio.wait_for(asyncio.to_thread(model.generate_content, prompt), timeout=30.0)
         res_text = response.text.strip()
         
         # basic json cleanup if LLM adds markdown
@@ -4258,73 +4259,16 @@ async def api_admin_user_punish(req: web.Request):
 
 async def api_admin_proof_list(req: web.Request):
     await require_admin(req)
-    r = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=300)
-    comps = r.data or []
-
-    task_ids = list({c.get("task_id") for c in comps if c.get("task_id")})
-    tasks_map = {}
-    if task_ids:
-        tr = await sb_select_in(T_TASKS, "id", task_ids, columns="id,title,reward_rub,target_url,type,owner_id,instructions", limit=500)
-        for t in (tr.data or []):
-            tasks_map[str(t["id"])] = t
-
-    visible_after_ya = _now() - timedelta(days=3)
-
-    out = []
-    seen = set()
-    for c in comps:
-        tid = str(c.get("task_id"))
-        t = tasks_map.get(tid)
-        if not t:
-            continue
-
-        # Hide Yandex review reports for 3 days
-        if t.get("type") == "ya":
-            dt = None
-            try:
-                ca = c.get("created_at")
-                if isinstance(ca, str) and ca:
-                    dt = datetime.fromisoformat(ca.replace("Z", "+00:00"))
-            except Exception:
-                dt = None
-            if dt and dt > visible_after_ya:
-                continue
-
-        # Prevent the same pending proof from appearing twice in admin UI
-        sig = (
-            str(c.get("user_id") or ""),
-            tid,
-            str(c.get("proof_url") or ""),
-            str(c.get("proof_text") or ""),
-        )
-        if sig in seen:
-            continue
-        seen.add(sig)
-
-        out.append({
-            "id": c.get("id"),
-            "task_id": c.get("task_id"),
-            "user_id": c.get("user_id"),
-            "username": c.get("username"), # Added username lookup below
-            "proof_text": c.get("proof_text"),
-            "proof_url": c.get("proof_url"),
-            "created_at": c.get("created_at"),
-            "task": t,
-        })
+    # Join with users to get username
+    def _f():
+        return sb.table(T_COMP).select("*, user:users(username)").eq("status", "pending").order("created_at", desc=True).limit(200).execute()
     
-    # Batch fetch usernames for these proofs
-    if out:
-        uids = list({o["user_id"] for o in out if o.get("user_id")})
-        if uids:
-            try:
-                ur = await sb.from_(T_USERS).select("user_id, username").in_("user_id", uids).execute()
-                u_map = {u["user_id"]: u["username"] for u in (ur.data or [])}
-                for o in out:
-                    o["username"] = u_map.get(o["user_id"])
-            except Exception:
-                pass
-
-    return web.json_response({"ok": True, "proofs": out})
+    r = await sb_exec(_f)
+    data = r.data or []
+    for item in data:
+        user_obj = item.pop("user", {}) or {}
+        item["username"] = user_obj.get("username")
+    return web.json_response({"ok": True, "proofs": data})
 
 async def api_admin_proof_decision(req: web.Request):
     admin = await require_admin(req)
@@ -5096,17 +5040,19 @@ async def track_any_callback(cq: CallbackQuery):
 @dp.message()
 async def fallback_handler(m: Message):
     uid = int(m.from_user.id)
+    txt = str(m.text or m.caption or "").strip()
+    if not txt:
+        return # Ignore empty messages
+    
     # First, let's see if this user has a withdrawal awaiting review
     try:
         # Search by both possible columns
+        log.info("fallback_handler: check withdrawal review for uid=%s", uid)
         r = await sb.from_(T_WD).select("*").or_(f"user_id.eq.{uid},tg_user_id.eq.{uid}").eq("status", "awaiting_review").order("created_at", desc=True).limit(1).execute()
         
         if r.data:
             wd = r.data[0]
-            txt = str(m.text or m.caption or "").strip()
-            
-            if not txt:
-                return # Ignore empty messages
+            log.info("fallback_handler: found awaiting_review withdrawal ID=%s for uid=%s", wd.get("id"), uid)
             
             # AI Check
             ok, reason = await check_review_ai(txt)
@@ -5151,6 +5097,8 @@ async def fallback_handler(m: Message):
             return
     except Exception as e:
         log.exception(f"Error in review fallback handler: {e}")
+        # If we are here, something went wrong during lookup or AI check.
+        # Let's see if we should still try to provide a fallback or if we already replied.
 
     # Default fallback tracking
     try:
