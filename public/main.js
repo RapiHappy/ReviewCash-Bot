@@ -2971,14 +2971,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (!state.isMainAdmin) return;
     try {
       tgHaptic("impact");
-      const current = state.config && state.config.feature_commission_disabled ? false : true;
+      const current = !!(state.config && state.config.commission_enabled);
       const next = !current;
+      
       const res = await apiPost("/api/admin/config/toggle_commission", { enabled: next });
       if (res && res.ok) {
         tgHaptic("success");
-        tgAlert(res.commission_enabled ? "✅ Комиссия ВКЛЮЧЕНА (20%)" : "❌ Комиссия ВЫКЛЮЧЕНА (0%)");
-        await checkAdmin(); // Refresh status (this will also update the UI)
-        await syncAll();    // Refresh prices
+        // Update local state immediately for better UI experience
+        if (!state.config) state.config = {};
+        state.config.commission_enabled = next;
+        
+        tgAlert(next ? "✅ Комиссия ВКЛЮЧЕНА (20%)" : "❌ Комиссия ВЫКЛЮЧЕНА (0%)");
+        await checkAdmin(); // Full refresh
       } else {
         throw new Error(res.error || "Ошибка");
       }
@@ -3388,7 +3392,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           state.config = Object.assign({}, state.config || {}, { stars_payments_enabled: !!res.features.stars_payments_enabled });
         }
         if (res.features && Object.prototype.hasOwnProperty.call(res.features, "commission_enabled")) {
-          state.config = Object.assign({}, state.config || {}, { feature_commission_disabled: !res.features.commission_enabled });
+          const en = !!res.features.commission_enabled;
+          if (!state.config) state.config = {};
+          state.config.commission_enabled = en;
         }
         renderAdminBadge();
         applyStarsUiState();
@@ -3400,9 +3406,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           actw.style.display = state.isMainAdmin ? "flex" : "none";
           const statusEl = $("admin-comm-status");
           if (statusEl) {
-             const en = res.features ? res.features.commission_enabled : true;
+             const en = (state.config && state.config.commission_enabled !== undefined) ? state.config.commission_enabled : true;
              statusEl.textContent = en ? "ВКЛ" : "ВЫКЛ";
-             statusEl.style.color = en ? "var(--accent-green, #22c55e)" : "var(--accent-red, #ef4444)";
+             statusEl.style.color = en ? "#22c55e" : "#ef4444";
           }
         }
       } else {

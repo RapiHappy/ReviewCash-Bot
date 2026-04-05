@@ -3511,6 +3511,7 @@ async def api_withdraw_create(req: web.Request):
 
         wd = await sb_insert(T_WD, {
             "user_id": uid,
+            "tg_user_id": uid,
             "amount_rub": amount,
             "details": details,
             "status": "awaiting_review",
