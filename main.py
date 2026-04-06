@@ -4405,30 +4405,29 @@ async def api_admin_proof_decision(req: web.Request):
 
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
-    # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
-    # Join with users to get username
-    def _f():
-        return sb.table(T_WD).select("*, users!user_id(username)").neq("status", "awaiting_review").order("id", desc=True).limit(300).execute()
-    
-    r = await sb_exec(_f)
-    if r.error:
-        log.error("api_admin_withdraw_list failed: %s", r.error)
-        # Fallback: try without the join if the join is ambiguous or failing
-        r = await sb_exec(lambda: sb.table(T_WD).select("*").neq("status", "awaiting_review").order("id", desc=True).limit(300).execute())
-    
-    data = r.data or []
-    for item in data:
-        # With users!user_id, the key is 'users'
-        user_obj = item.pop("users", {}) or {}
-        if isinstance(user_obj, list) and user_obj:
-            user_obj = user_obj[0]
-        if isinstance(user_obj, dict):
-            item["username"] = user_obj.get("username")
+    # 1. Simple fetch without join first to guarantee it works
+    try:
+        def _f():
+            # Use 'created_at' which is known to exist from api_withdraw_list (line 3611)
+            return sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+        r = await sb_exec(_f)
         
-        # Prefer username from join, fallback to column in withdrawals table
-        item["username"] = user_obj.get("username") if isinstance(user_obj, dict) else item.get("username")
+        if r.error:
+            # If still error, try without order just in case
+            log.error("Withdrawals fetch error: %s", r.error)
+            r = await sb_exec(lambda: sb.table(T_WD).select("*").limit(300).execute())
+            
+        data = r.data or []
+        # Fallback names: if username is missing in the row, we show ID
+        for item in data:
+            if not item.get("username"):
+                item["username"] = f"User {item.get('user_id') or item.get('tg_user_id')}"
+                
+        return web.json_response({"ok": True, "withdrawals": data})
         
-    return web.json_response({"ok": True, "withdrawals": data})
+    except Exception as e:
+        log.exception("CRITICAL: api_admin_withdraw_list crash: %s", e)
+        return web.json_response({"ok": False, "error": f"Ошибка БД: {str(e)}"}, status=500)
 
 async def api_admin_withdraw_decision(req: web.Request):
     await require_admin(req)
