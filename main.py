@@ -4608,7 +4608,7 @@ async def api_admin_user_suspicious(req: web.Request):
     
     # 1. Multi-accounting detector
     def _f():
-        return sb.table(T_DEV).select("tg_user_id, device_hash").order("created_at", desc=True).limit(3000).execute()
+        return sb.table(T_DEV).select("tg_user_id, device_hash").order("last_seen_at", desc=True).limit(3000).execute()
     r = await sb_exec(_f)
     data = r.data or []
     
