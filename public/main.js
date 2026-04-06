@@ -3456,30 +3456,36 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   };
 
   window.switchAdminTab = async function (tab) {
-    qsa(".admin-tab").forEach(el => el.classList.remove("active"));
-    const t = $("at-" + tab);
-    if (t) t.classList.add("active");
+    try {
+      qsa(".admin-tab").forEach(el => el.classList.remove("active"));
+      const t = $("at-" + tab);
+      if (t) t.classList.add("active");
 
-    const avp = $("admin-view-proofs");
-    const avw = $("admin-view-withdrawals");
-    const avt = $("admin-view-tbank");
-    const avts = $("admin-view-tasks");
-    const avu = $("admin-view-users");
-    if (avp) avp.classList.toggle("hidden", tab !== "proofs");
-    if (avw) avw.classList.toggle("hidden", tab !== "withdrawals");
-    if (avt) avt.classList.toggle("hidden", tab !== "tbank");
-    if (avts) avts.classList.toggle("hidden", tab !== "tasks");
-    if (avu) avu.classList.toggle("hidden", tab !== "users");
+      const avp = $("admin-view-proofs");
+      const avw = $("admin-view-withdrawals");
+      const avt = $("admin-view-tbank");
+      const avts = $("admin-view-tasks");
+      const avu = $("admin-view-users");
+      
+      if (avp) avp.classList.toggle("hidden", tab !== "proofs");
+      if (avw) avw.classList.toggle("hidden", tab !== "withdrawals");
+      if (avt) avt.classList.toggle("hidden", tab !== "tbank");
+      if (avts) avts.classList.toggle("hidden", tab !== "tasks");
+      if (avu) avu.classList.toggle("hidden", tab !== "users");
 
-    if (tab === "proofs") await loadAdminProofs();
-    if (tab === "withdrawals") await loadAdminWithdrawals();
-    if (tab === "tbank") await loadAdminTbank();
-    if (tab === "tasks") await loadAdminTasks();
-    if (tab === "users") {
-      const resContainer = $("admin-user-search-results");
-      if (resContainer) resContainer.innerHTML = "";
-      const inp = $("admin-search-input");
-      if (inp) inp.value = "";
+      if (tab === "proofs") await loadAdminProofs();
+      if (tab === "withdrawals") await loadAdminWithdrawals();
+      if (tab === "tbank") await loadAdminTbank();
+      if (tab === "tasks") await loadAdminTasks();
+      if (tab === "users") {
+        const resContainer = $("admin-user-search-results");
+        if (resContainer) resContainer.innerHTML = "";
+        const inp = $("admin-search-input");
+        if (inp) inp.value = "";
+      }
+    } catch (e) {
+      console.error("switchAdminTab error:", e);
+      tgAlert(String(e.message || e), "error", "Админка");
     }
   };
 

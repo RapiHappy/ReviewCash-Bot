@@ -4408,13 +4408,13 @@ async def api_admin_withdraw_list(req: web.Request):
     # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
     # Join with users to get username
     def _f():
-        return sb.table(T_WD).select("*, user:users(username)").not_.eq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+        return sb.table(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
     
     r = await sb_exec(_f)
     if r.error:
         log.error("api_admin_withdraw_list failed: %s", r.error)
         # Fallback: try without the join if the join is ambiguous or failing
-        r = await sb_exec(lambda: sb.table(T_WD).select("*").not_.eq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
+        r = await sb_exec(lambda: sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
     
     data = r.data or []
     for item in data:
