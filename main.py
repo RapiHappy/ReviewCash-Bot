@@ -4407,14 +4407,14 @@ async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
     # 1. Simple fetch without join first to guarantee it works
     try:
-        def _f():
-            # Use 'created_at' which is known to exist from api_withdraw_list (line 3611)
-            return sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
-        r = await sb_exec(_f)
-        
-        if r.error:
+        try:
+            def _f():
+                # Use 'created_at' which is known to exist from api_withdraw_list (line 3611)
+                return sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+            r = await sb_exec(_f)
+        except Exception as e:
             # If still error, try without order just in case
-            log.error("Withdrawals fetch error: %s", r.error)
+            log.error("Withdrawals fetch with order failed, trying fallback: %s", e)
             r = await sb_exec(lambda: sb.table(T_WD).select("*").limit(300).execute())
             
         data = r.data or []
@@ -5184,9 +5184,6 @@ async def fallback_handler(m: Message):
             return sb.table(T_WD).select("*").or_(f"user_id.eq.{uid},tg_user_id.eq.{uid}").eq("status", "awaiting_review").order("created_at", desc=True).limit(1).execute()
         
         r = await sb_exec(_f)
-        if r.error:
-            log.error("fallback_handler withdrawal lookup error: %s", r.error)
-            return
 
         if r.data:
             wd = r.data[0]
