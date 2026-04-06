@@ -761,7 +761,7 @@ function tgAlert(msg, kind = "info", title = "") {
     try {
       if (id === "m-create") {
         updateTopUi();
-        recalc();
+        setToMinPrice();
         scheduleTgCheck();
       }
       if (id === "m-admin") {
@@ -2713,11 +2713,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       inp.addEventListener("input", scheduleTgCheck);
       inp.addEventListener("blur", scheduleTgCheck);
     }
-    if (sel) sel.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
+    if (sel) sel.addEventListener("change", () => { setToMinPrice(); scheduleTgCheck(); });
 
     // Also recheck when TG subtype changes (doesn't change chat, but keeps status visible)
     const sub = $("t-tg-subtype");
-    if (sub) sub.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
+    if (sub) sub.addEventListener("change", () => { setToMinPrice(); scheduleTgCheck(); });
     const retention = $("t-retention-extra");
     if (retention) retention.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
     const reviewMode = $("t-review-mode");
@@ -2769,6 +2769,26 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     wrap.classList.toggle("hidden");
     syncTaskCommentUi(currentCreateType());
   };
+
+  function setToMinPrice() {
+    const type = currentCreateType();
+    let minReward = 100;
+    if (type === "tg") {
+       const sid = currentTgSubtype();
+       const st = TG_TASK_TYPES.find(x => x.id === sid);
+       minReward = st ? st.reward : 5;
+    } else if (type === "ya") {
+       minReward = 84; // Cost 100
+    } else if (type === "gm") {
+       minReward = 59; // Cost 70
+    } else if (type === "dg") {
+       minReward = 15; // To match index.html "from 15"
+    }
+    const priceInput = $("t-price-per-unit");
+    if (priceInput) priceInput.value = minReward;
+    recalc();
+  }
+  window.setToMinPrice = setToMinPrice;
 
   function recalc() {
     const type = currentCreateType();
