@@ -4408,21 +4408,22 @@ async def api_admin_withdraw_list(req: web.Request):
     # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
     # Join with users to get username
     def _f():
-        return sb.table(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+        return sb.table(T_WD).select("*, users!user_id(username)").neq("status", "awaiting_review").order("id", desc=True).limit(300).execute()
     
     r = await sb_exec(_f)
     if r.error:
         log.error("api_admin_withdraw_list failed: %s", r.error)
         # Fallback: try without the join if the join is ambiguous or failing
-        r = await sb_exec(lambda: sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
+        r = await sb_exec(lambda: sb.table(T_WD).select("*").neq("status", "awaiting_review").order("id", desc=True).limit(300).execute())
     
     data = r.data or []
     for item in data:
-        user_obj = item.pop("user", {}) or {}
-        # If join failed or returned list, safely get username. 
-        # If user_obj is a list (one-to-many), take first item.
+        # With users!user_id, the key is 'users'
+        user_obj = item.pop("users", {}) or {}
         if isinstance(user_obj, list) and user_obj:
             user_obj = user_obj[0]
+        if isinstance(user_obj, dict):
+            item["username"] = user_obj.get("username")
         
         # Prefer username from join, fallback to column in withdrawals table
         item["username"] = user_obj.get("username") if isinstance(user_obj, dict) else item.get("username")
