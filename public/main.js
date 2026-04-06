@@ -3464,15 +3464,23 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const avw = $("admin-view-withdrawals");
     const avt = $("admin-view-tbank");
     const avts = $("admin-view-tasks");
+    const avu = $("admin-view-users");
     if (avp) avp.classList.toggle("hidden", tab !== "proofs");
     if (avw) avw.classList.toggle("hidden", tab !== "withdrawals");
     if (avt) avt.classList.toggle("hidden", tab !== "tbank");
     if (avts) avts.classList.toggle("hidden", tab !== "tasks");
+    if (avu) avu.classList.toggle("hidden", tab !== "users");
 
     if (tab === "proofs") await loadAdminProofs();
     if (tab === "withdrawals") await loadAdminWithdrawals();
     if (tab === "tbank") await loadAdminTbank();
     if (tab === "tasks") await loadAdminTasks();
+    if (tab === "users") {
+      const resContainer = $("admin-user-search-results");
+      if (resContainer) resContainer.innerHTML = "";
+      const inp = $("admin-search-input");
+      if (inp) inp.value = "";
+    }
   };
 
   function adminCard(html) {
@@ -3853,6 +3861,104 @@ async function loadAdminTasks() {
       box.appendChild(c);
     });
   }
+
+  window.loadAdminUserSearch = async function () {
+    const query = ($("admin-search-input") && $("admin-search-input").value || "").trim();
+    if (!query) return tgAlert("Введите ID или ник");
+
+    const box = $("admin-user-search-results");
+    if (box) box.innerHTML = `<div class="card" style="padding:14px; opacity:0.7;">Поиск...</div>`;
+
+    try {
+      const res = await apiPost("/api/admin/user/search", { query });
+      if (!res || !res.ok) throw new Error(res && res.error ? res.error : "Пользователь не найден");
+      
+      const u = res.user;
+      const stats = u.stats || {};
+      const bal = u.balance || {};
+      
+      const linkedHtml = (u.linked_accounts && u.linked_accounts.length) 
+        ? u.linked_accounts.map(la => `<div style="font-size:12px; color:var(--accent-cyan); cursor:pointer; text-decoration:underline; margin-bottom:4px;" onclick="document.getElementById('admin-search-input').value='${la.user_id}'; loadAdminUserSearch();">${la.user_id} (@${la.username || '—'})</div>`).join("")
+        : '<div style="font-size:12px; opacity:0.5;">Нет связей</div>';
+
+      const html = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+          <div>
+            <div style="font-weight:900; font-size:18px;">${safeText(u.first_name || 'User')} ${u.is_banned ? '🚫' : '✅'}</div>
+            <div style="font-size:13px; color:var(--text-dim);">${u.id} (@${safeText(u.username || '—')})</div>
+          </div>
+          ${u.vip_until ? '<div style="background:linear-gradient(135deg, #ffd700, #ffaa00); color:#000; padding:2px 8px; border-radius:8px; font-size:10px; font-weight:900;">👑 VIP</div>' : ''}
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:15px;">
+          <div class="card" style="margin:0; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">
+            <div style="font-size:11px; opacity:0.6; margin-bottom:4px; letter-spacing:0.5px;">БАЛАНС</div>
+            <div style="font-weight:900; color:var(--accent-cyan); font-size:16px;">${fmtRub(bal.rub || 0)}</div>
+            <div style="font-size:11px; opacity:0.8;">${bal.stars || 0} ⭐ • ${bal.xp || 0} XP</div>
+          </div>
+          <div class="card" style="margin:0; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">
+            <div style="font-size:11px; opacity:0.6; margin-bottom:4px; letter-spacing:0.5px;">ЗАДАНИЯ</div>
+            <div style="font-weight:900; font-size:16px;">${stats.paid_tasks || 0} / ${stats.total_tasks || 0}</div>
+            <div style="font-size:11px; color:${stats.rejection_rate > 20 ? '#ef4444' : 'var(--text-dim)'};">Отказов: ${stats.rejected_tasks || 0} (${stats.rejection_rate || 0}%)</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;">
+          <div class="card" style="margin:0; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">
+            <div style="font-size:11px; opacity:0.6; margin-bottom:4px; letter-spacing:0.5px;">ВЫВОДЫ</div>
+            <div style="font-weight:900; font-size:16px;">${fmtRub(stats.sum_withdrawals || 0)}</div>
+            <div style="font-size:11px; opacity:0.8;">Кол-во выплат: ${stats.paid_withdrawals || 0}</div>
+          </div>
+          <div class="card" style="margin:0; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">
+            <div style="font-size:11px; opacity:0.6; margin-bottom:4px; letter-spacing:0.5px;">СВЯЗИ (УСТРОЙСТВО)</div>
+            <div style="max-height:80px; overflow-y:auto; padding-right:4px;">${linkedHtml}</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:15px;">
+          <button class="btn btn-secondary" style="font-size:11px; padding:8px; justify-content:center;" onclick="adminBanQuick(${u.id}, 'global', 1)">🚫 Бан 1д</button>
+          <button class="btn btn-secondary" style="font-size:11px; padding:8px; justify-content:center;" onclick="adminUnbanQuick(${u.id}, 'global')">✅ Разбан</button>
+          <button class="btn btn-secondary" style="font-size:11px; padding:8px; justify-content:center;" onclick="adminFineQuick(${u.id})">💸 Штраф</button>
+        </div>
+      `;
+      if (box) box.innerHTML = adminCard(html).outerHTML;
+    } catch (e) {
+      if (box) box.innerHTML = `<div class="card" style="padding:14px; color:#ef4444; border:1px solid rgba(239, 68, 68, 0.2);">${safeText(e.message || e)}</div>`;
+    }
+  };
+
+  window.loadAdminSuspicious = async function () {
+    const box = $("admin-user-search-results");
+    if (box) box.innerHTML = `<div class="card" style="padding:14px; opacity:0.7;">Загрузка подозрительных...</div>`;
+
+    try {
+      const res = await apiPost("/api/admin/user/suspicious", {});
+      if (!res || !res.ok) throw new Error(res && res.error ? res.error : "Ошибка");
+      
+      const users = res.users || [];
+      if (!users.length) {
+         if (box) box.innerHTML = `<div class="card" style="padding:14px; opacity:0.7; text-align:center;">Подозрительных аккаунтов не найдено 👍</div>`;
+         return;
+      }
+      
+      box.innerHTML = "";
+      users.forEach(u => {
+        const c = adminCard(`
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeText(u.first_name || 'User')} ${u.is_banned ? '🚫' : ''}</div>
+              <div style="font-size:12px; color:var(--text-dim);">${u.user_id} (@${safeText(u.username || '—')})</div>
+              <div style="font-size:11px; color:#f59e0b; margin-top:4px; font-weight:700;">⚠️ ${safeText(u.reason || 'Мультиаккаунт')}</div>
+            </div>
+            <button class="btn btn-secondary" style="padding:8px 12px; font-size:12px; margin-left:10px;" onclick="document.getElementById('admin-search-input').value='${u.user_id}'; loadAdminUserSearch();">Профиль</button>
+          </div>
+        `);
+        box.appendChild(c);
+      });
+    } catch (e) {
+      if (box) box.innerHTML = `<div class="card" style="padding:14px; color:#ef4444; border:1px solid rgba(239, 68, 68, 0.2);">${safeText(e.message || e)}</div>`;
+    }
+  };
 
 // --- Telegram initData fallback (when tg.initData is empty) ---
 function extractTgWebAppDataFromUrl() {

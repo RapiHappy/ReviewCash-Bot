@@ -4408,13 +4408,13 @@ async def api_admin_withdraw_list(req: web.Request):
     # Only show 'pending', 'paid', 'rejected' but NOT 'awaiting_review'
     # Join with users to get username
     def _f():
-        return sb.table(T_WD).select("*, user:users(username)").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
+        return sb.table(T_WD).select("*, user:users(username)").not_.eq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute()
     
     r = await sb_exec(_f)
     if r.error:
         log.error("api_admin_withdraw_list failed: %s", r.error)
         # Fallback: try without the join if the join is ambiguous or failing
-        r = await sb_exec(lambda: sb.table(T_WD).select("*").neq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
+        r = await sb_exec(lambda: sb.table(T_WD).select("*").not_.eq("status", "awaiting_review").order("created_at", desc=True).limit(300).execute())
     
     data = r.data or []
     for item in data:
@@ -4516,6 +4516,125 @@ async def api_admin_tbank_decision(req: web.Request):
         await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
 
     return web.json_response({"ok": True})
+
+
+async def api_admin_user_search(req: web.Request):
+    admin = await require_admin(req)
+    body = await safe_json(req)
+    query = str(body.get("query") or "").strip()
+    if not query:
+        return web.json_response({"ok": False, "error": "Введите ID или ник"}, status=400)
+
+    uid = await resolve_user_id(query)
+    if not uid:
+        return web.json_response({"ok": False, "error": f"Пользователь '{query}' не найден"}, status=404)
+
+    # 1. User basic info
+    u_res = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+    user = u_res.data[0] if u_res.data else {"user_id": uid}
+    
+    # 2. Balance
+    bal = await get_balance(uid)
+    
+    # 3. Task Stats
+    def _comp():
+        return sb.table(T_COMP).select("status").eq("user_id", uid).execute()
+    c_res = await sb_exec(_comp)
+    comps = c_res.data or []
+    total_tasks = len(comps)
+    paid_tasks = len([c for c in comps if c.get("status") == "paid"])
+    rejected_tasks = len([c for c in comps if c.get("status") == "rejected"])
+    rejection_rate = round((rejected_tasks / total_tasks * 100), 1) if total_tasks > 0 else 0
+    
+    # 4. Withdrawal Stats
+    def _wd():
+        return sb.table(T_WD).select("amount_rub, status, created_at").eq("user_id", uid).execute()
+    w_res = await sb_exec(_wd)
+    wds = w_res.data or []
+    total_withdrawals = len(wds)
+    paid_withdrawals = len([w for w in wds if w.get("status") == "paid"])
+    sum_withdrawals = sum([float(w.get("amount_rub") or 0) for w in wds if w.get("status") == "paid"])
+    
+    # 5. Multi-account check (Linked Accounts)
+    def _dev():
+        return sb.table(T_DEV).select("device_hash").eq("tg_user_id", uid).execute()
+    d_res = await sb_exec(_dev)
+    hashes = [d.get("device_hash") for d in (d_res.data or []) if d.get("device_hash")]
+    
+    linked_users = []
+    if hashes:
+        def _linked():
+            return sb.table(T_DEV).select("tg_user_id").in_("device_hash", hashes).execute()
+        l_res = await sb_exec(_linked)
+        l_uids = {row["tg_user_id"] for row in (l_res.data or []) if row.get("tg_user_id") != uid}
+        if l_uids:
+            def _lu():
+                return sb.table(T_USERS).select("user_id, username").in_("user_id", list(l_uids)).execute()
+            lu_res = await sb_exec(_lu)
+            linked_users = lu_res.data or []
+
+    # 6. VIP
+    vip_until = await get_vip_until(uid)
+
+    return web.json_response({
+        "ok": True,
+        "user": {
+            "id": uid,
+            "username": user.get("username"),
+            "first_name": user.get("first_name"),
+            "is_banned": bool(user.get("is_banned")),
+            "vip_until": vip_until.isoformat() if vip_until else None,
+            "balance": {
+                "rub": bal.get("rub_balance", 0),
+                "stars": bal.get("stars_balance", 0),
+                "xp": bal.get("xp", 0),
+                "level": bal.get("level", 1)
+            },
+            "stats": {
+                "total_tasks": total_tasks,
+                "paid_tasks": paid_tasks,
+                "rejected_tasks": rejected_tasks,
+                "rejection_rate": rejection_rate,
+                "total_withdrawals": total_withdrawals,
+                "paid_withdrawals": paid_withdrawals,
+                "sum_withdrawals": sum_withdrawals
+            },
+            "linked_accounts": linked_users
+        }
+    })
+
+async def api_admin_user_suspicious(req: web.Request):
+    await require_admin(req)
+    
+    # 1. Multi-accounting detector
+    def _f():
+        return sb.table(T_DEV).select("tg_user_id, device_hash").order("created_at", desc=True).limit(3000).execute()
+    r = await sb_exec(_f)
+    data = r.data or []
+    
+    hash_map = {}
+    for row in data:
+        uid = row.get("tg_user_id")
+        h = row.get("device_hash")
+        if not h or not uid: continue
+        if h not in hash_map: hash_map[h] = set()
+        hash_map[h].add(uid)
+    
+    suspicious = []
+    multi_uids = set()
+    for h, uids in hash_map.items():
+        if len(uids) > 1:
+            multi_uids.update(uids)
+            
+    if multi_uids:
+        def _u():
+            return sb.table(T_USERS).select("user_id, username, first_name, is_banned").in_("user_id", list(multi_uids)).limit(300).execute()
+        ur = await sb_exec(_u)
+        for u in (ur.data or []):
+            u["reason"] = "Мультиаккаунт (одно устройство)"
+            suspicious.append(u)
+            
+    return web.json_response({"ok": True, "users": suspicious})
 
 # =========================================================
 # Telegram handlers
@@ -5366,6 +5485,8 @@ def make_app():
     app.router.add_post("/api/admin/task/list", api_admin_task_list)
     app.router.add_post("/api/admin/task/delete", api_admin_task_delete)
     app.router.add_post("/api/admin/task/tg_audit", api_admin_tg_audit)
+    app.router.add_post("/api/admin/user/search", api_admin_user_search)
+    app.router.add_post("/api/admin/user/suspicious", api_admin_user_suspicious)
 
     return app
 
