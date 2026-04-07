@@ -1,4 +1,5 @@
 import os
+import math
 import json
 import re
 import hmac
@@ -2987,13 +2988,22 @@ async def api_task_create(req: web.Request):
     
     if ttype == "tg":
         sub_type = str(body.get("tg_subtype") or "").strip()
-        min_tg_cost = 5
-        if sub_type == "sub_24h": min_tg_cost = 6
-        elif sub_type == "sub_48h": min_tg_cost = 7
-        elif sub_type == "sub_72h": min_tg_cost = 8
+        extra_days = max(0, int(body.get("retention_extra_days") or 0))
         
+        # Base reward mapping (matching main.js TG_TASK_TYPES)
+        base_reward = 5
+        if sub_type in ("sub_24h", "join_group_24h"): base_reward = 6
+        elif sub_type in ("sub_48h", "join_group_48h"): base_reward = 7
+        elif sub_type in ("sub_72h", "join_group_72h"): base_reward = 8
+        
+        min_reward = base_reward + (extra_days * 1)
+        # Base cost (reward + 20% commission) + extra retention cost (3 RUB/day)
+        min_tg_cost = (base_reward + math.floor(base_reward * 0.2)) + (extra_days * 3)
+        
+        if price_per_unit < min_reward:
+             return json_error(400, f"Минимальная награда для этого типа (+{extra_days} дн. удержания) — {min_reward} ₽", code="MIN_REWARD_TG")
         if total_cost_per_unit < min_tg_cost:
-            return json_error(400, f"Минимальная цена за создание ({sub_type}) — {min_tg_cost} ₽", code="MIN_COST_TG")
+             return json_error(400, f"Минимальная стоимость задания (+{extra_days} дн. удержания) — {min_tg_cost} ₽", code="MIN_COST_TG")
 
     # Base cost and total
     total_cost_rub = (price_per_unit + comm_per_unit + vip_per_unit) * qty_total
@@ -3171,24 +3181,6 @@ async def api_task_create(req: web.Request):
         "cost_rub": total_cost_rub,
     })
 
-    ins = await sb_insert(T_TASKS, row)
-    task = (ins.data or [row])[0]
-
-    await stats_add("revenue_rub", total_cost)
-    pay_text = f"{int(charged_amount)}⭐" if charged_currency == "star" else f"{charged_amount:.2f}₽"
-    await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда: {reward_rub}₽ × {qty_total}\n• Оплата: {pay_text}")
-    try:
-        asyncio.create_task(broadcast_new_task(task))
-    except Exception:
-        pass
-
-    return web.json_response({
-        "ok": True,
-        "task": task,
-        "charged_amount": int(charged_amount) if charged_currency == "star" else charged_amount,
-        "charged_currency": charged_currency,
-        "cost_rub": total_cost,
-    })
 
 
 # -------------------------

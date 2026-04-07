@@ -2777,7 +2777,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (type === "tg") {
        const sid = currentTgSubtype();
        const st = TG_TASK_TYPES.find(x => x.id === sid);
-       minReward = st ? st.reward : 5;
+       const extraDays = currentRetentionExtraDays();
+       minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
     } else if (type === "ya") {
        minReward = 100; // Reward for performer
     } else if (type === "gm") {
@@ -2802,7 +2803,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        minQty = 10;
        const sid = currentTgSubtype();
        const st = TG_TASK_TYPES.find(x => x.id === sid);
-       minReward = st ? st.reward : 5;
+       const extraDays = currentRetentionExtraDays();
+       minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
     } else if (type === "ya") {
        minReward = 100;
     } else if (type === "gm") {
@@ -2866,7 +2868,13 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     const minWarn = $("t-min-budget-warning");
-    const minCostTarget = (type === "ya" ? 100 : (type === "gm" ? 70 : (type === "tg" ? 5 : 15)));
+    let minCostTarget = (type === "ya" ? 100 : (type === "gm" ? 70 : (type === "tg" ? 5 : 15)));
+    if (type === "tg") {
+       const sid = currentTgSubtype();
+       const st = TG_TASK_TYPES.find(x => x.id === sid);
+       const extraDays = currentRetentionExtraDays();
+       minCostTarget = (st ? st.cost : 6) + (extraDays * TG_EXTRA_RETENTION_COST_PER_DAY);
+    }
     const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + Math.floor(pricePerUnit * (isVipOnly ? 0.1 : 0));
     
     if (minWarn) {
@@ -2910,7 +2918,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (type === "tg") {
       const sid = currentTgSubtype();
       const st = TG_TASK_TYPES.find(x => x.id === sid);
-      minReward = st ? st.reward : 5;
+      const extraDays = currentRetentionExtraDays();
+      minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
     } else if (type === "ya") {
       minReward = 100;
     } else if (type === "gm") {
