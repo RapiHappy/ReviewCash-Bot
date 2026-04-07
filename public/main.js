@@ -1525,6 +1525,7 @@ async function syncAll() {
     `,
 
     tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
+    dg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="1.5" y="1.5" x="1.5" width="61" height="61" rx="17" fill="#202536" stroke="rgba(255,255,255,.10)" stroke-width="1.5"/><circle cx="32" cy="32" r="20" fill="#26bf26"/><path d="M22 22h20v20h-20z" fill="none" stroke="#fff" stroke-width="4"/><path d="M22 32h20M32 22v20" stroke="#fff" stroke-width="2"/></svg>`,
   };
 
 function brandIconHtml(taskOrType, sizePx = 38) {
@@ -2778,11 +2779,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 100; // Match label (min 100)
+       minReward = 84; // Reward for 100 total cost
     } else if (type === "gm") {
-       minReward = 70; // Match label (min 70)
+       minReward = 59; // Reward for 70 total cost
     } else if (type === "dg") {
-       minReward = 15; // To match index.html "from 15"
+       minReward = 10; // Reward for 15 total cost
     }
     const priceInput = $("t-price-per-unit");
     if (priceInput) priceInput.value = minReward;
@@ -2803,11 +2804,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 100;
+       minReward = 84;
     } else if (type === "gm") {
-       minReward = 70;
+       minReward = 59;
     } else if (type === "dg") {
-       minReward = 15;
+       minReward = 10;
     }
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
@@ -2832,11 +2833,13 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     // Base cost
     const baseTotal = pricePerUnit * qty;
     
-    // Commission (20%) - round down
-    const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
+    // Commission (20%) - round down per unit to match backend
+    const commPerUnit = commissionEnabled ? Math.floor(pricePerUnit * 0.20) : 0;
+    const commTotal = commPerUnit * qty;
     
-    // VIP surcharge (10%) - round down
-    const vipTotal = isVipOnly ? Math.floor(baseTotal * 0.10) : 0;
+    // VIP surcharge (10%) - round down per unit to match backend
+    const vipPerUnit = isVipOnly ? Math.floor(pricePerUnit * 0.10) : 0;
+    const vipTotal = vipPerUnit * qty;
     
     // Top visibility (250 RUB)
     const topPrice = isTopWanted() ? 250 : 0;
@@ -2909,11 +2912,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const st = TG_TASK_TYPES.find(x => x.id === sid);
       minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-      minReward = 100;
+      minReward = 84;
     } else if (type === "gm") {
-      minReward = 70;
+      minReward = 59;
     } else if (type === "dg") {
-      minReward = 15;
+      minReward = 10;
     }
 
     if (pricePerUnit < minReward) {

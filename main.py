@@ -2953,8 +2953,8 @@ async def api_task_create(req: web.Request):
     
     # NEW PRICING LOGIC
     price_per_unit = float(body.get("price_per_unit") or 100)
-    if price_per_unit < 100:
-        return json_error(400, "Минимальная цена за 1 шт. — 100 ₽", code="MIN_PRICE")
+    if price_per_unit < 5:
+        return json_error(400, "Минимальная цена за 1 шт. — 5 ₽", code="MIN_PRICE")
     
     qty_total = int(body.get("qty_total") or 1)
     if qty_total <= 0:
@@ -2982,6 +2982,8 @@ async def api_task_create(req: web.Request):
         return json_error(400, "Минимальная цена за создание (Яндекс) — 100 ₽", code="MIN_COST_YA")
     if ttype == "gm" and total_cost_per_unit < 70:
         return json_error(400, "Минимальная цена за создание (Google) — 70 ₽", code="MIN_COST_GM")
+    if ttype == "dg" and total_cost_per_unit < 15:
+        return json_error(400, "Минимальная цена за создание (2GIS) — 15 ₽", code="MIN_COST_DG")
     
     if ttype == "tg":
         sub_type = str(body.get("tg_subtype") or "").strip()
@@ -3012,7 +3014,7 @@ async def api_task_create(req: web.Request):
     if pay_currency in ("stars", "xtr"):
         pay_currency = "star"
 
-    if ttype not in ("tg", "ya", "gm"):
+    if ttype not in ("tg", "ya", "gm", "dg"):
         raise web.HTTPBadRequest(text="Bad type")
     if not title:
         raise web.HTTPBadRequest(text="Missing title")
@@ -3034,7 +3036,7 @@ async def api_task_create(req: web.Request):
     if not isinstance(custom_review_texts, list):
         custom_review_texts = [custom_review_texts]
     custom_review_texts = [str(x).strip() for x in custom_review_texts if str(x).strip()]
-    if ttype not in ("ya", "gm"):
+    if ttype not in ("ya", "gm", "dg"):
         custom_review_mode = "none"
         custom_review_texts = []
     if custom_review_mode == "single" and custom_review_texts:
