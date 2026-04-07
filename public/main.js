@@ -2778,9 +2778,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 84; // Cost 100
+       minReward = 100; // Match label (min 100)
     } else if (type === "gm") {
-       minReward = 59; // Cost 70
+       minReward = 70; // Match label (min 70)
     } else if (type === "dg") {
        minReward = 15; // To match index.html "from 15"
     }
@@ -2803,11 +2803,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 84; // Cost 100
+       minReward = 100;
     } else if (type === "gm") {
-       minReward = 59; // Cost 70
+       minReward = 70;
     } else if (type === "dg") {
-       minReward = 10;
+       minReward = 15;
     }
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
@@ -2903,7 +2903,22 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       }
     }
 
-    if (pricePerUnit < 100) return tgAlert("Минимальная цена за 1 шт. — 100 ₽.");
+    let minReward = 100;
+    if (type === "tg") {
+      const sid = currentTgSubtype();
+      const st = TG_TASK_TYPES.find(x => x.id === sid);
+      minReward = st ? st.reward : 5;
+    } else if (type === "ya") {
+      minReward = 100;
+    } else if (type === "gm") {
+      minReward = 70;
+    } else if (type === "dg") {
+      minReward = 15;
+    }
+
+    if (pricePerUnit < minReward) {
+      return tgAlert(`Минимальная цена для этого типа задания: ${minReward} ₽.`, "error", "Цена слишком мала");
+    }
 
     // TG validation
     let tgChat = null;
