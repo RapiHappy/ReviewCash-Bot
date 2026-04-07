@@ -2779,11 +2779,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 84; // Reward for 100 total cost
+       minReward = 100; // Reward for performer
     } else if (type === "gm") {
-       minReward = 59; // Reward for 70 total cost
+       minReward = 70; // Reward for performer
     } else if (type === "dg") {
-       minReward = 10; // Reward for 15 total cost
+       minReward = 15; // Reward for performer
     }
     const priceInput = $("t-price-per-unit");
     if (priceInput) priceInput.value = minReward;
@@ -2804,11 +2804,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-       minReward = 84;
+       minReward = 100;
     } else if (type === "gm") {
-       minReward = 59;
+       minReward = 70;
     } else if (type === "dg") {
-       minReward = 10;
+       minReward = 15;
     }
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
@@ -2912,11 +2912,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const st = TG_TASK_TYPES.find(x => x.id === sid);
       minReward = st ? st.reward : 5;
     } else if (type === "ya") {
-      minReward = 84;
+      minReward = 100;
     } else if (type === "gm") {
-      minReward = 59;
+      minReward = 70;
     } else if (type === "dg") {
-      minReward = 10;
+      minReward = 15;
     }
 
     if (pricePerUnit < minReward) {

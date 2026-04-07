@@ -2978,12 +2978,12 @@ async def api_task_create(req: web.Request):
     total_cost_per_unit = price_per_unit + comm_per_unit + vip_per_unit
     
     # Validation of TOTAL COST (Advertiser Price)
-    if ttype == "ya" and total_cost_per_unit < 100:
-        return json_error(400, "Минимальная цена за создание (Яндекс) — 100 ₽", code="MIN_COST_YA")
-    if ttype == "gm" and total_cost_per_unit < 70:
-        return json_error(400, "Минимальная цена за создание (Google) — 70 ₽", code="MIN_COST_GM")
-    if ttype == "dg" and total_cost_per_unit < 15:
-        return json_error(400, "Минимальная цена за создание (2GIS) — 15 ₽", code="MIN_COST_DG")
+    if ttype == "ya" and price_per_unit < 100:
+        return json_error(400, "Минимальная награда исполнителю (Яндекс) — 100 ₽", code="MIN_REWARD_YA")
+    if ttype == "gm" and price_per_unit < 70:
+        return json_error(400, "Минимальная награда исполнителю (Google) — 70 ₽", code="MIN_REWARD_GM")
+    if ttype == "dg" and price_per_unit < 15:
+        return json_error(400, "Минимальная награда исполнителю (2GIS) — 15 ₽", code="MIN_REWARD_DG")
     
     if ttype == "tg":
         sub_type = str(body.get("tg_subtype") or "").strip()
