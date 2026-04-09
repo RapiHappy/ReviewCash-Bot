@@ -2758,7 +2758,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const input = $("t-text");
     if (!wrap || !label || !input) return;
     const isReview = (type === "ya" || type === "gm" || type === "dg");
-    label.textContent = isReview ? "Комментарий к отзыву / доп. информация" : "Текст задания / комментарий";
+    label.textContent = isReview ? "Комментарий к заданию / доп. информация" : "Текст задания / комментарий";
     input.placeholder = isReview
       ? "Например: что важно упомянуть в отзыве, какие нюансы учесть, что нельзя писать."
       : "Например: выполните задание и отправьте отчёт.";
