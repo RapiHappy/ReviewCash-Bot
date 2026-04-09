@@ -4635,6 +4635,7 @@ async def api_admin_user_suspicious(req: web.Request):
 # =========================================================
 async def send_main_welcome(message: Message, uid: int):
     kb = InlineKeyboardBuilder()
+    news_channel = get_required_sub_channel()
 
     miniapp_url = MINIAPP_URL
     if not miniapp_url:
@@ -4647,11 +4648,19 @@ async def send_main_welcome(message: Message, uid: int):
 
     if miniapp_url:
         kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
+        
+    if news_channel:
+        kb.button(text="📢 Канал с новостями", url=f"https://t.me/{news_channel.lstrip('@')}")
 
     muted = await is_notify_muted(uid)
 
     kb.button(text=("🔕 Уведомления: ВЫКЛ" if muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
     kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
+
+    news_line = ""
+    if news_channel:
+        safe_news = news_channel.replace("_", "\\_")
+        news_line = f"📢 *Новости проекта:* {safe_news} — свежие задания и анонсы\.\n"
 
     text = (
         "✨ *Добро пожаловать в ReviewCash\!*\n\n"
@@ -4669,8 +4678,9 @@ async def send_main_welcome(message: Message, uid: int):
         f"капает *{REF_BONUS_RUB:.0f}₽* на баланс\.\n"
         "Ссылку для приглашения найдёшь во вкладке *Друзья* 👥\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📊 *Наши выплаты:* @ReviewCashPayout — здесь реальные отзывы и подтверждения выплат пользователям\.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 *Наши выплаты:* @ReviewCashPayout — подтверждения выплат пользователям\.\n"
+        f"{news_line}"
+        "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🤖 *TG\-задания* проверяются автоматически\n"
         "📝 *Отзывы* проверяет модератор \(обычно до 24ч\)\n\n"
         "Жми кнопку ниже и начинай зарабатывать\! 👇"
@@ -4701,7 +4711,7 @@ async def cmd_start(message: Message):
         channel_name = (sub_chat or 'канал').lstrip('@')
         await message.answer(
             f"👋 Привет\! Рады тебя видеть\!\n\n"
-            f"📢 Для начала подпишись на наш канал *@{channel_name}*\n\n"
+            f"📢 Для начала подпишись на наш канал с новостями *@{channel_name}*\n\n"
             f"Там мы публикуем:\n"
             f"💎 Новые возможности заработка\n"
             f"📊 Обновления сервиса\n"
@@ -4745,7 +4755,7 @@ async def handle_gender_pick(message: Message):
     if not sub_ok:
         channel_name = (sub_chat or 'канал').lstrip('@')
         await message.answer(
-            f"📢 Сначала подпишись на *@{channel_name}*\n\n"
+            f"📢 Сначала подпишись на наш канал с новостями *@{channel_name}*\n\n"
             f"После подписки нажми кнопку проверки 👇",
             reply_markup=required_subscribe_kb(),
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -4769,7 +4779,7 @@ async def cb_check_required_sub(cq: CallbackQuery):
         try:
             channel_name = (sub_chat or 'канал').lstrip('@')
             await cq.message.answer(
-                f"🔍 Подписка на *@{channel_name}* пока не обнаружена\n\n"
+                f"🔍 Подписка на канал с новостями *@{channel_name}* пока не обнаружена\n\n"
                 f"Убедись, что ты:\n"
                 f"1️⃣ Перешёл по кнопке *«Подписаться»*\n"
                 f"2️⃣ Нажал *«Вступить»* в канале\n\n"
