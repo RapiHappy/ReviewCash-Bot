@@ -2774,20 +2774,28 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   function setToMinPrice() {
     const type = currentCreateType();
     let minReward = 100;
+    let minQty = 1;
+
     if (type === "tg") {
+       minQty = 10;
        const sid = currentTgSubtype();
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        const extraDays = currentRetentionExtraDays();
        minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
     } else if (type === "ya") {
-       minReward = 100; // Reward for performer
+       minReward = 100;
     } else if (type === "gm") {
-       minReward = 70; // Reward for performer
+       minReward = 70;
     } else if (type === "dg") {
-       minReward = 15; // Reward for performer
+       minReward = 15;
     }
+
+    const qtyInput = $("t-qty");
+    if (qtyInput) qtyInput.value = minQty;
+
     const priceInput = $("t-price-per-unit");
     if (priceInput) priceInput.value = minReward;
+
     recalc();
   }
   window.setToMinPrice = setToMinPrice;
@@ -2814,7 +2822,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
-    // Enforce min qty in the UI input for TG tasks
+    // Enforce min qty in the UI input only for TG tasks if it's too low
     if (type === "tg" && qtyInput && Number(qtyInput.value || 0) < minQty) {
       qtyInput.value = minQty;
     }
@@ -2844,8 +2852,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const commPerUnit = commissionEnabled ? Math.floor(pricePerUnit * 0.20) : 0;
     const commTotal = commPerUnit * qty;
     
-    // VIP surcharge (10%) - round down per unit to match backend
-    const vipPerUnit = isVipOnly ? Math.floor(pricePerUnit * 0.10) : 0;
+    // VIP surcharge (10%) - use Math.ceil to ensure it's at least 1 rub if enabled
+    const vipPerUnit = isVipOnly ? Math.ceil(pricePerUnit * 0.10) : 0;
     const vipTotal = vipPerUnit * qty;
     
     // Top visibility (250 RUB)
@@ -2880,7 +2888,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const extraDays = currentRetentionExtraDays();
        minCostTarget = (st ? st.cost : 6) + (extraDays * TG_EXTRA_RETENTION_COST_PER_DAY);
     }
-    const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + Math.floor(pricePerUnit * (isVipOnly ? 0.1 : 0));
+    const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + (isVipOnly ? Math.ceil(pricePerUnit * 0.1) : 0);
     
     if (minWarn) {
       minWarn.style.display = actualCostPer < minCostTarget ? "block" : "none";
@@ -2889,7 +2897,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
     const priceLabel = $("t-price-label");
     if (priceLabel) {
-      priceLabel.textContent = `Цена за 1 шт. (мин ${minCostTarget} ₽)`;
+      // Show min performer reward to match the input field
+      priceLabel.textContent = `Цена за 1 шт. (мин ${minReward} ₽)`;
     }
 
     syncReviewTextsHint();

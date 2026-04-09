@@ -2972,9 +2972,9 @@ async def api_task_create(req: web.Request):
     comm_rate = 0.20 if comm_enabled else 0.0
     comm_per_unit = math.floor(price_per_unit * comm_rate)
     
-    # VIP rate (10%)
+    # VIP rate (10%) - use math.ceil to match frontend and ensure at least 1 rub
     vip_rate = 0.10 if vip_for_all else 0.0
-    vip_per_unit = math.floor(price_per_unit * vip_rate)
+    vip_per_unit = math.ceil(price_per_unit * vip_rate)
     
     total_cost_per_unit = price_per_unit + comm_per_unit + vip_per_unit
     
@@ -2987,7 +2987,7 @@ async def api_task_create(req: web.Request):
         return json_error(400, "Минимальная награда исполнителю (2GIS) — 15 ₽", code="MIN_REWARD_DG")
     
     if ttype == "tg":
-        sub_type = str(body.get("tg_subtype") or "").strip()
+        sub_type = str(body.get("sub_type") or "").strip()
         extra_days = max(0, int(body.get("retention_extra_days") or 0))
         
         # Base reward mapping (matching main.js TG_TASK_TYPES)
