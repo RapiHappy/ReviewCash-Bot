@@ -2997,8 +2997,8 @@ async def api_task_create(req: web.Request):
         elif sub_type in ("sub_72h", "join_group_72h"): base_reward = 8
         
         min_reward = base_reward + (extra_days * 1)
-        # Base cost (reward + 20% commission) + extra retention cost (3 RUB/day)
-        min_tg_cost = (base_reward + math.floor(base_reward * 0.2)) + (extra_days * 3)
+        # Base cost (reward + commission if enabled) + extra retention cost
+        min_tg_cost = (base_reward + (math.floor(base_reward * 0.2) if comm_enabled else 0)) + (extra_days * 3)
         
         if price_per_unit < min_reward:
              return json_error(400, f"Минимальная награда для этого типа (+{extra_days} дн. удержания) — {min_reward} ₽", code="MIN_REWARD_TG")
