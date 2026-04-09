@@ -4071,7 +4071,7 @@ async def api_admin_stars_pay_set(req: web.Request):
     enabled = await set_stars_payments_enabled(enabled, int(admin["id"]))
     status_text = "включена" if enabled else "выключена"
     try:
-        await notify_admin(f"⭐ Оплата Stars {status_text} главным админом {int(admin['id'])}")
+        await notify_admin(f"⭐ Оплата Stars {status_text} главным админом")
     except Exception:
         pass
 
