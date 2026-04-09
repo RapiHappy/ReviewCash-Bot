@@ -5152,6 +5152,14 @@ async def cb_adminstats_refresh(cq: CallbackQuery):
             pass
     await cq.answer("Статистика обновлена")
 
+@dp.callback_query(F.data == "start_again")
+async def start_again_handler(cq: CallbackQuery):
+    await cq.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
+    ]])
+    await cq.message.answer("Привет! Открывай Mini App кнопкой ниже:", reply_markup=kb)
+
 # Stars платежи: Telegram требует PreCheckout ok=True
 @dp.callback_query()
 async def track_any_callback(cq: CallbackQuery):
@@ -5253,13 +5261,7 @@ async def fallback_handler(m: Message):
     except Exception:
         pass
 
-@dp.callback_query(F.data == "start_again")
-async def start_again_handler(cq: CallbackQuery):
-    await cq.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=MINIAPP_URL))
-    ]])
-    await cq.message.answer("Привет! Открывай Mini App кнопкой ниже:", reply_markup=kb)
+# start_again_handler moved above catch-all @dp.callback_query() — see above
 
 @dp.poll_answer()
 async def track_poll_answer(answer):

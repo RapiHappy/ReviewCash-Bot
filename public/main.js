@@ -1525,7 +1525,7 @@ async function syncAll() {
     `,
 
     tg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#27A7E7"/><path d="M49.8 17.6 14.7 31.1c-2.4 1-2.3 2.4-.4 3l9 2.8 3.4 10.6c.4 1.2.2 1.7 1.4 1.7.9 0 1.3-.4 1.8-.9l4.4-4.3 9.1 6.7c1.7.9 2.9.4 3.3-1.6l6-28.2c.6-2.4-.9-3.5-2.9-2.6zM25.8 36.2l20.8-13.1c1-.6 1.8-.3 1.1.4L30.6 39.1l-.7 7.6-4.1-10.5z" fill="#fff"/></svg>`,
-    dg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect width="1.5" y="1.5" x="1.5" width="61" height="61" rx="17" fill="#202536" stroke="rgba(255,255,255,.10)" stroke-width="1.5"/><circle cx="32" cy="32" r="20" fill="#26bf26"/><path d="M22 22h20v20h-20z" fill="none" stroke="#fff" stroke-width="4"/><path d="M22 32h20M32 22v20" stroke="#fff" stroke-width="2"/></svg>`,
+    dg: `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="dgBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#34c759"/><stop offset="100%" stop-color="#1fa344"/></linearGradient><linearGradient id="dgGloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(255,255,255,.22)"/><stop offset="100%" stop-color="rgba(255,255,255,0)"/></linearGradient></defs><rect x="1.5" y="1.5" width="61" height="61" rx="17" fill="url(#dgBg)" stroke="rgba(255,255,255,.15)" stroke-width="1.5"/><rect x="4.5" y="4.5" width="55" height="24" rx="12" fill="url(#dgGloss)" opacity=".45"/><text x="32" y="40" text-anchor="middle" font-family="Inter,system-ui,Arial" font-size="24" font-weight="900" fill="#fff" style="text-shadow:0 2px 4px rgba(0,0,0,.18)">2GIS</text></svg>`,
   };
 
 function brandIconHtml(taskOrType, sizePx = 38) {
@@ -2720,7 +2720,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const sub = $("t-tg-subtype");
     if (sub) sub.addEventListener("change", () => { setToMinPrice(); scheduleTgCheck(); });
     const retention = $("t-retention-extra");
-    if (retention) retention.addEventListener("change", () => { recalc(); scheduleTgCheck(); });
+    if (retention) retention.addEventListener("change", () => { setToMinPrice(); scheduleTgCheck(); });
     const reviewMode = $("t-review-mode");
     if (reviewMode) reviewMode.addEventListener("change", () => { syncReviewTextsHint(); recalc(); });
     const reviewVariants = $("t-review-variants");
@@ -2814,6 +2814,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     }
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
+    // Enforce min qty in the UI input for TG tasks
+    if (type === "tg" && qtyInput && Number(qtyInput.value || 0) < minQty) {
+      qtyInput.value = minQty;
+    }
+    if (qtyInput) qtyInput.min = String(minQty);
     const priceInput = $("t-price-per-unit");
     const pricePerUnit = clamp(Number((priceInput && priceInput.value) || minReward), minReward, 1000000);
     
@@ -2960,17 +2965,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const payload = {
       type,
       qty_total: qty,
-      reward_rub: pricePerUnit,
+      price_per_unit: pricePerUnit,
       target_url: (type === "tg") ? tgTargetToUrl(target) : normalizeUrl(target),
       title: (type === 'tg' ? 'Активность TG' : (type === 'ya' ? 'Отзыв Яндекс' : (type === 'gm' ? 'Отзыв Google' : 'Отзыв 2GIS'))),
-      currency: cur,
-      vip_only: isVipOnly,
-      tg_subtype: subType,
+      pay_currency: cur,
+      vip_for_all: isVipOnly,
+      sub_type: subType,
       tg_chat: tgChat,
       check_type: checkType,
       retention_days: type === 'tg' ? tgTotalRetentionDays(subType) : 0,
-      gender: ($("t-gender") && $("t-gender").value) || "any",
-      comment: txt,
+      retention_extra_days: type === 'tg' ? currentRetentionExtraDays() : 0,
+      target_gender: ($("t-gender") && $("t-gender").value) || "any",
+      instructions: txt,
       custom_review_mode: reviewMode,
       custom_review_texts: reviewTexts,
       want_top: isTopWanted(),
