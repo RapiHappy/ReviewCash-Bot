@@ -2891,8 +2891,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + (isVipOnly ? Math.ceil(pricePerUnit * 0.1) : 0);
     
     if (minWarn) {
-      minWarn.style.display = actualCostPer < minCostTarget ? "block" : "none";
-      minWarn.textContent = `Минимальная цена задания — ${minCostTarget} ₽.`;
+      minWarn.style.display = pricePerUnit < minReward ? "block" : "none";
+      minWarn.textContent = `Минимальная цена задания — ${minReward} ₽.`;
     }
 
     const priceLabel = $("t-price-label");
