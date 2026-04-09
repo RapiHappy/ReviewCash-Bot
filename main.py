@@ -391,6 +391,10 @@ def strip_meta_tags(text: str) -> str:
             continue
         if re.match(r"(?im)^\s*(RETENTION_DAYS|CUSTOM_REVIEW_MODE|CUSTOM_REVIEW_TEXTS)\s*:", line):
             continue
+        if re.match(r"(?im)^\s*VIP_ONLY\s*:", line):
+            continue
+        if re.match(r"(?im)^\s*TARGET_GENDER\s*:", line):
+            continue
         out.append(line)
     return "\n".join(out).strip()
 
@@ -2791,6 +2795,8 @@ async def api_sync(req: web.Request):
             t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
             t["retention_days"] = get_retention_days(t)
             t["custom_review_mode"] = get_custom_review_mode(t)
+            # Extract vip_only flag BEFORE stripping meta tags
+            t["vip_only"] = "VIP_ONLY: 1" in str(t.get("instructions") or "")
             if int(t.get("owner_id") or 0) == uid:
                 t["custom_review_texts"] = get_review_texts(t)
             else:
@@ -2798,6 +2804,9 @@ async def api_sync(req: web.Request):
                 assigned_text = pick_review_text_for_task(t, slot_index)
                 t["custom_review_texts"] = [assigned_text] if assigned_text else []
                 t["assigned_review_text"] = assigned_text
+            # Strip internal meta tags from instructions before sending to frontend
+            if t.get("instructions"):
+                t["instructions"] = strip_meta_tags(t["instructions"])
     if is_vip:
         # VIP sorting: Top active first, then highest reward first
         tasks.sort(key=lambda x: (
@@ -5541,7 +5550,6 @@ async def on_cleanup(app: web.Application):
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
 async def api_admin_task_list(req: web.Request):
-    await require_admin(req)
     user = await require_admin(req)
 
     sel = await sb_select(T_TASKS, match={"status": "active"}, order="created_at", desc=True, limit=200)
