@@ -596,6 +596,7 @@ function tgAlert(msg, kind = "info", title = "") {
     const msg = (data && (data.error || data.message)) ? (data.error || data.message) : (text || (res.status + " " + res.statusText));
     const err = new Error(String(msg || "Ошибка"));
     err.status = res.status; err.path = path; err.raw = `${res.status}: ${msg} (POST ${path})`;
+    if (data && data.code) err.code = data.code;
     throw err;
   }
   return data;
@@ -1103,11 +1104,16 @@ function tgAlert(msg, kind = "info", title = "") {
     } catch (e) {
       if (e && e.code === "MAINTENANCE") {
         document.body.innerHTML = `
-          <div style="position:fixed; inset:0; z-index:999999; background:#09090b; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px;">
-            <div style="font-size:64px; margin-bottom:20px;">🛠️</div>
-            <h2 style="font-size:28px; font-weight:900; margin-bottom:10px;">Технические работы</h2>
-            <p style="color:#94a3b8; max-width:400px; line-height:1.5;">Приложение временно не работает из-за технического обслуживания. Пожалуйста, зайдите позже.</p>
-            <button onclick="window.location.reload()" style="margin-top:30px; padding:14px 28px; border-radius:14px; background:#00e5ff; color:#000; font-weight:800; border:none; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.3);">Проверить снова</button>
+          <div style="position:fixed; inset:0; z-index:999999; background: radial-gradient(circle at center, #1b1e2b 0%, #09090b 100%); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; font-family: system-ui, -apple-system, sans-serif;">
+            <div style="width: 120px; height: 120px; background: rgba(255,255,255,0.03); border-radius: 50%; display:flex; align-items:center; justify-content:center; margin-bottom: 24px; box-shadow: inset 0 0 20px rgba(255,255,255,0.05), 0 0 40px rgba(0, 229, 255, 0.1);">
+              <div style="font-size:54px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.4)); animation: rcFloat 3s ease-in-out infinite;">🛠️</div>
+            </div>
+            <style>
+              @keyframes rcFloat { 0% { transform: translateY(0); } 50% { transform: translateY(-8px); } 100% { transform: translateY(0); } }
+            </style>
+            <h2 style="font-size:32px; font-weight:900; margin-bottom:12px; background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Технические работы</h2>
+            <p style="color:#94a3b8; max-width:400px; font-size: 16px; line-height:1.6; margin-bottom: 32px;">Сервис сейчас находится на обслуживании и временно недоступен. Мы делаем его лучше, пожалуйста, вернитесь немного позже!</p>
+            <button onclick="window.location.reload()" style="cursor: pointer; padding:16px 36px; border-radius:18px; background: linear-gradient(135deg, #00e5ff 0%, #0077ff 100%); color:#fff; font-size: 16px; font-weight:800; border:none; box-shadow: 0 8px 24px rgba(0, 162, 255, 0.3); transition: transform 0.2s, box-shadow 0.2s;">Проверить статус</button>
           </div>
         `;
       }
@@ -4183,11 +4189,16 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   } catch (e) {
     if (e && e.code === "MAINTENANCE") {
       document.body.innerHTML = `
-        <div style="position:fixed; inset:0; z-index:999999; background:#09090b; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px;">
-          <div style="font-size:64px; margin-bottom:20px;">🛠️</div>
-          <h2 style="font-size:28px; font-weight:900; margin-bottom:10px;">Технические работы</h2>
-          <p style="color:#94a3b8; max-width:400px; line-height:1.5;">Приложение временно не работает из-за технического обслуживания. Пожалуйста, зайдите позже.</p>
-          <button onclick="window.location.reload()" style="margin-top:30px; padding:14px 28px; border-radius:14px; background:#00e5ff; color:#000; font-weight:800; border:none; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.3);">Проверить снова</button>
+        <div style="position:fixed; inset:0; z-index:999999; background: radial-gradient(circle at center, #1b1e2b 0%, #09090b 100%); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; font-family: system-ui, -apple-system, sans-serif;">
+          <div style="width: 120px; height: 120px; background: rgba(255,255,255,0.03); border-radius: 50%; display:flex; align-items:center; justify-content:center; margin-bottom: 24px; box-shadow: inset 0 0 20px rgba(255,255,255,0.05), 0 0 40px rgba(0, 229, 255, 0.1);">
+            <div style="font-size:54px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.4)); animation: rcFloat 3s ease-in-out infinite;">🛠️</div>
+          </div>
+          <style>
+            @keyframes rcFloat { 0% { transform: translateY(0); } 50% { transform: translateY(-8px); } 100% { transform: translateY(0); } }
+          </style>
+          <h2 style="font-size:32px; font-weight:900; margin-bottom:12px; background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Технические работы</h2>
+          <p style="color:#94a3b8; max-width:400px; font-size: 16px; line-height:1.6; margin-bottom: 32px;">Сервис сейчас находится на обслуживании и временно недоступен. Мы делаем его лучше, пожалуйста, вернитесь немного позже!</p>
+          <button onclick="window.location.reload()" style="cursor: pointer; padding:16px 36px; border-radius:18px; background: linear-gradient(135deg, #00e5ff 0%, #0077ff 100%); color:#fff; font-size: 16px; font-weight:800; border:none; box-shadow: 0 8px 24px rgba(0, 162, 255, 0.3); transition: transform 0.2s, box-shadow 0.2s;">Проверить статус</button>
         </div>
       `;
       return;

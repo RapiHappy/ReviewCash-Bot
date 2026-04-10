@@ -612,16 +612,17 @@ class MaintenanceMiddleware(BaseMiddleware):
             if user:
                 is_adm = (user.id in ADMIN_IDS) or (user.id == MAIN_ADMIN_ID)
                 if not is_adm:
-                    if isinstance(event, CallbackQuery):
+                    if getattr(event, "callback_query", None):
                         try:
-                            await event.answer("Бот на техобслуживании. Приходите позже.", show_alert=True)
+                            await event.callback_query.answer("Бот на техобслуживании. Приходите позже.", show_alert=True)
                         except Exception: pass
                         return
-                    if isinstance(event, Message):
+                    if getattr(event, "message", None):
                         try:
-                            await event.answer("⚠️ Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте зайти позже.")
+                            await event.message.answer("⚠️ Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте зайти позже.")
                         except Exception: pass
                         return
+                    return
         return await handler(event, data)
 
 
