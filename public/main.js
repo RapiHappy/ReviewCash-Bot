@@ -1101,7 +1101,16 @@ function tgAlert(msg, kind = "info", title = "") {
         if (forceRender || state.currentSection === "tasks") renderTasks();
       }
     } catch (e) {
-      // silent
+      if (e && e.code === "MAINTENANCE") {
+        document.body.innerHTML = `
+          <div style="position:fixed; inset:0; z-index:999999; background:#09090b; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px;">
+            <div style="font-size:64px; margin-bottom:20px;">🛠️</div>
+            <h2 style="font-size:28px; font-weight:900; margin-bottom:10px;">Технические работы</h2>
+            <p style="color:#94a3b8; max-width:400px; line-height:1.5;">Приложение временно не работает из-за технического обслуживания. Пожалуйста, зайдите позже.</p>
+            <button onclick="window.location.reload()" style="margin-top:30px; padding:14px 28px; border-radius:14px; background:#00e5ff; color:#000; font-weight:800; border:none; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.3);">Проверить снова</button>
+          </div>
+        `;
+      }
     } finally {
       state._syncTasksInFlight = false;
       setTasksRefreshSpinning(false);
@@ -4168,10 +4177,21 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     setPlatformFilter(state.platformFilter);
     recalc();
 
-      try {
+  try {
     await syncAllWithRetry();
     startTasksAutoRefresh();
   } catch (e) {
+    if (e && e.code === "MAINTENANCE") {
+      document.body.innerHTML = `
+        <div style="position:fixed; inset:0; z-index:999999; background:#09090b; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px;">
+          <div style="font-size:64px; margin-bottom:20px;">🛠️</div>
+          <h2 style="font-size:28px; font-weight:900; margin-bottom:10px;">Технические работы</h2>
+          <p style="color:#94a3b8; max-width:400px; line-height:1.5;">Приложение временно не работает из-за технического обслуживания. Пожалуйста, зайдите позже.</p>
+          <button onclick="window.location.reload()" style="margin-top:30px; padding:14px 28px; border-radius:14px; background:#00e5ff; color:#000; font-weight:800; border:none; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.3);">Проверить снова</button>
+        </div>
+      `;
+      return;
+    }
     tgAlert(String(e.message || e), "error", "Подключение");
   } finally {
     hideLoader();
