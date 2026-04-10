@@ -3491,13 +3491,13 @@ async def api_withdraw_create(req: web.Request):
     if wb:
         return web.json_response({"ok": False, "error": f"Выводы временно заблокированы до {wb.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
 
-    # Withdrawals only on Saturday/Sunday (Moscow time). Admins can bypass.
+    # Withdrawals only on Mon/Wed/Sat/Sun (Moscow time). Admins can bypass.
     try:
         if int(uid) not in ADMIN_IDS:
             msk = timezone(timedelta(hours=3))
             wd = datetime.now(msk).weekday()  # Mon=0 ... Sun=6
-            if wd not in (5, 6):
-                return web.json_response({"ok": False, "error": "Заявки на вывод принимаются только в субботу и воскресенье."}, status=400)
+            if wd not in (0, 2, 5, 6):
+                return web.json_response({"ok": False, "error": "Заявки на вывод принимаются только по понедельникам, средам, субботам и воскресеньям."}, status=400)
     except Exception:
         pass
 
@@ -4835,6 +4835,7 @@ async def cb_help(cq: CallbackQuery):
         "  ❌ Отписался раньше → деньги не придут\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "💸 *ВЫВОД ДЕНЕГ:*\n\n"
+        "  🗓 Дни: *ПН, СР, СБ, ВС*\n"
         "  💳 На карту или телефон\n"
         "  📊 Минимум для вывода: *300₽*\n"
         "  ⏳ Обработка: до 24 часов\n\n"
