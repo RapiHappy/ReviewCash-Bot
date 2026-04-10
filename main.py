@@ -134,7 +134,7 @@ async def no_cache_mw(request: web.Request, handler):
         pass
     return resp
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.types import (
     Message,
     CallbackQuery,
@@ -604,6 +604,25 @@ async def setup_menu_button(bot: Bot):
         log.info("[WEBAPP] MenuButton WebApp set.")
     except Exception as e:
         log.warning(f"[WEBAPP] MenuButton setup failed: {e}")
+
+class MaintenanceMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if await is_maintenance_mode():
+            user = data.get("event_from_user")
+            if user:
+                is_adm = (user.id in ADMIN_IDS) or (user.id == MAIN_ADMIN_ID)
+                if not is_adm:
+                    if isinstance(event, CallbackQuery):
+                        try:
+                            await event.answer("Бот на техобслуживании. Приходите позже.", show_alert=True)
+                        except Exception: pass
+                        return
+                    if isinstance(event, Message):
+                        try:
+                            await event.answer("⚠️ Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте зайти позже.")
+                        except Exception: pass
+                        return
+        return await handler(event, data)
 
 
 @dp.message(F.text == "/app")
@@ -1566,6 +1585,40 @@ async def touch_limit(uid: int, key: str):
 MUTE_NOTIFY_KEY = "mute_notify"
 FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
 COMMISSION_DISABLED_KEY = "feature_commission_disabled"
+MAINTENANCE_MODE_KEY = "feature_maintenance_mode_on"
+
+async def is_maintenance_mode() -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return False
+    try:
+        r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": MAINTENANCE_MODE_KEY}, limit=1)
+        return bool(r.data)
+    except Exception:
+        return False
+
+async def set_maintenance_mode(on: bool) -> bool:
+    ff_uid = _feature_flags_user_id()
+    if ff_uid <= 0:
+        return bool(on)
+    try:
+        await sb_upsert(T_USERS, {"user_id": ff_uid}, on_conflict="user_id")
+    except Exception:
+        pass
+    if on:
+        await sb_upsert(
+            T_LIMITS,
+            {
+                "user_id": ff_uid,
+                "limit_key": MAINTENANCE_MODE_KEY,
+                "last_at": _now().isoformat(),
+            },
+            on_conflict="user_id,limit_key"
+        )
+    else:
+        await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": MAINTENANCE_MODE_KEY})
+    return bool(on)
+
 
 
 def _feature_flags_user_id() -> int:
@@ -2691,6 +2744,16 @@ async def api_sync(req: web.Request):
     if not ok:
         return web.json_response({"ok": False, "error": reason}, status=403)
 
+    # MAINTENANCE CHECK
+    if await is_maintenance_mode():
+        is_adm = (uid in ADMIN_IDS) or (uid == MAIN_ADMIN_ID)
+        if not is_adm:
+            return web.json_response({
+                "ok": False,
+                "error": "Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте позже.",
+                "code": "MAINTENANCE"
+            }, status=503)
+
     if urow.get("is_banned"):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
@@ -2848,13 +2911,16 @@ async def api_sync(req: web.Request):
         "session_token": session_token,
         "user": {
             "user_id": uid,
-            "username": user.get("username"),
-            "first_name": user.get("first_name"),
-            "last_name": user.get("last_name"),
-            "photo_url": user.get("photo_url"),
+            "username": urow.get("username") or (user.get("username") if user else None),
+            "first_name": (user.get("first_name") if user else None),
+            "last_name": (user.get("last_name") if user else None),
+            "photo_url": (user.get("photo_url") if user else None),
             "gender": user_gender,
             "is_vip": is_vip,
             "vip_until": vip_until_dt.isoformat() if vip_until_dt else None,
+            "is_admin": uid in ADMIN_IDS or uid == MAIN_ADMIN_ID,
+            "is_main_admin": uid == MAIN_ADMIN_ID,
+            "maintenance_mode": await is_maintenance_mode(),
         },
         "balance": bal,
         "tasks": tasks,
@@ -2883,6 +2949,13 @@ async def api_admin_toggle_commission(req: web.Request):
     enabled = bool(body.get("enabled", True))
     await set_commission_enabled(enabled)
     return web.json_response({"ok": True, "commission_enabled": enabled})
+
+async def api_admin_toggle_maintenance(req: web.Request):
+    await require_main_admin(req)
+    body = await safe_json(req)
+    on = bool(body.get("enabled", False))
+    await set_maintenance_mode(on)
+    return web.json_response({"ok": True, "maintenance_mode": on})
 
 # -------------------------
 # Proof upload (Supabase Storage)
@@ -4056,6 +4129,7 @@ async def api_admin_summary(req: web.Request):
         "features": {
             "stars_payments_enabled": await is_stars_payments_enabled(),
             "commission_enabled": await is_commission_enabled(),
+            "maintenance_enabled": await is_maintenance_mode(),
         },
         "counts": {
             "proofs": len(proofs.data or []),
@@ -5479,6 +5553,7 @@ def make_app():
 
     app.router.add_post("/api/vip/buy", api_vip_buy)
     app.router.add_post("/api/admin/config/toggle_commission", api_admin_toggle_commission)
+    app.router.add_post("/api/admin/config/toggle_maintenance", api_admin_toggle_maintenance)
 
     # optional crypto
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
@@ -5505,6 +5580,7 @@ def make_app():
 
 async def on_startup(app: web.Application):
     global TG_HOLD_WORKER_TASK
+    dp.update.outer_middleware(MaintenanceMiddleware())
     await setup_menu_button(bot)
     # diagnostics: confirm which bot token is running
     try:

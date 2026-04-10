@@ -3055,6 +3055,29 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
   window.adminToggleCommission = adminToggleCommission;
 
+  window.adminToggleMaintenance = async function () {
+    try {
+      tgHaptic("impact");
+      const current = !!(state.config && state.config.maintenance_enabled);
+      const next = !current;
+      
+      const res = await apiPost("/api/admin/config/toggle_maintenance", { enabled: next });
+      if (res && res.ok) {
+        tgHaptic("success");
+        if (!state.config) state.config = {};
+        state.config.maintenance_enabled = next;
+        
+        tgAlert(next ? "⚙️ Режим техобслуживания ВКЛЮЧЁН. Исполнители будут видеть сообщение о работах." : "✅ Режим техобслуживания ВЫКЛЮЧЕН. Бот доступен всем.");
+        await checkAdmin();
+      } else {
+        throw new Error(res.error || "Ошибка");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e));
+    }
+  };
+
   // --------------------
   // Tabs
   // --------------------
@@ -3458,6 +3481,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
           if (!state.config) state.config = {};
           state.config.commission_enabled = en;
         }
+        if (res.features && Object.prototype.hasOwnProperty.call(res.features, "maintenance_enabled")) {
+          const en = !!res.features.maintenance_enabled;
+          if (!state.config) state.config = {};
+          state.config.maintenance_enabled = en;
+        }
         renderAdminBadge();
         applyStarsUiState();
         const apc = $("admin-panel-card");
@@ -3471,6 +3499,17 @@ function brandIconHtml(taskOrType, sizePx = 38) {
              const en = (state.config && state.config.commission_enabled !== undefined) ? state.config.commission_enabled : true;
              statusEl.textContent = en ? "ВКЛ" : "ВЫКЛ";
              statusEl.style.color = en ? "#22c55e" : "#ef4444";
+          }
+        }
+        
+        const amtw = $("admin-maintenance-toggle-wrap");
+        if (amtw) {
+          amtw.style.display = state.isMainAdmin ? "block" : "none";
+          const statusEl = $("admin-maint-status");
+          if (statusEl) {
+            const en = !!(state.config && state.config.maintenance_enabled);
+            statusEl.textContent = en ? "ВКЛЮЧЕНО" : "ВЫКЛЮЧЕНО";
+            statusEl.style.color = en ? "#ef4444" : "#94a3b8";
           }
         }
       } else {

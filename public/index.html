@@ -618,6 +618,11 @@
           <div style="font-size:12px; font-weight:700; color:var(--accent-gold);">Комиссия 20%: <span id="admin-comm-status">ВКЛ</span></div>
           <button class="btn btn-sm btn-secondary" onclick="adminToggleCommission()">Переключить</button>
         </div>
+        <div id="admin-maintenance-toggle-wrap" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,204,0,0.15);">
+          <div style="font-size:12px; font-weight:700; color:#ff4d4f;">ТЕХОБСЛУЖИВАНИЕ: <span id="admin-maint-status">ВЫКЛ</span></div>
+          <div style="font-size:10px; color:var(--text-dim); margin-bottom:5px;">(Выключает бота для всех кроме Вас)</div>
+          <button class="btn btn-sm btn-danger" onclick="adminToggleMaintenance()">Переключить</button>
+        </div>
         <div class="menu-item" onclick="openAdminPanel()" style="margin:0; background:transparent; border:none; padding:5px;">
           <span style="color: var(--accent-gold);">🛡️ Панель администратора</span>
           <span id="admin-badge" style="background:var(--accent-gold); color:#000; padding:2px 8px; border-radius:10px; font-size:12px; font-weight:900; opacity:0;">0</span>
