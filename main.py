@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
 GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
+DG_ALLOWED_HOST = ("2gis.ru", "2gis.kz", "2gis.com", "go.2gis.com", "2gis.by")
 
 def _norm_url(raw: str) -> str:
     s = (raw or "").strip()
@@ -69,6 +70,11 @@ def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
                 return False, "", "Разрешены только ссылки Google Maps"
             if ("/maps" not in path) and (not host.startswith("maps.")):
                 return False, "", "Нужна ссылка именно на Google Maps (место/организация)"
+        elif ttype == "dg":
+            if "2gis" not in host and host != "go.2gis.com":
+                return False, "", "Ссылка не похожа на 2GIS. Нужна ссылка на 2GIS"
+            if not _host_allowed(host, DG_ALLOWED_HOST):
+                return False, "", "Разрешены только ссылки 2GIS"
         return True, url, ""
     except Exception:
         return False, "", "Некорректная ссылка"
@@ -2507,12 +2513,13 @@ async def _iter_user_ids(batch: int = 1000):
 
 async def broadcast_new_task(task: dict):
     try:
+        in_maintenance = await is_maintenance_mode()
         title = str(task.get('title') or task.get('platform') or 'Новое задание').strip()
         try:
             reward_i = int(float(task.get('reward_rub') or task.get('reward') or 0))
         except Exception:
             reward_i = 0
-        kind_map = {'tg': 'Telegram', 'ya': 'Яндекс', 'gm': 'Google'}
+        kind_map = {'tg': 'Telegram', 'ya': 'Яндекс', 'gm': 'Google', 'dg': '2GIS'}
         kind = kind_map.get(str(task.get('type') or '').lower(), 'ReviewCash')
         text_msg = (
             f"🆕 <b>Новое задание</b>\n\n"
@@ -2524,6 +2531,9 @@ async def broadcast_new_task(task: dict):
         kb.button(text='🚀 Открыть ReviewCash', web_app=WebAppInfo(url=get_miniapp_url()))
         markup = kb.as_markup()
         async for uid in _iter_user_ids():
+            if in_maintenance:
+                if uid not in ADMIN_IDS and uid != MAIN_ADMIN_ID:
+                    continue
             if await is_notify_muted(uid):
                 continue
             try:
@@ -3075,18 +3085,24 @@ async def api_task_create(req: web.Request):
         
         # Base reward mapping (matching main.js TG_TASK_TYPES)
         base_reward = 5
-        if sub_type in ("sub_24h", "join_group_24h"): base_reward = 6
-        elif sub_type in ("sub_48h", "join_group_48h"): base_reward = 7
-        elif sub_type in ("sub_72h", "join_group_72h"): base_reward = 8
+        base_min_cost = 6
+        if sub_type in ("sub_24h", "join_group_24h"): 
+             base_reward = 6
+             base_min_cost = 8
+        elif sub_type in ("sub_48h", "join_group_48h"): 
+             base_reward = 8
+             base_min_cost = 10
+        elif sub_type in ("sub_72h", "join_group_72h"): 
+             base_reward = 10
+             base_min_cost = 15
         
-        min_reward = base_reward + (extra_days * 1)
-        # Base cost (reward + commission if enabled) + extra retention cost
-        min_tg_cost = (base_reward + (math.floor(base_reward * 0.2) if comm_enabled else 0)) + (extra_days * 3)
+        min_reward = base_reward + (extra_days * 2)
+        min_tg_price_per_unit = base_min_cost + (extra_days * 5)
         
         if price_per_unit < min_reward:
              return json_error(400, f"Минимальная награда для этого типа (+{extra_days} дн. удержания) — {min_reward} ₽", code="MIN_REWARD_TG")
-        if total_cost_per_unit < min_tg_cost:
-             return json_error(400, f"Минимальная стоимость задания (+{extra_days} дн. удержания) — {min_tg_cost} ₽", code="MIN_COST_TG")
+        if price_per_unit < min_tg_price_per_unit:
+             return json_error(400, f"Минимальная стоимость задания (+{extra_days} дн. удержания) — {min_tg_price_per_unit} ₽", code="MIN_COST_TG")
 
     # Base cost and total
     total_cost_rub = (price_per_unit + comm_per_unit + vip_per_unit) * qty_total
