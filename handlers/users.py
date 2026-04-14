@@ -18,7 +18,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.filters import Command, CommandStart
 
-# router = Router()
+router = Router()
 # Temporary blankets, everything will be combined in Step 8
 @router.message(F.text == "/app")
 async def open_app_cmd(m: Message):
@@ -215,13 +215,13 @@ async def cb_help(cq: CallbackQuery):
         "  → Сначала нажми *«Перейти к выполнению»*\n\n"
         "*Когда придёт оплата?*\n"
         "  → TG — сразу после авто\-проверки\n"
-        "  → Отзывы — после модерации \(до 24ч\)\n\n"
+        r"  → Отзывы — после модерации \(до 24ч\)\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🚫 *ЗАПРЕЩЕНО:*\n\n"
         "  ❌ Фейковые скриншоты\n"
         "  ❌ Отзывы не со своего аккаунта\n"
-        "  ❌ Мульти\-аккаунты\n\n"
-        "За нарушения — *блокировка и штраф*\.\n\n"
+        r"  ❌ Мульти\-аккаунты\n\n"
+        r"За нарушения — *блокировка и штраф*\.\n\n"
         "Работай честно — и выплаты будут стабильными 💎",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
