@@ -1700,6 +1700,7 @@ async def on_cleanup(app: web.Application):
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
 
+app = make_app()
+
 if __name__ == "__main__":
-    app = make_app()
     web.run_app(app, host="0.0.0.0", port=PORT)
