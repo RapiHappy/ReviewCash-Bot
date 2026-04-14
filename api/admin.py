@@ -595,15 +595,7 @@ async def api_admin_tg_audit(req: web.Request):
         "problems": problems,
     })
 
-# Gunicorn entrypoint: expose 'app'
-# =========================================================
-app = make_app()
-app.on_startup.append(on_startup)
-app.on_cleanup.append(on_cleanup)
 
-if __name__ == "__main__":
-    web.run_app(app, host="0.0.0.0", port=PORT)
-WEBAPP_SESSION_SECRET = os.getenv("WEBAPP_SESSION_SECRET", "change-me-session-secret")
 
 async def api_admin_proof_decision(req: web.Request):
     admin = await require_admin(req)

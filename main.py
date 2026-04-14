@@ -1365,12 +1365,12 @@ async def send_main_welcome(message: Message, uid: int):
     news_line = ""
     if news_channel:
         safe_news = news_channel.replace("_", "\\_")
-        news_line = f"📢 *Новости проекта:* {safe_news} — свежие задания и анонсы\.\n"
+        news_line = fr"📢 *Новости проекта:* {safe_news} — свежие задания и анонсы\.\n"
 
     text = (
-        "✨ *Добро пожаловать в ReviewCash\!*\n\n"
+        r"✨ *Добро пожаловать в ReviewCash\!*\n\n"
         "Зарабатывай на простых заданиях: ✍️ отзывы, "
-        "📲 подписки, 👆 активности\.\n\n"
+        r"📲 подписки, 👆 активности\.\n\n"
         "⚡ *Как начать за 2 минуты:*\n\n"
         "1️⃣ Нажми *«Открыть приложение»* ниже\n"
         "2️⃣ Выбери задание из списка\n"
@@ -1378,17 +1378,17 @@ async def send_main_welcome(message: Message, uid: int):
         "4️⃣ Получи *деньги на баланс* 💰\n"
         "5️⃣ Выведи на карту или телефон\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎁 *Пригласи друга — получи {REF_BONUS_RUB:.0f}₽\!*\n"
+        fr"🎁 *Пригласи друга — получи {REF_BONUS_RUB:.0f}₽\!*\n"
         "Друг выполняет первое задание → тебе моментально "
-        f"капает *{REF_BONUS_RUB:.0f}₽* на баланс\.\n"
+        fr"капает *{REF_BONUS_RUB:.0f}₽* на баланс\.\n"
         "Ссылку для приглашения найдёшь во вкладке *Друзья* 👥\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📊 *Наши выплаты:* @ReviewCashPayout — подтверждения выплат пользователям\.\n"
+        r"📊 *Наши выплаты:* @ReviewCashPayout — подтверждения выплат пользователям\.\n"
         f"{news_line}"
         "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🤖 *TG\-задания* проверяются автоматически\n"
-        "📝 *Отзывы* проверяет модератор \(обычно до 24ч\)\n\n"
-        "Жми кнопку ниже и начинай зарабатывать\! 👇"
+        r"🤖 *TG\-задания* проверяются автоматически\n"
+        r"📝 *Отзывы* проверяет модератор \(обычно до 24ч\)\n\n"
+        r"Жми кнопку ниже и начинай зарабатывать\! 👇"
     )
     kb.adjust(1)
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN_V2)
@@ -1647,6 +1647,8 @@ def make_app():
     app.router.add_post("/api/admin/user/search", api_admin_user_search)
     app.router.add_post("/api/admin/user/suspicious", api_admin_user_suspicious)
 
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app
 
 async def on_startup(app: web.Application):
@@ -1697,3 +1699,7 @@ async def on_cleanup(app: web.Application):
 # -------------------------
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
+
+if __name__ == "__main__":
+    app = make_app()
+    web.run_app(app, host="0.0.0.0", port=PORT)
