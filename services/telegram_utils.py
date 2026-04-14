@@ -1,0 +1,181 @@
+import re
+import logging
+from datetime import datetime, timezone
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from config import MANDATORY_SUB_CHANNEL, BOT_TOKEN
+
+log = logging.getLogger("reviewcash")
+
+# create a localized bot instance for API queries if needed,
+# though ideally it shares the main one. We'll use one initialized here for queries.
+_bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+
+TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
+
+def _now():
+    return datetime.now(timezone.utc)
+
+def normalize_tg_chat(s: str | None) -> str | None:
+    if not s:
+        return None
+    t = str(s).strip()
+    if not t:
+        return None
+    # accept https://t.me/name or @name or name
+    t = re.sub(r"^https?://t\.me/", "", t)
+    t = t.split("?")[0].split("/")[0]
+    if not t.startswith("@"):
+        t = "@" + t
+    # keep only @, letters, digits, underscore
+    t = "@" + re.sub(r"[^0-9A-Za-z_]", "", t[1:])
+    return t if len(t) > 1 else None
+
+def get_required_sub_channel() -> str | None:
+    return normalize_tg_chat(MANDATORY_SUB_CHANNEL)
+
+async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None = None) -> tuple[bool, str | None, str]:
+    chat = get_required_sub_channel()
+    if not chat:
+        return True, None, ""
+
+    b = bot_instance or _bot
+    if not b:
+        return True, chat, "Бот не инициализирован"
+
+    try:
+        member = await b.get_chat_member(chat_id=chat, user_id=int(user_id))
+        cls_name = type(member).__name__.lower()
+        raw_status = getattr(member, "status", None)
+        status = str(raw_status).lower() if raw_status is not None else ""
+
+        subscribed_classes = ("chatmembermember", "chatmemberadministrator", "chatmemberowner", "chatmemberrestricted")
+        left_classes = ("chatmemberleft", "chatmemberbanned")
+
+        if cls_name in subscribed_classes:
+            return True, chat, ""
+        if cls_name in left_classes:
+            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
+
+        if status in ("member", "administrator", "creator", "restricted"):
+            return True, chat, ""
+        if status in ("left", "kicked", "banned"):
+            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
+
+        logging.warning(f"subscription check: unknown member type={cls_name} status={status} for user={user_id}")
+        return False, chat, "Не удалось определить подписку."
+
+    except Exception as e:
+        err_str = str(e).lower()
+        logging.warning(f"subscription check error for user={user_id} chat={chat}: {e}")
+        if "chat not found" in err_str or "bot is not a member" in err_str or "not enough rights" in err_str or "forbidden" in err_str:
+            logging.error(f"[SUBSCRIPTION] Bot cannot check membership in {chat}. Make sure the bot is an ADMIN of the channel. Allowing user through.")
+            return True, chat, ""
+        return False, chat, "Не удалось проверить подписку. Подпишись на канал и нажми кнопку проверки ещё раз."
+
+def required_subscribe_kb() -> InlineKeyboardMarkup | None:
+    chat = get_required_sub_channel()
+    if not chat:
+        return None
+    url = f"https://t.me/{chat.lstrip('@')}"
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📢 Подписаться", url=url),
+    ], [
+        InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_required_sub"),
+    ]])
+
+def tg_task_identity(task: dict | None) -> str:
+    task = task or {}
+    tg_chat = normalize_tg_chat((task.get("tg_chat") or task.get("target_url") or ""))
+    if tg_chat:
+        return tg_chat.lower()
+    raw = str(task.get("target_url") or "").strip().lower()
+    raw = re.sub(r"^https?://", "", raw)
+    raw = raw.split("?")[0].rstrip("/")
+    return raw
+
+def tg_detect_kind(tg_chat: str | None, target_url: str | None) -> str:
+    u = (tg_chat or "").lower().lstrip("@")
+    tu = (target_url or "").lower()
+    if u.endswith("bot") or ("?start=" in tu) or ("&start=" in tu) or ("/start" in tu):
+        return "bot"
+    return "chat"
+
+async def tg_calc_check_type(tg_chat: str, target_url: str, bot_instance: Bot | None = None) -> tuple[str, str, str]:
+    kind = tg_detect_kind(tg_chat, target_url)
+    if kind == "bot":
+        return "manual", kind, "BOT_TASK"
+    ok, msg = await ensure_bot_in_chat(tg_chat, bot_instance)
+    if ok:
+        return "auto", kind, ""
+    return "manual", kind, (msg or "NO_ACCESS")
+
+
+async def ensure_bot_in_chat(chat_username: str, bot_instance: Bot | None = None) -> tuple[bool, str]:
+    key = str(chat_username).lower()
+    now = _now().timestamp()
+    if key in TG_CHAT_CACHE:
+        ts, ok, msg = TG_CHAT_CACHE[key]
+        if (now - ts) < 300:
+            return ok, msg
+    
+    b = bot_instance or _bot
+    if not b:
+        return False, "Бот не инициализирован"
+
+    try:
+        me = await b.get_me()
+        chat = await b.get_chat(chat_username)
+        member = await b.get_chat_member(chat_username, me.id)
+        status = getattr(member, "status", None)
+        ctype = getattr(chat, "type", "")
+        if status in ("left", "kicked"):
+            TG_CHAT_CACHE[key] = (now, False, "Добавь бота в группу/канал, иначе TG-задание создать нельзя.")
+            return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
+        if ctype == "channel" and status not in ("administrator", "creator"):
+            TG_CHAT_CACHE[key] = (now, False, "Для канала бот должен быть админом перед созданием задания.")
+            return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
+        TG_CHAT_CACHE[key] = (now, True, "")
+        return True, ""
+    except Exception:
+        TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить чат. Добавь бота в группу/канал (и для канала — админом), затем попробуй снова.")
+        return False, TG_CHAT_CACHE[key][2]
+
+
+def is_private_tg_target(raw: str | None) -> bool:
+    s = str(raw or '').strip().lower()
+    return ('t.me/+' in s) or ('t.me/joinchat/' in s) or ('telegram.me/+' in s) or ('joinchat/' in s)
+
+
+async def tg_get_chat_kind(chat_username: str, bot_instance: Bot | None = None) -> str:
+    b = bot_instance or _bot
+    if not b:
+        return ""
+    try:
+        chat = await b.get_chat(chat_username)
+        return str(getattr(chat, 'type', '') or '').strip().lower()
+    except Exception:
+        return ""
+
+def _normalize_chat_raw(chat: str) -> str:
+    if not chat:
+        return chat
+    chat = chat.strip()
+    chat = chat.replace("https://t.me/", "").replace("http://t.me/", "")
+    if not chat.startswith("@") and not chat.startswith("-100"):
+        chat = "@" + chat
+    return chat
+
+async def tg_is_member(chat: str, user_id: int, bot_instance: Bot | None = None) -> bool:
+    b = bot_instance or _bot
+    if not b:
+        return False
+    try:
+        chat = _normalize_chat_raw(chat)
+        cm = await b.get_chat_member(chat_id=chat, user_id=user_id)
+        status = str(getattr(cm, "status", "")).lower()
+        return status in ("member","administrator","creator","restricted")
+    except Exception as e:
+        log.warning("subscription check error: %s", e)
+        return False
