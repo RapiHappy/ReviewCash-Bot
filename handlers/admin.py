@@ -18,7 +18,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.filters import Command, CommandStart
 
-# router = Router()
+router = Router()
 # Temporary blankets, everything will be combined in Step 8
 @router.message(Command("stars_pay"))
 async def cmd_stars_pay(message: Message):

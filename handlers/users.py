@@ -85,7 +85,7 @@ async def cmd_start(message: Message):
     if not sub_ok:
         channel_name = (sub_chat or 'канал').lstrip('@')
         await message.answer(
-            f"👋 Привет\! Рады тебя видеть\!\n\n"
+            rf"👋 Привет\! Рады тебя видеть\!\n\n"
             f"📢 Для начала подпишись на наш канал с новостями *@{channel_name}*\n\n"
             f"Там мы публикуем:\n"
             f"💎 Новые возможности заработка\n"
@@ -112,8 +112,8 @@ async def cmd_start(message: Message):
         )
         await message.answer(
             "👤 *Последний шаг — выбери пол:*\n\n"
-            "Это нужно, чтобы подбирать для тебя подходящие задания\. "
-            "Некоторые заказчики ищут исполнителей определённого пола\.",
+            r"Это нужно, чтобы подбирать для тебя подходящие задания\. "
+            r"Некоторые заказчики ищут исполнителей определённого пола\.",
             reply_markup=gender_kb,
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -141,7 +141,7 @@ async def handle_gender_pick(message: Message):
     else:
         await tg_set_gender(uid, TASK_GENDER_FEMALE)
 
-    await message.answer("✅ Отлично, пол сохранён\! Теперь всё готово 🎉", reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN_V2)
+    await message.answer(r"✅ Отлично, пол сохранён\! Теперь всё готово 🎉", reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN_V2)
     await send_main_welcome(message, uid)
 
 @router.callback_query(F.data == "check_required_sub")
@@ -182,7 +182,7 @@ async def cb_help(cq: CallbackQuery):
         "2️⃣ Выбери задание из списка\n"
         "3️⃣ Нажми *«Перейти к выполнению»*\n"
         "4️⃣ Выполни задание по инструкции\n"
-        "5️⃣ Отправь отчёт \(скриншот или авто\)\n"
+        r"5️⃣ Отправь отчёт \(скриншот или авто\)\n"
         "6️⃣ Получи оплату после проверки 💰\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "📝 *ОТЗЫВЫ \(Яндекс / Google / 2GIS\):*\n\n"
@@ -191,9 +191,9 @@ async def cb_help(cq: CallbackQuery):
         "  ✅ Лайкни *5 фото*, если они есть\n"
         "  ✅ Зайди на *сайт* организации\n"
         "  ✅ Потом пиши свой отзыв\n\n"
-        "⚠️ Без этих действий отзыв может быть удалён\!\n\n"
+        r"⚠️ Без этих действий отзыв может быть удалён\!\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📲 *TELEGRAM\-ЗАДАНИЯ:*\n\n"
+        r"📲 *TELEGRAM\-ЗАДАНИЯ:*\n\n"
         "  🤖 Проверяются *автоматически*\n"
         r"  ⏱ Нужно оставаться подписанным мин\. 2\-3 дня\n"
         "  ❌ Отписался раньше → деньги не придут\n\n"
