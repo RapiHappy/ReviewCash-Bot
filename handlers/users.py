@@ -17,6 +17,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.filters import Command, CommandStart
+from aiocryptopay import AioCryptoPay, Networks
 
 router = Router()
 # Temporary blankets, everything will be combined in Step 8
@@ -194,7 +195,7 @@ async def cb_help(cq: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "📲 *TELEGRAM\-ЗАДАНИЯ:*\n\n"
         "  🤖 Проверяются *автоматически*\n"
-        "  ⏱ Нужно оставаться подписанным мин\. 2\-3 дня\n"
+        r"  ⏱ Нужно оставаться подписанным мин\. 2\-3 дня\n"
         "  ❌ Отписался раньше → деньги не придут\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "💸 *ВЫВОД ДЕНЕГ:*\n\n"
@@ -214,7 +215,7 @@ async def cb_help(cq: CallbackQuery):
         "*Не могу отправить отчёт?*\n"
         "  → Сначала нажми *«Перейти к выполнению»*\n\n"
         "*Когда придёт оплата?*\n"
-        "  → TG — сразу после авто\-проверки\n"
+        r"  → TG — сразу после авто\-проверки\n"
         r"  → Отзывы — после модерации \(до 24ч\)\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🚫 *ЗАПРЕЩЕНО:*\n\n"
