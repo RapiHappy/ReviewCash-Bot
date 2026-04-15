@@ -1520,22 +1520,20 @@ async def build_main_admin_stats_text() -> str:
 
 def _apply_cors_headers(req: web.Request, resp: web.StreamResponse):
     origin = req.headers.get("Origin")
-    if not origin:
-        return
-
-    if not CORS_ORIGINS:
-        return
-
-    if "*" in CORS_ORIGINS:
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-    elif origin in CORS_ORIGINS:
+    
+    # If CORS_ORIGINS is empty or contains *, allow the current origin (or *)
+    if not CORS_ORIGINS or "*" in CORS_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin or "*"
+    elif origin and origin in CORS_ORIGINS:
         resp.headers["Access-Control-Allow-Origin"] = origin
         resp.headers["Vary"] = "Origin"
     else:
+        # If origin is not allowed and not same-origin (no origin header), we don't set CORS
+        if not origin: return
         return
 
     resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Telegram-Init-Data, X-Session-Token, Authorization"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tg-InitData, X-Tg-Init-Data, X-Telegram-Init-Data, X-Session-Token, Authorization, X-Init-Data"
     resp.headers["Access-Control-Max-Age"] = "86400"
 
 @web.middleware
