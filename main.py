@@ -1,4 +1,5 @@
 from config import *
+from config import TG_HOLD_PREFIX
 from database import *
 from services.balances import *
 from services.limits import *
@@ -1651,6 +1652,8 @@ def make_app():
     app.on_cleanup.append(on_cleanup)
     return app
 
+app = make_app
+
 async def on_startup(app: web.Application):
     global TG_HOLD_WORKER_TASK
     dp.update.outer_middleware(MaintenanceMiddleware())
@@ -1700,7 +1703,6 @@ async def on_cleanup(app: web.Application):
 # ADMIN: tasks list + delete (delete only by main admin)
 # -------------------------
 
-app = make_app()
 
 if __name__ == "__main__":
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    web.run_app(make_app(), host="0.0.0.0", port=PORT)

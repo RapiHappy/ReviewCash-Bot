@@ -120,3 +120,21 @@ REWORK_GRACE_DAYS = 3
 ACTIVE_REWORK_STATUSES = {"rework"}
 TG_MEMBER_SUBTYPES = {"channel", "group", "bot"}
 TASK_GENDER_ANY = "any"
+TASK_GENDER_MALE = "male"
+TASK_GENDER_FEMALE = "female"
+
+# TG prefixes
+TG_EVT_PREFIX = "tge:"
+TG_HOLD_PREFIX = "tgh:"
+
+# TG subtypes
+TG_SUB_24H_KEY = "sub_24h"
+TG_SUB_48H_KEY = "sub_48h"
+TG_SUB_72H_KEY = "sub_72h"
+TG_JOIN_GROUP_24H_KEY = "jg_24h"
+TG_JOIN_GROUP_48H_KEY = "jg_48h"
+TG_JOIN_GROUP_72H_KEY = "jg_72h"
+
+# Gender keys (user_limits)
+USER_GENDER_MALE_KEY = "gender_m"
+USER_GENDER_FEMALE_KEY = "gender_f"
