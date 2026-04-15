@@ -19,6 +19,18 @@ import json
 import base64
 import asyncio
 
+from main import (
+    require_init,
+    require_init_optional,
+    safe_json,
+    get_ip,
+    ensure_user,
+    cast_id,
+    referrals_summary,
+    _make_session_token,
+    _dt_key,
+)
+
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
 async def api_user_gender_set(req: web.Request):
@@ -135,7 +147,7 @@ async def api_sync(req: web.Request):
                 for dt in (done_tasks.data or []):
                     if str(dt.get("type") or "") != "tg":
                         continue
-                    stack_key = tg_stack_key(dt)
+                    stack_key = tg_task_identity(dt)
                     if stack_key:
                         completed_tg_stack_keys.add(stack_key)
         except Exception:
@@ -163,7 +175,7 @@ async def api_sync(req: web.Request):
             and not (
                 int(t.get("owner_id") or 0) != uid
                 and str(t.get("type") or "") == "tg"
-                and tg_stack_key(t) in completed_tg_stack_keys
+                and tg_task_identity(t) in completed_tg_stack_keys
             )
         ]
         task_slot_map = {}
