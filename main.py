@@ -1652,7 +1652,7 @@ def make_app():
     app.on_cleanup.append(on_cleanup)
     return app
 
-app = make_app
+app = make_app()
 
 async def on_startup(app: web.Application):
     global TG_HOLD_WORKER_TASK
