@@ -1687,11 +1687,12 @@ async def on_cleanup(app: web.Application):
             pass
         TG_HOLD_WORKER_TASK = None
 
-    if crypto:
-        try:
+    try:
+        from crypto_service import crypto
+        if crypto:
             await crypto.close()
-        except Exception:
-            pass
+    except Exception:
+        pass
     await bot.session.close()
 
 
