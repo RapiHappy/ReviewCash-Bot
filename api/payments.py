@@ -21,6 +21,8 @@ import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
+from main import *
+from api.task_helpers import *
 async def api_stars_link(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])

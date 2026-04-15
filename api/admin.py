@@ -22,6 +22,8 @@ import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
+from main import *
+from api.task_helpers import *
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
     # 1. Simple fetch without join first to guarantee it works

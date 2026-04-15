@@ -5,12 +5,7 @@ from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
 
-from api.tasks import *
-from api.withdraw import *
-from api.admin import *
-from api.payments import *
-from api.user import *
-from api.misc import *
+
 
 from handlers.users import router as users_router
 from handlers.admin import router as admin_router
@@ -1560,6 +1555,13 @@ async def tg_webhook(req: web.Request):
     except Exception:
         await dp.feed_webhook_update(bot, update)
     return web.Response(text="OK")
+
+from api.tasks import *
+from api.withdraw import *
+from api.admin import *
+from api.payments import *
+from api.user import *
+from api.misc import *
 
 def make_app():
     # client_max_size важен для загрузки скриншотов (по умолчанию ~1MB)

@@ -19,12 +19,14 @@ import json
 import base64
 import asyncio
 
+from api.task_helpers import *
+from main import *
+
 
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
 async def api_user_gender_set(req: web.Request):
-    from main import require_init, safe_json
     _, user = await require_init(req)
     uid = int(user["id"])
     body = await safe_json(req)
@@ -39,7 +41,6 @@ async def api_user_gender_set(req: web.Request):
 # -------------------------
 
 async def api_referrals(req: web.Request):
-    from main import require_init, referrals_summary
     _, user = await require_init(req)
     uid = int(user["id"])
     s = await referrals_summary(uid)
@@ -50,7 +51,6 @@ async def api_referrals(req: web.Request):
 # -------------------------
 
 async def api_sync(req: web.Request):
-    from main import require_init_optional, safe_json, get_ip, ensure_user, cast_id, _make_session_token
     _, user = await require_init_optional(req)
     if not user:
         return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balances": None})
@@ -276,7 +276,6 @@ async def api_sync(req: web.Request):
 # -------------------------
 
 async def api_ops_list(req: web.Request):
-    from main import require_init, _dt_key
     _, user = await require_init(req)
     uid = int(user["id"])
 
@@ -398,7 +397,6 @@ async def api_ops_list(req: web.Request):
 # =========================================================
 
 async def api_report_list(req: web.Request):
-    from main import require_init
     _, user = await require_init(req)
     uid = int(user["id"])
 
@@ -441,7 +439,6 @@ async def api_report_list(req: web.Request):
     return web.json_response({"ok": True, "reports": reports})
 
 async def api_report_clear(req: web.Request):
-    from main import require_init
     _, user = await require_init(req)
     uid = int(user["id"])
     await sb_delete(T_COMP, {"user_id": uid})
