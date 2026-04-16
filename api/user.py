@@ -21,7 +21,7 @@ import asyncio
 
 from api.task_helpers import *
 from main import *
-
+from main import _make_session_token, _parse_dt, _now, _dt_key
 
 
 # The main.py will later import these and inject missing dependencies
