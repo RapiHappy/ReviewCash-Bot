@@ -1,10 +1,19 @@
 import asyncio
-from aiocryptopay import AioCryptoPay, Networks
 import config
 
-# Инициализируем клиента (кассира)
-# Используем токены и настройки из config.py
-crypto = AioCryptoPay(token=config.CRYPTO_PAY_TOKEN, network=config.CRYPTO_PAY_NETWORK or Networks.MAIN_NET)
+try:
+    from aiocryptopay import AioCryptoPay, Networks
+    if config.CRYPTO_PAY_TOKEN:
+        crypto = AioCryptoPay(
+            token=config.CRYPTO_PAY_TOKEN,
+            network=getattr(Networks, config.CRYPTO_PAY_NETWORK, Networks.MAIN_NET) if config.CRYPTO_PAY_NETWORK else Networks.MAIN_NET
+        )
+    else:
+        crypto = None
+except Exception:
+    AioCryptoPay = None
+    Networks = None
+    crypto = None
 
 async def auto_payout_crypto(tg_user_id: int, amount_usdt: float, withdraw_id: str):
     """Функция автоматической выплаты крипты пользователю."""

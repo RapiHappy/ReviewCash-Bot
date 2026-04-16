@@ -3394,6 +3394,57 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     copyText(state.tbankPhoneCode || "");
   };
 
+  // --------------------
+  // CryptoBot USDT payment
+  // --------------------
+  let _cryptoPayUrl = null;
+
+  window.openCryptoPay = async function () {
+    const amount = Number(($("sum-input") && $("sum-input").value) || 0);
+    if (!amount || amount < 100) return tgAlert("Минимум 100 ₽");
+
+    _cryptoPayUrl = null;
+
+    // Show modal with loading state
+    if ($("crypto-amount-rub")) $("crypto-amount-rub").textContent = fmtRub(amount);
+    if ($("crypto-amount-usdt")) $("crypto-amount-usdt").textContent = "Создаётся счёт...";
+    const btn = $("crypto-pay-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ Создаём счёт..."; }
+
+    openOverlay("m-pay-crypto");
+
+    try {
+      tgHaptic("impact");
+      const res = await apiPost("/api/pay/cryptobot/create", { amount_rub: amount });
+      if (!res || !res.ok) throw new Error(res && res.error ? res.error : "Не удалось создать счёт");
+
+      _cryptoPayUrl = res.pay_url;
+
+      // Show USDT amount
+      const usdtVal = res.amount_usdt;
+      const usdtStr = usdtVal ? `≈ ${Number(usdtVal).toFixed(2)} USDT` : "≈ ? USDT";
+      if ($("crypto-amount-usdt")) $("crypto-amount-usdt").textContent = usdtStr;
+      if (btn) { btn.disabled = false; btn.innerHTML = "💳 Открыть CryptoBot"; }
+    } catch (e) {
+      tgHaptic("error");
+      if ($("crypto-amount-usdt")) $("crypto-amount-usdt").textContent = "Ошибка";
+      if (btn) { btn.disabled = false; btn.innerHTML = "💳 Открыть CryptoBot"; }
+      tgAlert(String(e.message || e), "error", "Ошибка CryptoBot");
+      closeAllOverlays();
+    }
+  };
+
+  window.goToCryptoPay = function () {
+    if (!_cryptoPayUrl) {
+      tgAlert("Счёт ещё не создан. Подожди секунду.", "info");
+      return;
+    }
+    tgHaptic("impact");
+    openExternalLink(_cryptoPayUrl, { toast: false });
+    tgAlert("Счёт открыт в CryptoBot. После оплаты баланс зачислится автоматически! ✅", "success", "CryptoBot");
+    closeAllOverlays();
+  };
+
   window.confirmTBankPhone = async function () {
     const amountStr = ($("tbp-amount-display") && $("tbp-amount-display").textContent) || "";
     const amount = Number(String(amountStr).replace(/[^\d.,]/g, "").replace(",", ".")) || Number(($("sum-input") && $("sum-input").value) || 0);

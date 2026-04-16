@@ -1105,6 +1105,43 @@
         <div class="pay-icon" style="background:#4ade80; color:#062510;">📱</div>
         <div style="flex:1;"><b>По номеру телефона</b><br><small style="color:var(--text-dim);">Т-Банк: +7 960 073-85-59 · Раяз Н., подтверждение админом</small></div>
       </div>
+
+      <div class="pay-opt" id="pay-opt-crypto" onclick="openCryptoPay()" style="border:1px solid rgba(38,217,148,0.25); background:linear-gradient(135deg, rgba(38,217,148,0.07), rgba(0,0,0,0));">
+        <div class="pay-icon" style="background:linear-gradient(135deg,#26d994,#16a34a); color:#fff; font-size:16px; font-weight:900;">₮</div>
+        <div style="flex:1;">
+          <b style="display:flex; align-items:center; gap:6px;">Криптовалюта (USDT) <span style="font-size:10px; background:linear-gradient(90deg,#26d994,#16a34a); color:#fff; padding:2px 7px; border-radius:99px; font-weight:900; letter-spacing:0.3px;">AUTO</span></b>
+          <small style="color:var(--text-dim);">Оплата через CryptoBot · зачисление автоматически</small>
+        </div>
+        <div style="font-size:18px; opacity:0.7;">›</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRYPTOBOT USDT MODAL -->
+  <div id="m-pay-crypto" class="overlay" style="display:none;">
+    <div class="modal">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">💎 Оплата USDT</h2>
+        <div style="opacity:0.5; font-size:20px; cursor:pointer;" onclick="closeModal()">✕</div>
+      </div>
+
+      <div style="background:linear-gradient(135deg, rgba(38,217,148,0.10), rgba(0,0,0,0)); border:1px solid rgba(38,217,148,0.22); padding:18px; border-radius:18px; margin:18px 0; text-align:center;">
+        <p style="margin:0 0 4px; font-size:12px; opacity:0.7;">Сумма к оплате</p>
+        <div id="crypto-amount-rub" style="font-size:26px; font-weight:900; color:var(--accent-cyan);">0 ₽</div>
+        <div id="crypto-amount-usdt" style="font-size:16px; font-weight:700; color:#26d994; margin-top:4px;">≈ 0.00 USDT</div>
+      </div>
+
+      <div style="background:var(--glass); border:1px solid var(--glass-border); padding:14px; border-radius:14px; margin-bottom:18px; font-size:13px; color:var(--text-dim); line-height:1.6;">
+        <div style="color:var(--text-main); font-weight:700; margin-bottom:6px;">Как оплатить:</div>
+        1. Нажми кнопку «Открыть CryptoBot» ниже<br>
+        2. В боте нажми «Pay» и оплати через USDT<br>
+        3. После оплаты баланс зачислится автоматически 💰
+      </div>
+
+      <button id="crypto-pay-btn" class="btn btn-main" style="width:100%; font-size:16px; padding:16px; background:linear-gradient(135deg,#26d994,#16a34a); border:none; margin-bottom:10px;" onclick="goToCryptoPay()">
+        💳 Открыть CryptoBot
+      </button>
+      <button class="btn btn-secondary" style="width:100%;" onclick="closeModal()">Отмена</button>
     </div>
   </div>
 

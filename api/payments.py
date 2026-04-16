@@ -23,6 +23,14 @@ import asyncio
 # or they will import from main/config/services properly.
 from main import *
 from api.task_helpers import *
+
+# CryptoBot client (optional — None if CRYPTO_PAY_TOKEN not set)
+try:
+    from crypto_service import crypto as _crypto_client
+except Exception:
+    _crypto_client = None
+crypto = _crypto_client
+
 async def api_stars_link(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
@@ -101,29 +109,47 @@ async def api_stars_link(req: web.Request):
 
 async def api_cryptobot_create(req: web.Request):
     if not crypto:
-        return web.json_response({"ok": False, "error": "CryptoBot not configured"}, status=500)
+        return web.json_response({"ok": False, "error": "CryptoBot не настроен. Обратитесь к администратору."}, status=503)
 
     _, user = await require_init(req)
     uid = int(user["id"])
+    rate_limit_enforce(uid, "cryptopay_create", min_interval_sec=30, spam_strikes=5, block_sec=300)
     body = await safe_json(req)
 
     amount = float(body.get("amount_rub") or 0)
-    if amount < MIN_STARS_TOPUP_RUB:
-        return web.json_response({"ok": False, "error": f"Минимум {MIN_STARS_TOPUP_RUB:.0f}₽"}, status=400)
+    if amount < max(MIN_TOPUP_RUB, 1):
+        return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
 
-    usdt = round(amount / CRYPTO_RUB_PER_USDT, 2)
-    inv = await crypto.create_invoice(asset="USDT", amount=usdt, description=f"Topup {amount} RUB for {uid}")
+    usdt = round(amount / max(CRYPTO_RUB_PER_USDT, 0.000001), 2)
+    if usdt <= 0:
+        return web.json_response({"ok": False, "error": "Некорректный курс конвертации"}, status=400)
 
-    await sb_insert(T_PAY, {
-        "user_id": uid,
-        "provider": "cryptobot",
-        "status": "pending",
+    try:
+        inv = await crypto.create_invoice(asset="USDT", amount=usdt, description=f"ReviewCash topup {amount:.0f}₽ uid={uid}")
+    except Exception as e:
+        log.exception("cryptobot create_invoice failed uid=%s: %s", uid, e)
+        return web.json_response({"ok": False, "error": "Не удалось создать счёт в CryptoBot. Попробуй позже."}, status=502)
+
+    try:
+        await sb_insert(T_PAY, {
+            "user_id": uid,
+            "provider": "cryptobot",
+            "status": "pending",
+            "amount_rub": amount,
+            "provider_ref": str(inv.invoice_id),
+            "meta": {"asset": "USDT", "amount_asset": usdt, "crypto_rub_rate": CRYPTO_RUB_PER_USDT}
+        })
+    except Exception as e:
+        log.exception("cryptobot payment DB insert failed uid=%s: %s", uid, e)
+        # Don't block the user — invoice was created, we can still receive webhook
+
+    return web.json_response({
+        "ok": True,
+        "pay_url": inv.pay_url,
+        "invoice_id": inv.invoice_id,
+        "amount_usdt": usdt,
         "amount_rub": amount,
-        "provider_ref": str(inv.invoice_id),
-        "meta": {"asset": "USDT", "amount_asset": usdt}
     })
-
-    return web.json_response({"ok": True, "pay_url": inv.pay_url, "invoice_id": inv.invoice_id})
 
 async def api_proof_upload(req: web.Request):
     _, user = await require_init(req)
