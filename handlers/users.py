@@ -364,6 +364,46 @@ async def track_any_callback(cq: CallbackQuery):
     except Exception:
         pass
 
+import aiohttp
+
+async def check_review_ai(text: str) -> tuple[bool, str]:
+    if not text or len(text.split()) < 5:
+        return False, "Отзыв слишком короткий. Опишите свой опыт подробнее (минимум 5 слов)."
+    if not GEMINI_API_KEY:
+        log.warning("GEMINI_API_KEY is not set, skipping AI check")
+        return True, "API ключ не настроен, пропускаем проверку."
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    prompt = (
+        "Ты модерируешь отзывы о Telegram-боте для заработка ReviewCash.\n"
+        "Отзыв должен быть позитивным, иметь смысл и быть написан осмысленно (минимум 5 слов).\n"
+        "Если отзыв выглядит как бессмысленный набор букв, мат, оскорбления или явный негатив - ответь 'REJECT: <причина на русском>'.\n"
+        "Если всё нормально - ответь 'APPROVE'.\n\n"
+        f"Отзыв пользователя: {text}"
+    )
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=10) as resp:
+                data = await resp.json()
+                if "error" in data:
+                    return True, "Ошибка API" # skip check fail-open
+                
+                reply = ""
+                try:
+                    reply = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                except Exception:
+                    pass
+                    
+                if reply.startswith("REJECT:"):
+                    reason = reply.replace("REJECT:", "").strip()
+                    return False, reason
+                return True, "OK"
+    except Exception as e:
+        log.warning("check_review_ai error: %s", e)
+        return True, "Ошибка проверки"
+
+
 @router.message()
 async def fallback_handler(m: Message):
     uid = int(m.from_user.id)

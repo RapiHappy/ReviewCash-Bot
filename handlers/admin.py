@@ -24,6 +24,7 @@ router = Router()
 async def cmd_stars_pay(message: Message):
     if int(message.from_user.id) != int(MAIN_ADMIN_ID or 0):
         return await message.answer("⛔ Только для главного админа")
+    from main import _stars_pay_toggle_kb
     enabled = await is_stars_payments_enabled()
     status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
     await message.answer(
@@ -46,6 +47,7 @@ async def cb_starspay_toggle(cq: CallbackQuery):
     else:
         enabled = current
 
+    from main import _stars_pay_toggle_kb
     status = "🟢 ВКЛ" if enabled else "🔴 ВЫКЛ"
     text = f"⭐ Оплата Stars сейчас: {status}"
 
@@ -68,6 +70,7 @@ async def cb_starspay_toggle(cq: CallbackQuery):
 async def cmd_adminstats(message: Message):
     if int(message.from_user.id) != int(MAIN_ADMIN_ID or 0):
         return await message.answer("⛔ Только для главного админа")
+    from main import build_main_admin_stats_text, _admin_stats_kb
     text = await build_main_admin_stats_text()
     await message.answer(text, reply_markup=_admin_stats_kb())
 
@@ -75,6 +78,7 @@ async def cmd_adminstats(message: Message):
 async def cb_adminstats_refresh(cq: CallbackQuery):
     if int(cq.from_user.id) != int(MAIN_ADMIN_ID or 0):
         return await cq.answer("Только для главного админа", show_alert=True)
+    from main import build_main_admin_stats_text, _admin_stats_kb
     text = await build_main_admin_stats_text()
     try:
         await cq.message.edit_text(text, reply_markup=_admin_stats_kb())
