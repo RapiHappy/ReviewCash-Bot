@@ -357,7 +357,7 @@ async def api_admin_tbank_decision(req: web.Request):
         if xp_add > 0:
             await add_xp(uid, xp_add)
 
-        await notify_user(uid, f"✅ T-Bank пополнение подтверждено: +{amount:.2f}₽")
+        await notify_user(uid, f"<b>💎 Пополнение подтверждено!</b>\n\nБаланс пополнен на <b>{amount:.2f} ₽</b>. Теперь вы можете запускать новые задания и продвигать свои проекты. Удачного продвижения! 🚀", reply_markup=back_to_app_kb())
         try:
             until = await set_tbank_cooldown(uid)
             # optional notify about cooldown
@@ -701,7 +701,14 @@ async def api_admin_proof_decision(req: web.Request):
             xp_txt = f" +{int(xp_added)} XP" if "xp_added" in locals() and int(xp_added) > 0 else ""
         except Exception:
             xp_txt = ""
-        await notify_user(user_id, f"✅ Отчёт принят. Начислено +{reward:.2f}₽{xp_txt}")
+            
+        success_msg = (
+            f"<b>✨ Отчёт принят!</b>\n\n"
+            f"💰 Начислено: <b>+{reward:.2f} ₽</b>\n"
+            f"🚀 Опыт: <b>{xp_txt}</b>\n\n"
+            f"Спасибо за качественную работу! Продолжай в том же духе 🔥"
+        )
+        await notify_user(user_id, success_msg, reply_markup=back_to_app_kb())
     else:
         new_status = "fake" if fake else "rejected"
         await sb_update(T_COMP, {"id": cast_id(proof_id)}, {

@@ -403,6 +403,7 @@ function tgAlert(msg, kind = "info", title = "") {
     _syncTasksInFlight: false,
     _syncAllInFlight: false,
     _adminProofSeq: 0,
+    currentWizStep: 1,
   };
 
   // --------------------
@@ -761,6 +762,7 @@ function tgAlert(msg, kind = "info", title = "") {
     // small UX hooks
     try {
       if (id === "m-create") {
+        resetTaskWizard();
         updateTopUi();
         setToMinPrice();
         scheduleTgCheck();
@@ -3013,7 +3015,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       if (res && res.ok) {
         tgHaptic("success");
         closeModal();
-        tgAlert(`✅ Задание создано! Списано: ${res.charged_amount} ${res.charged_currency === 'star' ? '⭐' : '₽'}`);
+        showToast(`✅ Задание создано! Списано: ${res.charged_amount} ${res.charged_currency === 'star' ? '⭐' : '₽'}`);
         await syncAll();
       } else {
         throw new Error(res && res.error ? res.error : "Ошибка создания");
@@ -4281,7 +4283,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       const res = await apiPost("/api/bonus/claim", {});
       if (res && res.ok) {
         tgHaptic("success");
-        tgAlert(`Ежедневный бонус получен!\nВам начислено ${res.bonus_rub} ₽. Возвращайтесь завтра!`, "success", "Ура!");
+        showToast(`✨ Бонус получен! +${res.bonus_rub} ₽`);
         syncAll();
       } else {
         tgHaptic("error");
@@ -4466,6 +4468,101 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const mo = new MutationObserver(() => initDragScrollContainers(document));
     try { mo.observe(document.body, { childList:true, subtree:true }); } catch (_) {}
   });
+
+  // ==========================================
+  // WIZARD & TOASTS
+  // ==========================================
+
+  function resetTaskWizard() {
+    state.currentWizStep = 1;
+    document.querySelectorAll(".platform-card").forEach(c => c.classList.remove("selected"));
+    updateWizard();
+  }
+
+  function selectPlatform(type) {
+    const sel = document.getElementById("t-type");
+    if (!sel) return;
+    sel.value = type;
+    
+    document.querySelectorAll(".platform-card").forEach(c => {
+      const oc = c.getAttribute("onclick") || "";
+      if (oc.includes(`'${type}'`)) {
+        c.classList.add("selected");
+      } else {
+        c.classList.remove("selected");
+      }
+    });
+    
+    recalc();
+    setTimeout(nextStep, 150);
+  }
+
+  function nextStep() {
+    if (state.currentWizStep === 1) {
+      const type = document.getElementById("t-type").value;
+      if (!type) return showToast("Выберите платформу", "error");
+    }
+    if (state.currentWizStep === 2) {
+      const target = document.getElementById("t-target").value;
+      if (!target || target.length < 5) return showToast("Укажите корректную ссылку", "error");
+    }
+    
+    if (state.currentWizStep < 3) {
+      state.currentWizStep++;
+      updateWizard();
+    }
+  }
+
+  function prevStep() {
+    if (state.currentWizStep > 1) {
+      state.currentWizStep--;
+      updateWizard();
+    }
+  }
+
+  function updateWizard() {
+    document.querySelectorAll(".wiz-content").forEach(c => c.classList.add("hidden"));
+    const current = document.getElementById(`wiz-step-${state.currentWizStep}`);
+    if (current) current.classList.remove("hidden");
+    
+    document.querySelectorAll(".wiz-step").forEach((s, idx) => {
+      s.classList.toggle("active", (idx + 1) <= state.currentWizStep);
+    });
+    
+    const backBtn = document.getElementById("wiz-back");
+    const nextBtn = document.getElementById("wiz-next");
+    const createBtn = document.getElementById("wiz-create");
+    
+    if (backBtn) backBtn.classList.toggle("hidden", state.currentWizStep === 1);
+    if (nextBtn) nextBtn.classList.toggle("hidden", state.currentWizStep === 3);
+    if (createBtn) createBtn.classList.toggle("hidden", state.currentWizStep !== 3);
+  }
+
+  function showToast(msg, type = "success") {
+    const container = document.getElementById("toast-container");
+    if (!container) {
+       tgAlert(msg, type);
+       return;
+    }
+    
+    const toast = document.createElement("div");
+    toast.className = `toast ${type}`;
+    const icon = type === "success" ? "✨" : "❌";
+    toast.innerHTML = `<span>${icon}</span> ${msg}`;
+    
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+      toast.classList.add("fade-out");
+      setTimeout(() => toast.remove(), 400);
+    }, 3500);
+  }
+
+  window.selectPlatform = selectPlatform;
+  window.nextStep = nextStep;
+  window.prevStep = prevStep;
+  window.showToast = showToast;
+  window.resetTaskWizard = resetTaskWizard;
 
 })();
 

@@ -85,6 +85,12 @@ def required_subscribe_kb() -> InlineKeyboardMarkup | None:
         InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_required_sub"),
     ]])
 
+def back_to_app_kb() -> InlineKeyboardMarkup:
+    """Returns a keyboard with a button to return to the MiniApp."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📱 Открыть MiniApp", url=f"https://t.me/{BOT_USERNAME}/app")
+    ]])
+
 def tg_task_identity(task: dict | None) -> str:
     task = task or {}
     tg_chat = normalize_tg_chat((task.get("tg_chat") or task.get("target_url") or ""))

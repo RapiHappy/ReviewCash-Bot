@@ -881,7 +881,7 @@ async def notify_admin(text: str):
         except Exception:
             pass
 
-async def notify_user(uid: int, text: str, force: bool = False):
+async def notify_user(uid: int, text: str, force: bool = False, reply_markup=None):
     if not force:
         try:
             if await is_notify_muted(uid):
@@ -889,7 +889,7 @@ async def notify_user(uid: int, text: str, force: bool = False):
         except Exception:
             pass
     try:
-        await bot.send_message(uid, text, parse_mode="HTML")
+        await bot.send_message(uid, text, parse_mode="HTML", reply_markup=reply_markup)
     except Exception:
         pass
 
