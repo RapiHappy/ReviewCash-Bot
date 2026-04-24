@@ -4379,95 +4379,6 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   window.copyInviteLink = window.copyInviteLink;
   window.shareInvite = window.shareInvite;
   window.openAdminPanel = window.openAdminPanel;
-})();
-
-/* === V11 HOTFIX: native touch swipe + safe mouse drag for horizontal filters === */
-(function(){
-  const DRAG_SCROLL_SELECTORS = ['.tasks-seg-switch', '.pf-bar', '.ops-filter', '.admin-tabs'];
-
-  function enableDragScroll(el){
-    if (!el || el.dataset.dragScrollReady === '1') return;
-    el.dataset.dragScrollReady = '1';
-    el.setAttribute('data-drag-scroll', '1');
-
-    let isMouseDown = false;
-    let isDragging = false;
-    let suppressClick = false;
-    let startX = 0;
-    let startScrollLeft = 0;
-
-    const overflowed = () => (el.scrollWidth - el.clientWidth) > 4;
-
-    const finishDrag = () => {
-      if (!isMouseDown && !isDragging) return;
-      isMouseDown = false;
-      el.classList.remove('dragging');
-      if (isDragging) {
-        suppressClick = true;
-        window.setTimeout(() => { suppressClick = false; }, 160);
-      }
-      isDragging = false;
-    };
-
-    // Touch devices: use native horizontal swipe only.
-    // Desktop: add mouse drag without breaking button clicks.
-    el.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (!overflowed()) return;
-      isMouseDown = true;
-      isDragging = false;
-      startX = e.clientX;
-      startScrollLeft = el.scrollLeft;
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!isMouseDown) return;
-      const dx = e.clientX - startX;
-      if (!isDragging && Math.abs(dx) > 8) {
-        isDragging = true;
-        el.classList.add('dragging');
-      }
-      if (!isDragging) return;
-      el.scrollLeft = startScrollLeft - dx;
-      e.preventDefault();
-    }, { passive: false });
-
-    window.addEventListener('mouseup', finishDrag);
-    el.addEventListener('mouseleave', () => {
-      if (isMouseDown && !isDragging) finishDrag();
-    });
-
-    el.addEventListener('click', (e) => {
-      if (!suppressClick) return;
-      e.preventDefault();
-      e.stopPropagation();
-    }, true);
-
-    // Desktop wheel -> horizontal scroll feels natural.
-    el.addEventListener('wheel', (e) => {
-      if (!overflowed()) return;
-      const mostlyVertical = Math.abs(e.deltaY) > Math.abs(e.deltaX);
-      if (!mostlyVertical && Math.abs(e.deltaX) < 2) return;
-      const delta = mostlyVertical ? e.deltaY : e.deltaX;
-      if (Math.abs(delta) < 2) return;
-      el.scrollLeft += delta;
-      e.preventDefault();
-    }, { passive: false });
-
-    el.addEventListener('dragstart', (e) => e.preventDefault());
-  }
-
-  function initDragScrollContainers(root){
-    const scope = root || document;
-    DRAG_SCROLL_SELECTORS.forEach((selector) => {
-      scope.querySelectorAll(selector).forEach(enableDragScroll);
-    });
-  }
-  document.addEventListener('DOMContentLoaded', () => {
-    initDragScrollContainers(document);
-    const mo = new MutationObserver(() => initDragScrollContainers(document));
-    try { mo.observe(document.body, { childList:true, subtree:true }); } catch (_) {}
-  });
 
   // ==========================================
   // WIZARD & TOASTS
@@ -4565,4 +4476,93 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   window.resetTaskWizard = resetTaskWizard;
 
 })();
+
+/* === V11 HOTFIX: native touch swipe + safe mouse drag for horizontal filters === */
+(function(){
+  const DRAG_SCROLL_SELECTORS = ['.tasks-seg-switch', '.pf-bar', '.ops-filter', '.admin-tabs'];
+
+  function enableDragScroll(el){
+    if (!el || el.dataset.dragScrollReady === '1') return;
+    el.dataset.dragScrollReady = '1';
+    el.setAttribute('data-drag-scroll', '1');
+
+    let isMouseDown = false;
+    let isDragging = false;
+    let suppressClick = false;
+    let startX = 0;
+    let startScrollLeft = 0;
+
+    const overflowed = () => (el.scrollWidth - el.clientWidth) > 4;
+
+    const finishDrag = () => {
+      if (!isMouseDown && !isDragging) return;
+      isMouseDown = false;
+      el.classList.remove('dragging');
+      if (isDragging) {
+        suppressClick = true;
+        window.setTimeout(() => { suppressClick = false; }, 160);
+      }
+      isDragging = false;
+    };
+
+    // Touch devices: use native horizontal swipe only.
+    // Desktop: add mouse drag without breaking button clicks.
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (!overflowed()) return;
+      isMouseDown = true;
+      isDragging = false;
+      startX = e.clientX;
+      startScrollLeft = el.scrollLeft;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isMouseDown) return;
+      const dx = e.clientX - startX;
+      if (!isDragging && Math.abs(dx) > 8) {
+        isDragging = true;
+        el.classList.add('dragging');
+      }
+      if (!isDragging) return;
+      el.scrollLeft = startScrollLeft - dx;
+      e.preventDefault();
+    }, { passive: false });
+
+    window.addEventListener('mouseup', finishDrag);
+    el.addEventListener('mouseleave', () => {
+      if (isMouseDown && !isDragging) finishDrag();
+    });
+
+    el.addEventListener('click', (e) => {
+      if (!suppressClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+
+    // Desktop wheel -> horizontal scroll feels natural.
+    el.addEventListener('wheel', (e) => {
+      if (!overflowed()) return;
+      const mostlyVertical = Math.abs(e.deltaY) > Math.abs(e.deltaX);
+      if (!mostlyVertical && Math.abs(e.deltaX) < 2) return;
+      const delta = mostlyVertical ? e.deltaY : e.deltaX;
+      if (Math.abs(delta) < 2) return;
+      el.scrollLeft += delta;
+      e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('dragstart', (e) => e.preventDefault());
+  }
+
+  function initDragScrollContainers(root){
+    const scope = root || document;
+    DRAG_SCROLL_SELECTORS.forEach((selector) => {
+      scope.querySelectorAll(selector).forEach(enableDragScroll);
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    initDragScrollContainers(document);
+    const mo = new MutationObserver(() => initDragScrollContainers(document));
+    try { mo.observe(document.body, { childList:true, subtree:true }); } catch (_) {}
+  });
+
 
