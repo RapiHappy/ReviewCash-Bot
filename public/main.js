@@ -4387,7 +4387,30 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   function resetTaskWizard() {
     state.currentWizStep = 1;
     document.querySelectorAll(".platform-card").forEach(c => c.classList.remove("selected"));
+    
+    // Reset fields
+    const fields = ["t-target", "t-text", "t-review-variants", "t-type"];
+    fields.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+    
+    const qty = document.getElementById("t-qty");
+    if (qty) qty.value = "1";
+    
+    const vip = document.getElementById("t-vip-only");
+    if (vip) vip.checked = false;
+    
+    // Reset Top Option if exists
+    if (typeof state.isTopWanted === "function") {
+       // if it's a function that returns current state, we might need a way to reset it
+    }
+    // Just force the UI to look inactive
+    const topCard = document.getElementById("top-option-card");
+    if (topCard) topCard.classList.remove("active");
+    
     updateWizard();
+    recalc();
   }
 
   function selectPlatform(type) {
@@ -4436,6 +4459,19 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const current = document.getElementById(`wiz-step-${state.currentWizStep}`);
     if (current) current.classList.remove("hidden");
     
+    // Update summary card on Step 3
+    if (state.currentWizStep === 3) {
+      const type = document.getElementById("t-type").value;
+      const target = document.getElementById("t-target").value;
+      const ico = document.getElementById("wiz-sum-ico");
+      const title = document.getElementById("wiz-sum-title");
+      const url = document.getElementById("wiz-sum-url");
+      
+      if (ico) ico.textContent = (type === "ya" ? "📍" : type === "gm" ? "🌍" : type === "dg" ? "🗺️" : "✈️");
+      if (title) title.textContent = (type === "ya" ? "Яндекс Карты" : type === "gm" ? "Google Maps" : type === "dg" ? "2GIS" : "Telegram");
+      if (url) url.textContent = target || "Без ссылки";
+    }
+
     document.querySelectorAll(".wiz-step").forEach((s, idx) => {
       s.classList.toggle("active", (idx + 1) <= state.currentWizStep);
     });
@@ -4447,6 +4483,13 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     if (backBtn) backBtn.classList.toggle("hidden", state.currentWizStep === 1);
     if (nextBtn) nextBtn.classList.toggle("hidden", state.currentWizStep === 3);
     if (createBtn) createBtn.classList.toggle("hidden", state.currentWizStep !== 3);
+  }
+
+  function setQty(val) {
+    const input = document.getElementById("t-qty");
+    if (!input) return;
+    input.value = val;
+    recalc();
   }
 
   function showToast(msg, type = "success") {
@@ -4474,6 +4517,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
   window.prevStep = prevStep;
   window.showToast = showToast;
   window.resetTaskWizard = resetTaskWizard;
+  window.setQty = setQty;
 
 })();
 
