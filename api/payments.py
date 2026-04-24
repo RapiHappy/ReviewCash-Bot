@@ -145,7 +145,7 @@ async def api_cryptobot_create(req: web.Request):
 
     return web.json_response({
         "ok": True,
-        "pay_url": inv.pay_url,
+        "bot_invoice_url": inv.bot_invoice_url,
         "invoice_id": inv.invoice_id,
         "amount_usdt": usdt,
         "amount_rub": amount,

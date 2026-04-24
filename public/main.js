@@ -3424,7 +3424,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const res = await apiPost("/api/pay/cryptobot/create", { amount_rub: amount });
       if (!res || !res.ok) throw new Error(res && res.error ? res.error : "Не удалось создать счёт");
 
-      _cryptoPayUrl = res.pay_url;
+      _cryptoPayUrl = res.bot_invoice_url;
 
       // Show USDT amount
       const usdtVal = res.amount_usdt;
