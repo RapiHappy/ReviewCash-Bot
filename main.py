@@ -1613,6 +1613,8 @@ def make_app():
 
     # referrals
     app.router.add_post("/api/referrals", api_referrals)
+    app.router.add_post("/api/bonus/claim", api_bonus_claim)
+    app.router.add_post("/api/leaderboard/top", api_leaderboard_top)
 
     app.router.add_post("/api/withdraw/create", api_withdraw_create)
     app.router.add_post("/api/withdraw/list", api_withdraw_list)

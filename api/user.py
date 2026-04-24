@@ -444,3 +444,93 @@ async def api_report_clear(req: web.Request):
     await sb_delete(T_COMP, {"user_id": uid})
     return web.json_response({"ok": True})
 
+
+# =========================================================
+# GAMIFICATION
+# =========================================================
+
+async def api_bonus_claim(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    
+    # Check limit (24 hours = 86400 seconds)
+    ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
+    if not ok:
+        hours = wait_sec // 3600
+        mins = (wait_sec % 3600) // 60
+        return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
+    
+    # Claim bonus (0.2 RUB)
+    bonus_rub = 0.2
+    await add_rub(uid, bonus_rub)
+    await touch_limit(uid, "daily_bonus")
+    
+    return web.json_response({"ok": True, "bonus_rub": bonus_rub})
+
+async def api_leaderboard_top(req: web.Request):
+    _, user = await require_init_optional(req)
+    
+    # 1. Top by Rub Balance
+    top_rub = []
+    try:
+        r = await sb_select(T_BAL, columns="user_id, username, rub_balance", order="rub_balance", desc=True, limit=50)
+        for i, row in enumerate(r.data or []):
+            top_rub.append({
+                "rank": i + 1,
+                "user_id": row.get("user_id"),
+                "username": row.get("username"),
+                "score": float(row.get("rub_balance") or 0)
+            })
+    except Exception as e:
+        log.error(f"top_rub err: {e}")
+
+    # 2. Top by Level (XP)
+    top_level = []
+    try:
+        r = await sb_select(T_BAL, columns="user_id, username, level, xp", order="xp", desc=True, limit=50)
+        for i, row in enumerate(r.data or []):
+            top_level.append({
+                "rank": i + 1,
+                "user_id": row.get("user_id"),
+                "username": row.get("username"),
+                "score": int(row.get("level") or 1),
+                "xp": int(row.get("xp") or 0)
+            })
+    except Exception as e:
+        log.error(f"top_level err: {e}")
+
+    # 3. Top by Referrals
+    top_refs = []
+    try:
+        def _f():
+            return sb.table(T_USERS).select("referrer_id").not_.is_null("referrer_id").execute()
+        r = await sb_exec(_f)
+        refs_count = {}
+        for row in (r.data or []):
+            ref_id = row.get("referrer_id")
+            if ref_id:
+                refs_count[ref_id] = refs_count.get(ref_id, 0) + 1
+        
+        sorted_refs = sorted(refs_count.items(), key=lambda x: x[1], reverse=True)[:50]
+        if sorted_refs:
+            ref_ids = [k for k, v in sorted_refs]
+            users_r = await sb_select_in(T_USERS, "user_id", ref_ids, columns="user_id, username")
+            uname_map = {x.get("user_id"): x.get("username") for x in (users_r.data or [])}
+            
+            for i, (u_id, count) in enumerate(sorted_refs):
+                top_refs.append({
+                    "rank": i + 1,
+                    "user_id": u_id,
+                    "username": uname_map.get(u_id),
+                    "score": count
+                })
+    except Exception as e:
+        log.error(f"top_refs err: {e}")
+
+    return web.json_response({
+        "ok": True,
+        "top_rub": top_rub,
+        "top_level": top_level,
+        "top_refs": top_refs
+    })
+

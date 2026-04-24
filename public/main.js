@@ -1643,7 +1643,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const isVipTask = t.vip_only || String(t.instructions || "").match(/VIP_ONLY\s*:\s*(1|true)/i);
 
       let badgesHtml = '';
-      if (topActive) badgesHtml += `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(255,180,0,.14);color:#ffd36b;margin-left:4px;">🔥 Топ</span>`;
+      if (topActive) badgesHtml += `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(255,180,0,.14);color:#ffd36b;margin-left:4px;">🔥 HOT</span>`;
       if (isVipTask) badgesHtml += `<span style="font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:rgba(168,85,247,.14);color:#c084fc;margin-left:4px;">👑 VIP Задание</span>`;
 
       const card = document.createElement("div");
@@ -3100,6 +3100,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     if (tab === "friends") showSection("friends");
     else if (tab === "profile") showSection("profile");
     else if (tab === "help") showSection("help");
+    else if (tab === "top") {
+      showSection("top");
+      if (typeof window.loadLeaderboard === 'function') window.loadLeaderboard('refs');
+    }
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
     if (state.currentSection === "tasks") {
@@ -4361,4 +4365,105 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const mo = new MutationObserver(() => initDragScrollContainers(document));
     try { mo.observe(document.body, { childList:true, subtree:true }); } catch (_) {}
   });
+
+  // ==========================================
+  // GAMIFICATION
+  // ==========================================
+
+  async function claimDailyBonus() {
+    try {
+      const btn = document.getElementById("btn-daily-bonus");
+      if (btn) btn.disabled = true;
+      const res = await apiPost("/api/bonus/claim", {});
+      if (res && res.ok) {
+        tgHaptic("success");
+        tgAlert(`Ежедневный бонус получен!\nВам начислено ${res.bonus_rub} ₽. Возвращайтесь завтра!`, "success", "Ура!");
+        syncData();
+      } else {
+        tgHaptic("error");
+        tgAlert(res && res.error ? res.error : "Бонус уже был получен сегодня.", "error");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(e && e.message ? e.message : "Ошибка получения бонуса.", "error");
+    } finally {
+      const btn = document.getElementById("btn-daily-bonus");
+      if (btn) btn.disabled = false;
+    }
+  }
+  window.claimDailyBonus = claimDailyBonus;
+
+  async function loadLeaderboard(type) {
+    const btns = document.querySelectorAll("#view-top .tasks-seg-btn");
+    btns.forEach(b => b.classList.remove("active"));
+    const btn = document.getElementById(`ld-${type}`);
+    if (btn) btn.classList.add("active");
+
+    const box = document.getElementById("leaderboard-list");
+    box.innerHTML = `<div class="card" style="text-align:center; padding:30px;"><div class="spinner" style="border-color:var(--accent-cyan); border-right-color:transparent; width:30px; height:30px; margin:0 auto 10px;"></div><div style="color:var(--text-dim);">Загрузка...</div></div>`;
+
+    try {
+      const res = await apiPost("/api/leaderboard/top", {});
+      if (!res || !res.ok) throw new Error("Не удалось загрузить топ.");
+      
+      let list = [];
+      let formatScore = (s) => s;
+      if (type === 'refs') {
+        list = res.top_refs || [];
+        formatScore = (s) => `${s} чел.`;
+      } else if (type === 'rub') {
+        list = res.top_rub || [];
+        formatScore = (s) => `${fmtRub(s)}`;
+      } else if (type === 'level') {
+        list = res.top_level || [];
+        formatScore = (s) => `LVL ${s}`;
+      }
+
+      if (!list.length) {
+        box.innerHTML = `<div class="card" style="text-align:center; padding:30px; color:var(--text-dim);">Пока здесь пусто</div>`;
+        return;
+      }
+
+      box.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      list.forEach(u => {
+        let medal = "";
+        if (u.rank === 1) medal = "🥇";
+        else if (u.rank === 2) medal = "🥈";
+        else if (u.rank === 3) medal = "🥉";
+        else medal = `#${u.rank}`;
+
+        const isMe = Number(state.user && state.user.user_id) === Number(u.user_id);
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.padding = "12px 14px";
+        card.style.borderRadius = "14px";
+        card.style.display = "flex";
+        card.style.alignItems = "center";
+        card.style.gap = "12px";
+        if (isMe) {
+          card.style.background = "linear-gradient(135deg, rgba(255,215,0,0.1), rgba(0,0,0,0))";
+          card.style.borderColor = "rgba(255,215,0,0.3)";
+        }
+
+        const name = u.username ? `@${u.username}` : `Игрок ${u.user_id}`;
+
+        card.innerHTML = `
+          <div style="font-size:20px; font-weight:900; color:var(--text-dim); min-width:30px; text-align:center;">${medal}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:900; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safeText(name)} ${isMe ? '<span style="font-size:10px; background:var(--accent-cyan); color:#000; padding:2px 6px; border-radius:99px; margin-left:5px;">ВЫ</span>' : ''}</div>
+            ${type === 'level' ? `<div style="font-size:11px; color:var(--text-dim);">Опыт: ${u.xp || 0} XP</div>` : ''}
+          </div>
+          <div style="font-weight:900; font-size:15px; color:var(--accent-gold);">${formatScore(u.score)}</div>
+        `;
+        frag.appendChild(card);
+      });
+      box.appendChild(frag);
+
+    } catch (e) {
+      box.innerHTML = `<div class="card" style="text-align:center; padding:30px; color:var(--accent-red);">${e.message || "Ошибка загрузки"}</div>`;
+    }
+  }
+  window.loadLeaderboard = loadLeaderboard;
+
 })();

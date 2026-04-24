@@ -578,6 +578,7 @@
       </div>
 
       <div class="card rc-actions-card">
+        <button class="btn btn-secondary" onclick="claimDailyBonus()" id="btn-daily-bonus" style="width:100%; margin-bottom:15px; border-color:var(--accent-gold); color:var(--accent-gold); background:rgba(255,215,0,0.05);">🎁 Забрать ежедневный бонус</button>
         <div class="quick-actions">
           <!-- HISTORY -->
           <div class="qa-card qa-history" onclick="showHistory()">
@@ -782,6 +783,17 @@
 
     </section>
 
+    <!-- TOP / LEADERBOARD -->
+    <section id="view-top" class="hidden anim-entry">
+      <h2 style="font-size:28px; font-weight:900; margin-bottom:15px;">🏆 Доска почета</h2>
+      <div class="seg-switch tasks-seg-switch" style="display:flex; background: var(--glass); padding:4px; border-radius:16px; border:1px solid var(--glass-border); margin-bottom: 20px;">
+        <div class="nav-item tasks-seg-btn active" onclick="loadLeaderboard('refs')" id="ld-refs">👥 По рефералам</div>
+        <div class="nav-item tasks-seg-btn" onclick="loadLeaderboard('rub')" id="ld-rub">💰 По деньгам</div>
+        <div class="nav-item tasks-seg-btn" onclick="loadLeaderboard('level')" id="ld-level">⭐ По уровню</div>
+      </div>
+      <div id="leaderboard-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </section>
+
     <!-- HISTORY -->
     <section id="view-history" class="hidden anim-entry">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
@@ -803,6 +815,7 @@
   <nav class="nav-bar">
     <div class="nav-item active" id="tab-tasks" onclick="showTab('tasks')"><span>📋</span> Задания</div>
     <div class="nav-item" id="tab-friends" onclick="showTab('friends')"><span>👥</span> Друзья</div>
+    <div class="nav-item" id="tab-top" onclick="showTab('top')"><span>🏆</span> Топ</div>
     <div class="nav-item" id="tab-help" onclick="showTab('help')"><span>❓</span> FAQ</div>
     <div class="nav-item" id="tab-profile" onclick="showTab('profile')"><span>👤</span> Профиль</div>
   </nav>
