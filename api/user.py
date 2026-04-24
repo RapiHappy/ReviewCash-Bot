@@ -470,32 +470,48 @@ async def api_bonus_claim(req: web.Request):
 async def api_leaderboard_top(req: web.Request):
     _, user = await require_init_optional(req)
     
-    # 1. Top by Rub Balance
+    # 1. Top by Ruble Balance
     top_rub = []
     try:
-        r = await sb_select(T_BAL, columns="user_id, username, rub_balance", order="rub_balance", desc=True, limit=50)
-        for i, row in enumerate(r.data or []):
-            top_rub.append({
-                "rank": i + 1,
-                "user_id": row.get("user_id"),
-                "username": row.get("username"),
-                "score": float(row.get("rub_balance") or 0)
-            })
+        r = await sb_select(T_BAL, columns="user_id, rub_balance", order="rub_balance", desc=True, limit=50)
+        u_ids = [x.get("user_id") for x in (r.data or [])]
+        if u_ids:
+            names_r = await sb_select_in(T_USERS, "user_id", u_ids, columns="user_id, username, first_name")
+            names_map = {x["user_id"]: x for x in (names_r.data or [])}
+            
+            for i, row in enumerate(r.data or []):
+                uid = row.get("user_id")
+                u_info = names_map.get(uid) or {}
+                top_rub.append({
+                    "rank": i + 1,
+                    "user_id": uid,
+                    "username": u_info.get("username"),
+                    "first_name": u_info.get("first_name"),
+                    "score": float(row.get("rub_balance") or 0)
+                })
     except Exception as e:
         log.error(f"top_rub err: {e}")
 
     # 2. Top by Level (XP)
     top_level = []
     try:
-        r = await sb_select(T_BAL, columns="user_id, username, level, xp", order="xp", desc=True, limit=50)
-        for i, row in enumerate(r.data or []):
-            top_level.append({
-                "rank": i + 1,
-                "user_id": row.get("user_id"),
-                "username": row.get("username"),
-                "score": int(row.get("level") or 1),
-                "xp": int(row.get("xp") or 0)
-            })
+        r = await sb_select(T_BAL, columns="user_id, level, xp", order="xp", desc=True, limit=50)
+        u_ids = [x.get("user_id") for x in (r.data or [])]
+        if u_ids:
+            names_r = await sb_select_in(T_USERS, "user_id", u_ids, columns="user_id, username, first_name")
+            names_map = {x["user_id"]: x for x in (names_r.data or [])}
+            
+            for i, row in enumerate(r.data or []):
+                uid = row.get("user_id")
+                u_info = names_map.get(uid) or {}
+                top_level.append({
+                    "rank": i + 1,
+                    "user_id": uid,
+                    "username": u_info.get("username"),
+                    "first_name": u_info.get("first_name"),
+                    "score": int(row.get("level") or 1),
+                    "xp": int(row.get("xp") or 0)
+                })
     except Exception as e:
         log.error(f"top_level err: {e}")
 
@@ -514,14 +530,16 @@ async def api_leaderboard_top(req: web.Request):
         sorted_refs = sorted(refs_count.items(), key=lambda x: x[1], reverse=True)[:50]
         if sorted_refs:
             ref_ids = [k for k, v in sorted_refs]
-            users_r = await sb_select_in(T_USERS, "user_id", ref_ids, columns="user_id, username")
-            uname_map = {x.get("user_id"): x.get("username") for x in (users_r.data or [])}
+            users_r = await sb_select_in(T_USERS, "user_id", ref_ids, columns="user_id, username, first_name")
+            u_map = {x.get("user_id"): x for x in (users_r.data or [])}
             
             for i, (u_id, count) in enumerate(sorted_refs):
+                u_info = u_map.get(u_id) or {}
                 top_refs.append({
                     "rank": i + 1,
                     "user_id": u_id,
-                    "username": uname_map.get(u_id),
+                    "username": u_info.get("username"),
+                    "first_name": u_info.get("first_name"),
                     "score": count
                 })
     except Exception as e:

@@ -4350,7 +4350,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
           card.style.borderColor = "rgba(255,215,0,0.3)";
         }
 
-        const name = u.username ? `@${u.username}` : `Игрок ${u.user_id}`;
+        const name = u.username ? `@${u.username}` : (u.first_name || `Игрок ${u.user_id}`);
 
         card.innerHTML = `
           <div style="font-size:20px; font-weight:900; color:var(--text-dim); min-width:30px; text-align:center;">${medal}</div>
