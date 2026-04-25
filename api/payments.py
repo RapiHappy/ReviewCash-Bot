@@ -27,6 +27,17 @@ from api.task_helpers import *
 def _now():
     return datetime.now(timezone.utc)
 
+def parse_amount_rub(v) -> float | None:
+    try:
+        if v is None: return None
+        s = str(v).replace(",", ".").replace("₽", "").replace("$", "").strip()
+        # strip non-numeric except dot
+        s = "".join(c for c in s if c.isdigit() or c == ".")
+        if not s: return None
+        return float(s)
+    except Exception:
+        return None
+
 # CryptoBot client (optional — None if CRYPTO_PAY_TOKEN not set)
 try:
     from crypto_service import crypto as _crypto_client
