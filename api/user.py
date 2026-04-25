@@ -468,9 +468,9 @@ async def api_bonus_claim(req: web.Request):
         
         return web.json_response({"ok": True, "bonus_rub": bonus_rub})
     except Exception as e:
-        logger = globals().get("log") or logging.getLogger(__name__)
-        logger.exception(f"api_bonus_claim failed uid={uid}: {e}")
-        return web.json_response({"ok": False, "error": f"Ошибка при получении бонуса: {e}"}, status=500)
+        _log = logging.getLogger("reviewcash")
+        _log.exception("api_bonus_claim failed uid=%s: %s", uid, e)
+        return web.json_response({"ok": False, "error": f"Ошибка бонуса: {type(e).__name__}: {e}"}, status=500)
 
 async def api_leaderboard_top(req: web.Request):
     _, user = await require_init_optional(req)

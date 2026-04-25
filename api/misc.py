@@ -83,20 +83,20 @@ async def api_error_middleware(req: web.Request, handler):
     except web.HTTPException:
         raise
     except Exception as e:
-        # Try to log the error properly. Use __name__ if log is missing
-        logger = globals().get("log") or logging.getLogger(__name__)
+        _log = logging.getLogger("reviewcash")
         try:
-            logger.exception(f"Unhandled API error on {req.method} {req.path}: {e}")
+            _log.exception("API ERROR %s %s: %s", req.method, req.path, e)
         except Exception:
-            print(f"FAILED TO LOG: {e}")
+            print(f"[CRITICAL] FAILED TO LOG: {req.path} -> {e}")
 
         if req.path.startswith("/api/"):
-            # Include error message in response for easier debugging if in debug mode or for specific errors
-            err_msg = str(e) if ".test" in req.host or "localhost" in req.host else "Временная ошибка сервера"
+            # ALWAYS return real error to user — this is a Telegram Mini App, not a public website
+            err_msg = f"Ошибка сервера: {type(e).__name__}: {e}"
             return web.json_response({
-                "ok": False, 
+                "ok": False,
                 "error": err_msg,
-                "detail": str(e)
+                "detail": str(e),
+                "error_type": type(e).__name__,
             }, status=500)
         raise
 

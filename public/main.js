@@ -302,7 +302,27 @@ function tgAlert(msg, kind = "info", title = "") {
       // keep placeholder
     };
   }
-  function showToast(kind, message, title = "") {
+  function showToast(kindOrMsg, messageOrKind, title = "") {
+    // Smart detection: support BOTH calling conventions:
+    //   showToast("success", "Бонус получен!")  — (kind, message)
+    //   showToast("Выбери тип", "error")         — (message, kind)  [legacy]
+    //   showToast("Бонус получен!")               — (message only)
+    const validKinds = ["success", "error", "info", "warning"];
+    let kind, message;
+    if (validKinds.includes(kindOrMsg)) {
+      // First arg is a valid kind
+      kind = kindOrMsg;
+      message = messageOrKind || "";
+    } else if (validKinds.includes(messageOrKind)) {
+      // Second arg is a valid kind (legacy convention)
+      kind = messageOrKind;
+      message = kindOrMsg || "";
+    } else {
+      // Neither is a valid kind — treat first as message
+      kind = "info";
+      message = kindOrMsg || messageOrKind || "";
+    }
+
     const stack = $("toast-stack");
     if (!stack) {
       try { if (tg && tg.showAlert) return tg.showAlert(String(message)); } catch (e) {}
@@ -4299,7 +4319,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       const res = await apiPost("/api/bonus/claim", {});
       if (res && res.ok) {
         tgHaptic("success");
-        showToast(`✨ Бонус получен! +${res.bonus_rub} ₽`);
+        showToast("success", `✨ Бонус получен! +${res.bonus_rub} ₽`);
         syncAll();
       } else {
         tgHaptic("error");
@@ -4553,25 +4573,9 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     recalc();
   }
 
-  function showToast(msg, type = "success") {
-    const container = document.getElementById("toast-container");
-    if (!container) {
-       tgAlert(msg, type);
-       return;
-    }
-    
-    const toast = document.createElement("div");
-    toast.className = `toast ${type}`;
-    const icon = type === "success" ? "✨" : "❌";
-    toast.innerHTML = `<span>${icon}</span> ${msg}`;
-    
-    container.appendChild(toast);
-    
-    setTimeout(() => {
-      toast.classList.add("fade-out");
-      setTimeout(() => toast.remove(), 400);
-    }, 3500);
-  }
+  // NOTE: showToast is already defined at top of file (line ~305) with signature (kind, message, title).
+  // Do NOT redefine it here — that was causing "error" to show as text instead of the actual message.
+  // If you need a simple toast call, use: showToast("success", "message text") or tgAlert("text", "success").
 
   window.selectPlatform = selectPlatform;
   window.nextStep = nextStep;

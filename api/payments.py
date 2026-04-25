@@ -62,7 +62,7 @@ async def api_stars_link(req: web.Request):
         })
     except Exception as e:
         log.exception("DB insert payment(stars) failed: %s", e)
-        return web.json_response({"ok": False, "error": "Ошибка записи платежа"}, status=500)
+        return web.json_response({"ok": False, "error": f"Ошибка записи платежа: {type(e).__name__}: {e}"}, status=500)
 
     prices = [LabeledPrice(label=f"Пополнение {float(amount):.0f} ₽", amount=stars)]
 
@@ -101,7 +101,7 @@ async def api_stars_link(req: web.Request):
             await sb_update(T_PAY, {"provider": "stars", "provider_ref": payload_ref}, {"status": "failed"})
         except Exception:
             pass
-        return web.json_response({"ok": False, "error": "Не удалось создать инвойс Stars"}, status=500)
+        return web.json_response({"ok": False, "error": f"Stars ошибка: {type(e).__name__}: {e}"}, status=500)
 
 # -------------------------
 # CryptoBot create invoice (optional)
@@ -127,10 +127,15 @@ async def api_cryptobot_create(req: web.Request):
         return web.json_response({"ok": False, "error": "Некорректный курс конвертации"}, status=400)
 
     try:
-        inv = await crypto.create_invoice(asset="USDT", amount=usdt, description=f"ReviewCash topup {amount:.0f}₽ uid={uid}")
+        inv = await crypto.create_invoice(
+            asset="USDT",
+            amount=usdt,
+            description=f"ReviewCash topup {amount:.0f}₽ uid={uid}",
+            payload=str(uid),
+        )
     except Exception as e:
         log.exception("cryptobot create_invoice failed uid=%s: %s", uid, e)
-        return web.json_response({"ok": False, "error": "Не удалось создать счёт в CryptoBot. Попробуй позже."}, status=502)
+        return web.json_response({"ok": False, "error": f"CryptoBot ошибка: {type(e).__name__}: {e}"}, status=502)
 
     try:
         await sb_insert(T_PAY, {
