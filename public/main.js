@@ -2925,8 +2925,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       }
     }
 
-    // Sync the summary card if we are on the final step
-    if (state.currentWizStep === 3) {
+    // Always sync the summary card if we are configuring details (Step 2+)
+    if (state.currentWizStep >= 2) {
       updateWizard();
     }
 
@@ -4498,8 +4498,13 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const current = document.getElementById(`wiz-step-${state.currentWizStep}`);
     if (current) current.classList.remove("hidden");
     
-    // Update summary card on Step 3
-    if (state.currentWizStep === 3) {
+    const sumCard = document.getElementById("wiz-summary-card");
+    if (sumCard) {
+      sumCard.style.display = (state.currentWizStep >= 2) ? "block" : "none";
+    }
+
+    // Update summary card on Step 2 and 3
+    if (state.currentWizStep >= 2) {
       const type = document.getElementById("t-type").value;
       const target = document.getElementById("t-target").value;
       const ico = document.getElementById("wiz-sum-ico");
@@ -4510,17 +4515,29 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       if (title) title.textContent = (type === "ya" ? "Яндекс Карты" : type === "gm" ? "Google Maps" : type === "dg" ? "2GIS" : "Telegram");
       if (url) url.textContent = target || "Без ссылки";
 
-      // Price breakdown for confirmation
+      // IMPORTANT: Use the same clamping logic as recalc() for consistency!
+      let minReward = 100;
+      if (type === "ya") minReward = 100;
+      else if (type === "gm") minReward = 70;
+      else if (type === "dg") minReward = 15;
+      else if (type === "tg") {
+        const sid = currentTgSubtype();
+        const st = TG_TASK_TYPES.find(x => x.id === sid);
+        const extraDays = currentRetentionExtraDays();
+        minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
+      }
+
       const qty = Number(document.getElementById("t-qty").value || 1);
-      const pricePer = Number(document.getElementById("t-price-per-unit").value || 0);
+      const priceInput = document.getElementById("t-price-per-unit");
+      const rawPrice = Number(priceInput.value || 0);
+      const pricePer = Math.max(rawPrice, minReward); // Clamped value
+      
       const isVip = !!(document.getElementById("t-vip-only") && document.getElementById("t-vip-only").checked);
       const isTop = isTopWanted();
       
       const commPer = Math.floor(pricePer * 0.20);
       const vipPer = isVip ? Math.ceil(pricePer * 0.10) : 0;
-      const totalPer = pricePer + commPer + vipPer;
-      const grandTotal = (totalPer * qty) + (isTop ? 250 : 0);
-
+      
       const summaryLines = [
         `Кол-во: <b>${qty} шт.</b>`,
         `Награда: <b>${fmtRub(pricePer)}</b>`,
@@ -4531,19 +4548,17 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
 
       const sumBody = document.getElementById("wiz-sum-body");
       if (sumBody) sumBody.innerHTML = summaryLines.join("<br>");
-    }
 
-    // Step 2 Platform Context
-    if (state.currentWizStep === 2) {
-      const type = document.getElementById("t-type").value;
-      const ctx = document.getElementById("wiz-step-2-ctx");
-      if (ctx) {
-        const ico = type === "ya" ? "📍" : type === "gm" ? "🌍" : type === "dg" ? "🗺️" : "✈️";
-        const name = type === "ya" ? "Яндекс Карты" : type === "gm" ? "Google Maps" : type === "dg" ? "2GIS" : "Telegram";
-        ctx.innerHTML = `<div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:12px;">
-          <span style="font-size:20px;">${ico}</span>
-          <span style="font-weight:700;">${name}</span>
-        </div>`;
+      // If user typed too low price, snap it back on blur
+      if (!priceInput.dataset.blurInit) {
+        priceInput.addEventListener("blur", () => {
+          const val = Number(priceInput.value || 0);
+          if (val < minReward) {
+             priceInput.value = minReward;
+             recalc();
+          }
+        });
+        priceInput.dataset.blurInit = "true";
       }
     }
 

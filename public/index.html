@@ -871,6 +871,17 @@
         </select>
       </div>
 
+      <div class="wiz-summary-card" id="wiz-summary-card" style="margin-bottom:15px; padding:12px; background:rgba(255,255,255,0.05); border-radius:12px; border:1px solid rgba(255,255,255,0.1); display:none;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div id="wiz-sum-ico" style="font-size:24px;">📍</div>
+          <div style="flex:1; min-width:0;">
+            <div id="wiz-sum-title" style="font-weight:900; font-size:13px; color:var(--text-main);">Яндекс Карты</div>
+            <div id="wiz-sum-url" style="font-size:10px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">...</div>
+          </div>
+        </div>
+        <div id="wiz-sum-body" style="margin-top:10px; font-size:12px; color:var(--text-dim); line-height:1.5;"></div>
+      </div>
+
       <!-- STEP 2: DETAILS -->
       <div id="wiz-step-2" class="wiz-content hidden">
         <div id="wiz-step-2-ctx"></div>
@@ -884,6 +895,23 @@
           <div style="font-size:12px; color:var(--text-dim); line-height:1.4;" id="tg-check-hint-box">
             <b id="tg-check-hint-title">⚡ Автоматическая проверка:</b><br>
             <span id="tg-check-hint-text">Бот проверит выполнение автоматически.</span>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:15px;">
+          <div>
+            <label class="input-label">Цена за 1 шт.</label>
+            <input type="number" id="t-price-per-unit" value="100" min="5" oninput="recalc()" style="margin-top:5px;">
+          </div>
+          <div>
+            <label class="input-label">Количество</label>
+            <input type="number" id="t-qty" value="1" min="1" oninput="recalc()" style="margin-top:5px;">
+            <div style="display:flex; gap:4px; margin-top:6px;">
+              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(10)">10</button>
+              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(25)">25</button>
+              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(50)">50</button>
+              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(100)">100</button>
+            </div>
           </div>
         </div>
 
@@ -913,33 +941,9 @@
 
       <!-- STEP 3: OPTIONS & PAY -->
       <div id="wiz-step-3" class="wiz-content hidden">
-        <div class="wiz-summary-card" style="margin-bottom:15px; padding:12px; background:rgba(255,255,255,0.05); border-radius:12px; border:1px solid rgba(255,255,255,0.1);">
-          <div style="display:flex; align-items:center; gap:10px;">
-            <div id="wiz-sum-ico" style="font-size:24px;">📍</div>
-            <div style="flex:1; min-width:0;">
-              <div id="wiz-sum-title" style="font-weight:900; font-size:13px; color:var(--text-main);">Яндекс Карты</div>
-              <div id="wiz-sum-url" style="font-size:10px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">...</div>
-            </div>
-          </div>
-          <div id="wiz-sum-body" style="margin-top:10px; font-size:12px; color:var(--text-dim); line-height:1.5;"></div>
-        </div>
 
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-          <div>
-            <label class="input-label">Цена за 1 шт.</label>
-            <input type="number" id="t-price-per-unit" value="100" min="5" oninput="recalc()" style="margin-top:5px;">
-          </div>
-          <div>
-            <label class="input-label">Количество</label>
-            <input type="number" id="t-qty" value="1" min="1" oninput="recalc()" style="margin-top:5px;">
-            <div style="display:flex; gap:4px; margin-top:6px;">
-              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(10)">10</button>
-              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(25)">25</button>
-              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(50)">50</button>
-              <button type="button" class="btn btn-secondary btn-xs" style="padding:2px 8px; font-size:10px;" onclick="setQty(100)">100</button>
-            </div>
-          </div>
-        </div>
+
+
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px;">
           <div>
@@ -961,12 +965,12 @@
           </div>
         </div>
 
-        <div class="vip-toggle-wrap" style="margin-top:15px; padding:12px;">
-          <div style="flex:1;">
+        <div class="vip-toggle-wrap" style="margin-top:15px; padding:12px; cursor:pointer;" onclick="const cb = document.getElementById('t-vip-only'); cb.checked = !cb.checked; recalc();">
+          <div style="flex:1; pointer-events:none;">
             <div style="font-weight:900; color:var(--accent-gold); font-size:13px;">👑 VIP Задание (+10%)</div>
             <div style="font-size:10px; color:var(--text-dim);">Только для опытных исполнителей</div>
           </div>
-          <input type="checkbox" id="t-vip-only" onchange="recalc()" style="width:20px; height:20px;">
+          <input type="checkbox" id="t-vip-only" onchange="recalc()" style="width:20px; height:20px;" onclick="event.stopPropagation()">
         </div>
 
         <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()" style="margin-top:12px; transform: scale(0.95); margin-left:-2.5%; width:105%;">
