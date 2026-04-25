@@ -24,6 +24,9 @@ import asyncio
 from main import *
 from api.task_helpers import *
 
+def _now():
+    return datetime.now(timezone.utc)
+
 # CryptoBot client (optional — None if CRYPTO_PAY_TOKEN not set)
 try:
     from crypto_service import crypto as _crypto_client

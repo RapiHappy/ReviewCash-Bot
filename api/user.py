@@ -21,7 +21,40 @@ import asyncio
 
 from api.task_helpers import *
 from main import *
-from main import _make_session_token, _parse_dt, _now, _dt_key
+
+def _now():
+    return datetime.now(timezone.utc)
+
+def _parse_dt(v):
+    try:
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        if isinstance(v, str) and v.strip():
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except Exception:
+        pass
+    return None
+
+def _dt_key(v: str):
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+def _make_session_token(user_id: int) -> str | None:
+    # Use global secret from config (imported via main)
+    from config import WEBAPP_SESSION_SECRET
+    if not WEBAPP_SESSION_SECRET:
+        return None
+    try:
+        import hmac, hashlib, base64, time
+        ts = int(time.time())
+        data = f"{user_id}:{ts}"
+        sig = hmac.new(WEBAPP_SESSION_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()
+        token = base64.b64encode(f"{data}:{sig}".encode()).decode()
+        return token
+    except Exception:
+        return None
 
 
 # The main.py will later import these and inject missing dependencies
