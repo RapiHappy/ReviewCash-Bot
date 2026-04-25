@@ -4291,7 +4291,12 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       }
     } catch (e) {
       tgHaptic("error");
-      tgAlert(e && e.message ? e.message : "Ошибка получения бонуса.", "error");
+      let msg = e && e.message ? e.message : "Ошибка получения бонуса.";
+      if (msg.includes("Бонус уже получен")) {
+        tgAlert(msg, "warning", "Ожидание");
+      } else {
+        tgAlert(msg, "error");
+      }
     } finally {
       const btn = document.getElementById("btn-daily-bonus");
       if (btn) btn.disabled = false;
