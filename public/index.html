@@ -893,11 +893,13 @@
 
         <div id="review-text-config" class="hidden" style="margin-top:14px;">
           <label class="input-label" style="margin-top:0;">Текст для исполнителей</label>
+          <div id="review-mode-badge" class="review-mode-badge" style="margin-bottom:10px;"></div>
           <select id="t-review-mode" onchange="recalc()" class="review-mode-select" style="margin-top:5px;">
             <option value="none">🚫 Без готового текста</option>
             <option value="per_item">🔥 Разный текст для каждого</option>
             <option value="single">👥 Один текст всем</option>
           </select>
+          <div id="review-variants-helper" class="review-config-note" style="font-size:12px; line-height:1.4; color:var(--text-dim); margin-top:8px;"></div>
           <textarea id="t-review-variants" rows="3" placeholder="..." style="margin-top:10px;"></textarea>
         </div>
 
