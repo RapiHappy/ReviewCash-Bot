@@ -2809,7 +2809,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const isReview = (type === "ya" || type === "gm" || type === "dg");
     if (isReview) {
       label.textContent = "ССЫЛКА НА ОРГАНИЗАЦИЮ";
-      input.placeholder = "Вставьте ссылку на карточку места...";
+      input.placeholder = "Вставьте ссылку...";
     } else {
       label.textContent = "ССЫЛКА (КАНАЛ/БОТ/ПОСТ)";
       input.placeholder = "https://t.me/...";
