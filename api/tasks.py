@@ -122,7 +122,7 @@ async def api_task_create(req: web.Request):
         raise web.HTTPBadRequest(text="Missing target_url")
 
     # Only links/@usernames allowed. For YA/GM: validate + ensure URL is reachable.
-    if ttype in ("ya", "gm"):
+    if ttype in ("ya", "gm", "dg"):
         ok_u, norm_u, err = validate_target_url(ttype, target_url)
         if not ok_u:
             return json_error(400, err, code="BAD_LINK")

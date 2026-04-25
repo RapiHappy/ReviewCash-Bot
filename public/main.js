@@ -2781,6 +2781,21 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       : "Например: выполните задание и отправьте отчёт.";
   }
 
+  function syncTaskTargetUi(type) {
+    const input = $("t-target");
+    const label = document.querySelector('label[for="t-target"]');
+    if (!input || !label) return;
+    
+    const isReview = (type === "ya" || type === "gm" || type === "dg");
+    if (isReview) {
+      label.textContent = "ССЫЛКА НА ОРГАНИЗАЦИЮ";
+      input.placeholder = "Вставьте ссылку на карточку места...";
+    } else {
+      label.textContent = "ССЫЛКА (КАНАЛ/БОТ/ПОСТ)";
+      input.placeholder = "https://t.me/...";
+    }
+  }
+
   window.toggleTaskCommentBox = function () {
     const wrap = $("task-comment-wrap");
     if (!wrap) return;
@@ -2854,6 +2869,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
 
     syncTaskCommentUi(type);
+    syncTaskTargetUi(type);
     
     const tgWrap = $("tg-subtype-wrapper");
     const tgOpt = $("tg-options");
@@ -4406,11 +4422,8 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const vip = document.getElementById("t-vip-only");
     if (vip) vip.checked = false;
     
-    // Reset Top Option if exists
-    if (typeof state.isTopWanted === "function") {
-       // if it's a function that returns current state, we might need a way to reset it
-    }
-    // Just force the UI to look inactive
+    // Reset Top Option
+    state.createTopWanted = false;
     const topCard = document.getElementById("top-option-card");
     if (topCard) topCard.classList.remove("active");
     
@@ -4442,8 +4455,13 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       if (!type) return showToast("Выберите платформу", "error");
     }
     if (state.currentWizStep === 2) {
+      const type = document.getElementById("t-type").value;
       const target = document.getElementById("t-target").value;
       if (!target || target.length < 5) return showToast("Укажите корректную ссылку", "error");
+      
+      if (type === "ya" && !isYandexMapsUrl(target)) return showToast("Укажите корректную ссылку на Яндекс Карты", "error");
+      if (type === "gm" && !isGoogleMapsUrl(target)) return showToast("Укажите корректную ссылку на Google Maps", "error");
+      if (type === "dg" && !is2GisUrl(target)) return showToast("Укажите корректную ссылку на 2GIS", "error");
     }
     
     if (state.currentWizStep < 3) {
@@ -4475,6 +4493,44 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       if (ico) ico.textContent = (type === "ya" ? "📍" : type === "gm" ? "🌍" : type === "dg" ? "🗺️" : "✈️");
       if (title) title.textContent = (type === "ya" ? "Яндекс Карты" : type === "gm" ? "Google Maps" : type === "dg" ? "2GIS" : "Telegram");
       if (url) url.textContent = target || "Без ссылки";
+
+      // Price breakdown for confirmation
+      const qty = Number(document.getElementById("t-qty").value || 1);
+      const pricePer = Number(document.getElementById("t-price-per-unit").value || 0);
+      const isVip = !!(document.getElementById("t-vip-only") && document.getElementById("t-vip-only").checked);
+      const isTop = isTopWanted();
+      
+      const commPer = Math.floor(pricePer * 0.20);
+      const vipPer = isVip ? Math.ceil(pricePer * 0.10) : 0;
+      const totalPer = pricePer + commPer + vipPer;
+      const grandTotal = (totalPer * qty) + (isTop ? 250 : 0);
+
+      const summaryLines = [
+        `Кол-во: <b>${qty} шт.</b>`,
+        `Награда: <b>${fmtRub(pricePer)}</b>`,
+        commPer > 0 ? `Комиссия: <b>${fmtRub(commPer)}</b>` : null,
+        vipPer > 0 ? `VIP-наценка: <b>${fmtRub(vipPer)}</b>` : null,
+        isTop ? `Закреп в ТОПе: <b>250 ₽</b>` : null,
+        `<hr style="margin:8px 0; border:0; border-top:1px solid rgba(255,255,255,0.1)">`,
+        `ИТОГО: <b style="color:var(--accent-green); font-size:18px;">${fmtRub(grandTotal)}</b>`
+      ].filter(Boolean);
+
+      const sumBody = document.getElementById("wiz-sum-body");
+      if (sumBody) sumBody.innerHTML = summaryLines.join("<br>");
+    }
+
+    // Step 2 Platform Context
+    if (state.currentWizStep === 2) {
+      const type = document.getElementById("t-type").value;
+      const ctx = document.getElementById("wiz-step-2-ctx");
+      if (ctx) {
+        const ico = type === "ya" ? "📍" : type === "gm" ? "🌍" : type === "dg" ? "🗺️" : "✈️";
+        const name = type === "ya" ? "Яндекс Карты" : type === "gm" ? "Google Maps" : type === "dg" ? "2GIS" : "Telegram";
+        ctx.innerHTML = `<div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.05); border-radius:12px;">
+          <span style="font-size:20px;">${ico}</span>
+          <span style="font-weight:700;">${name}</span>
+        </div>`;
+      }
     }
 
     document.querySelectorAll(".wiz-step").forEach((s, idx) => {
