@@ -2914,15 +2914,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     
     const grandTotal = baseTotal + commTotal + vipTotal + topPrice;
 
-    // Display breakdown
-    if ($("calc-base")) $("calc-base").textContent = fmtRub(baseTotal);
-    if ($("calc-comm")) $("calc-comm").textContent = fmtRub(commTotal);
-    if ($("calc-comm-row")) $("calc-comm-row").style.display = commissionEnabled ? "flex" : "none";
-    if ($("calc-vip")) $("calc-vip").textContent = fmtRub(vipTotal);
-    if ($("calc-vip-row")) $("calc-vip-row").style.display = isVipOnly ? "flex" : "none";
-    
-    if ($("calc-top")) $("calc-top").textContent = fmtRub(topPrice);
-    if ($("calc-top-row")) $("calc-top-row").style.display = isTopWanted() ? "flex" : "none";
+    const totalPrice = grandTotal;
     
     const totalEl = $("t-total");
     if (totalEl) {
@@ -2933,6 +2925,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       }
     }
 
+    // Sync the summary card if we are on the final step
+    if (state.currentWizStep === 3) {
+      updateWizard();
+    }
+
     const minWarn = $("t-min-budget-warning");
     let minCostTarget = (type === "ya" ? 100 : (type === "gm" ? 70 : (type === "tg" ? 5 : 15)));
     if (type === "tg") {
@@ -2941,10 +2938,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
        const extraDays = currentRetentionExtraDays();
        minCostTarget = (st ? st.cost : 6) + (extraDays * TG_EXTRA_RETENTION_COST_PER_DAY);
     }
-    const actualCostPer = pricePerUnit + Math.floor(pricePerUnit * (commissionEnabled ? 0.2 : 0)) + (isVipOnly ? Math.ceil(pricePerUnit * 0.1) : 0);
     
     if (minWarn) {
-      minWarn.style.display = pricePerUnit < minReward ? "block" : "none";
+      minWarn.style.display = pricePerUnitInput && Number(pricePerUnitInput.value || 0) < minReward ? "block" : "none";
       minWarn.textContent = `Минимальная цена задания — ${minReward} ₽.`;
     }
 
@@ -4530,9 +4526,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
         `Награда: <b>${fmtRub(pricePer)}</b>`,
         commPer > 0 ? `Комиссия: <b>${fmtRub(commPer)}</b>` : null,
         vipPer > 0 ? `VIP-наценка: <b>${fmtRub(vipPer)}</b>` : null,
-        isTop ? `Закреп в ТОПе: <b>250 ₽</b>` : null,
-        `<hr style="margin:8px 0; border:0; border-top:1px solid rgba(255,255,255,0.1)">`,
-        `ИТОГО: <b style="color:var(--accent-green); font-size:18px;">${fmtRub(grandTotal)}</b>`
+        isTop ? `Закреп в ТОПе: <b>250 ₽</b>` : null
       ].filter(Boolean);
 
       const sumBody = document.getElementById("wiz-sum-body");
