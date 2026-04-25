@@ -494,8 +494,8 @@ async def api_bonus_claim(req: web.Request):
             mins = (wait_sec % 3600) // 60
             return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
         
-        # Claim bonus (0.2 RUB)
-        bonus_rub = 0.2
+        # Claim bonus
+        bonus_rub = DAILY_BONUS_RUB
         await add_rub(uid, bonus_rub)
         await touch_limit(uid, "daily_bonus")
         

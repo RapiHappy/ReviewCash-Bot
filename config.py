@@ -138,3 +138,6 @@ TG_JOIN_GROUP_72H_KEY = "jg_72h"
 # Gender keys (user_limits)
 USER_GENDER_MALE_KEY = "gender_m"
 USER_GENDER_FEMALE_KEY = "gender_f"
+
+# Rewards
+DAILY_BONUS_RUB = 0.5
