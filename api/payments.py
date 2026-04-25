@@ -116,7 +116,9 @@ async def api_cryptobot_create(req: web.Request):
     rate_limit_enforce(uid, "cryptopay_create", min_interval_sec=30, spam_strikes=5, block_sec=300)
     body = await safe_json(req)
 
-    amount = float(body.get("amount_rub") or 0)
+    amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or 0)
+    if amount is None:
+        return web.json_response({"ok": False, "error": "Некорректная сумма"}, status=400)
     if amount < max(MIN_TOPUP_RUB, 1):
         return web.json_response({"ok": False, "error": f"Минимум {MIN_TOPUP_RUB:.0f}₽"}, status=400)
 

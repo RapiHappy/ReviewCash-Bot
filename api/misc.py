@@ -83,11 +83,20 @@ async def api_error_middleware(req: web.Request, handler):
     except web.HTTPException:
         raise
     except Exception as e:
+        # Try to log the error properly. Use __name__ if log is missing
+        logger = globals().get("log") or logging.getLogger(__name__)
         try:
-            log.exception("unhandled api error on %s %s: %s", req.method, req.path, e)
+            logger.exception(f"Unhandled API error on {req.method} {req.path}: {e}")
         except Exception:
-            pass
+            print(f"FAILED TO LOG: {e}")
+
         if req.path.startswith("/api/"):
-            return web.json_response({"ok": False, "error": "Временная ошибка сервера"}, status=500)
+            # Include error message in response for easier debugging if in debug mode or for specific errors
+            err_msg = str(e) if ".test" in req.host or "localhost" in req.host else "Временная ошибка сервера"
+            return web.json_response({
+                "ok": False, 
+                "error": err_msg,
+                "detail": str(e)
+            }, status=500)
         raise
 

@@ -184,6 +184,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reviewcash")
+RATE_LIMIT_STATE = {}
 
 # Build tag for diagnostics (to ensure Render runs the expected version)
 BUILD_TAG = 'rc_backend_release5_lvldouble'

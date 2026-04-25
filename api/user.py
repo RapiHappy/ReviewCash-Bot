@@ -453,19 +453,24 @@ async def api_bonus_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
     
-    # Check limit (24 hours = 86400 seconds)
-    ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
-    if not ok:
-        hours = wait_sec // 3600
-        mins = (wait_sec % 3600) // 60
-        return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
-    
-    # Claim bonus (0.2 RUB)
-    bonus_rub = 0.2
-    await add_rub(uid, bonus_rub)
-    await touch_limit(uid, "daily_bonus")
-    
-    return web.json_response({"ok": True, "bonus_rub": bonus_rub})
+    try:
+        # Check limit (24 hours = 86400 seconds)
+        ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
+        if not ok:
+            hours = wait_sec // 3600
+            mins = (wait_sec % 3600) // 60
+            return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
+        
+        # Claim bonus (0.2 RUB)
+        bonus_rub = 0.2
+        await add_rub(uid, bonus_rub)
+        await touch_limit(uid, "daily_bonus")
+        
+        return web.json_response({"ok": True, "bonus_rub": bonus_rub})
+    except Exception as e:
+        logger = globals().get("log") or logging.getLogger(__name__)
+        logger.exception(f"api_bonus_claim failed uid={uid}: {e}")
+        return web.json_response({"ok": False, "error": f"Ошибка при получении бонуса: {e}"}, status=500)
 
 async def api_leaderboard_top(req: web.Request):
     _, user = await require_init_optional(req)
