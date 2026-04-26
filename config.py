@@ -23,6 +23,7 @@ if not MAIN_ADMIN_ID and ADMIN_IDS:
     MAIN_ADMIN_ID = int(ADMIN_IDS[0])
 
 MINIAPP_URL = os.getenv("MINIAPP_URL", "").strip()
+BOT_USERNAME = os.getenv("BOT_USERNAME", "ReviewCashOrg_Bot").strip()
 MANDATORY_SUB_CHANNEL = os.getenv("MANDATORY_SUB_CHANNEL", "").strip()
 
 # WebApp session

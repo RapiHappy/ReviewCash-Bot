@@ -13,12 +13,19 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
-from services.user_service import ensure_user, referrals_summary
+from services.user_service import ensure_user, referrals_summary, stats_add
 from services.ui_handlers import send_main_welcome
+import html
 import logging
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
+from aiogram import Router, F, Bot
+from aiogram.types import (
+    Message, CallbackQuery, PreCheckoutQuery, LabeledPrice, 
+    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+)
+from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiocryptopay import AioCryptoPay, Networks
 
 router = Router()
