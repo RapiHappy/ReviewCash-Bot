@@ -2829,8 +2829,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     let minQty = 1;
 
     if (type === "tg") {
-       minQty = 10;
        const sid = currentTgSubtype();
+       const isSub = (sid.includes("sub") || sid.includes("join"));
+       minQty = isSub ? 10 : 1;
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        const extraDays = currentRetentionExtraDays();
        minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
@@ -2860,8 +2861,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     let minQty = 1;
     let minReward = 100; // default for YA
     if (type === "tg") {
-       minQty = 10;
        const sid = currentTgSubtype();
+       const isSub = (sid.includes("sub") || sid.includes("join"));
+       minQty = isSub ? 10 : 1;
        const st = TG_TASK_TYPES.find(x => x.id === sid);
        const extraDays = currentRetentionExtraDays();
        minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
@@ -2993,6 +2995,15 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
     if (pricePerUnit < minReward) {
       return tgAlert(`Минимальная цена для этого типа задания: ${minReward} ₽.`, "error", "Цена слишком мала");
+    }
+
+    let minQty = 1;
+    if (type === "tg") {
+       const sid = currentTgSubtype();
+       if (sid.includes("sub") || sid.includes("join")) minQty = 10;
+    }
+    if (qty < minQty) {
+      return tgAlert(`Минимальное количество для этого задания: ${minQty} шт.`, "error", "Мало единиц");
     }
 
     // TG validation
@@ -4461,7 +4472,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       }
     });
     
-    recalc();
+    setToMinPrice();
     setTimeout(nextStep, 150);
   }
 
