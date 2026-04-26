@@ -20,7 +20,9 @@ import base64
 import asyncio
 
 from api.task_helpers import *
-from main import *
+# Removed from main import * to avoid circularity issues
+from services.user_service import ensure_user, referrals_summary
+from services.web_utils import *
 
 def _now():
     return datetime.now(timezone.utc)

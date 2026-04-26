@@ -2823,24 +2823,28 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     syncTaskCommentUi(currentCreateType());
   };
 
+  function getMinTaskReward(type) {
+    if (type === "ya") return 100;
+    if (type === "gm") return 70;
+    if (type === "dg") return 15;
+    if (type === "tg") {
+      const sid = currentTgSubtype();
+      const st = TG_TASK_TYPES.find(x => x.id === sid);
+      const extraDays = currentRetentionExtraDays();
+      return (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
+    }
+    return 100;
+  }
+
   function setToMinPrice() {
     const type = currentCreateType();
-    let minReward = 100;
+    let minReward = getMinTaskReward(type);
     let minQty = 1;
 
     if (type === "tg") {
        const sid = currentTgSubtype();
        const isSub = (sid.includes("sub") || sid.includes("join"));
        minQty = isSub ? 10 : 1;
-       const st = TG_TASK_TYPES.find(x => x.id === sid);
-       const extraDays = currentRetentionExtraDays();
-       minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-    } else if (type === "ya") {
-       minReward = 100;
-    } else if (type === "gm") {
-       minReward = 70;
-    } else if (type === "dg") {
-       minReward = 15;
     }
 
     const qtyInput = $("t-qty");
@@ -2859,21 +2863,12 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     
     // Limits
     let minQty = 1;
-    let minReward = 100; // default for YA
     if (type === "tg") {
        const sid = currentTgSubtype();
        const isSub = (sid.includes("sub") || sid.includes("join"));
        minQty = isSub ? 10 : 1;
-       const st = TG_TASK_TYPES.find(x => x.id === sid);
-       const extraDays = currentRetentionExtraDays();
-       minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-    } else if (type === "ya") {
-       minReward = 100;
-    } else if (type === "gm") {
-       minReward = 70;
-    } else if (type === "dg") {
-       minReward = 15;
     }
+    const minReward = getMinTaskReward(type);
 
     const qty = clamp(Number((qtyInput && qtyInput.value) || minQty), minQty, 1000000);
     // Enforce min qty in the UI input only for TG tasks if it's too low
@@ -4548,16 +4543,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       if (url) url.textContent = target || "Без ссылки";
 
       // IMPORTANT: Use the same clamping logic as recalc() for consistency!
-      let minReward = 100;
-      if (type === "ya") minReward = 100;
-      else if (type === "gm") minReward = 70;
-      else if (type === "dg") minReward = 15;
-      else if (type === "tg") {
-        const sid = currentTgSubtype();
-        const st = TG_TASK_TYPES.find(x => x.id === sid);
-        const extraDays = currentRetentionExtraDays();
-        minReward = (st ? st.reward : 5) + (extraDays * TG_EXTRA_RETENTION_REWARD_PER_DAY);
-      }
+      const minReward = getMinTaskReward(type);
 
       const qty = Number(document.getElementById("t-qty").value || 1);
       const priceInput = document.getElementById("t-price-per-unit");
@@ -4584,9 +4570,11 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       // If user typed too low price, snap it back on blur
       if (!priceInput.dataset.blurInit) {
         priceInput.addEventListener("blur", () => {
+          const t = document.getElementById("t-type").value;
+          const currentMin = getMinTaskReward(t);
           const val = Number(priceInput.value || 0);
-          if (val < minReward) {
-             priceInput.value = minReward;
+          if (val < currentMin) {
+             priceInput.value = currentMin;
              recalc();
           }
         });

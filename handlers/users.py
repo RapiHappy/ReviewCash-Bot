@@ -13,6 +13,8 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
+from services.user_service import ensure_user, referrals_summary
+from services.ui_handlers import send_main_welcome
 import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice

@@ -351,11 +351,71 @@ FEATURE_STARS_PAY_DISABLED_KEY = "feature_stars_pay_disabled"
 COMMISSION_DISABLED_KEY = "feature_commission_disabled"
 MAINTENANCE_MODE_KEY = "feature_maintenance_mode_on"
 
+# Gender keys (user_limits)
+USER_GENDER_MALE_KEY = "gender_m"
+USER_GENDER_FEMALE_KEY = "gender_f"
+
+TASK_GENDER_ANY = "any"
+TASK_GENDER_MALE = "male"
+TASK_GENDER_FEMALE = "female"
+
+TG_EVT_PREFIX = "tge:"
+
 def _feature_flags_user_id() -> int:
     try:
         return int(MAIN_ADMIN_ID or 0)
     except Exception:
         return 0
+
+def _evt_hash(v: str) -> str:
+    return hashlib.sha1(str(v or "").encode("utf-8")).hexdigest()[:20]
+
+def tg_evt_key(event: str, value: str | None = None) -> str:
+    base = f"{TG_EVT_PREFIX}{str(event or '').strip().lower()}"
+    if value:
+        return f"{base}:{_evt_hash(value)}"
+    return base
+
+async def tg_evt_touch(user_id: int, event: str, value: str | None = None):
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": tg_evt_key(event, value), "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+async def tg_evt_get(user_id: int, event: str, value: str | None = None) -> datetime | None:
+    r = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": tg_evt_key(event, value)}, limit=1)
+    if not r.data:
+        return None
+    return _parse_dt(r.data[0].get("last_at"))
+
+async def tg_set_gender(user_id: int, gender: str):
+    g = str(gender or "").strip().lower()
+    if g not in (TASK_GENDER_MALE, TASK_GENDER_FEMALE):
+        return
+    keep_key = USER_GENDER_MALE_KEY if g == TASK_GENDER_MALE else USER_GENDER_FEMALE_KEY
+    drop_key = USER_GENDER_FEMALE_KEY if g == TASK_GENDER_MALE else USER_GENDER_MALE_KEY
+    await sb_delete(T_LIMITS, {"user_id": int(user_id), "limit_key": drop_key})
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": keep_key, "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+async def tg_get_gender(user_id: int) -> str | None:
+    rm = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_MALE_KEY}, limit=1)
+    if rm.data:
+        return TASK_GENDER_MALE
+    rf = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_FEMALE_KEY}, limit=1)
+    if rf.data:
+        return TASK_GENDER_FEMALE
+    return None
+
+def normalize_task_gender(value: str | None) -> str:
+    v = str(value or "").strip().lower()
+    if v in (TASK_GENDER_MALE, TASK_GENDER_FEMALE):
+        return v
+    return TASK_GENDER_ANY
 
 async def is_maintenance_mode() -> bool:
     ff_uid = _feature_flags_user_id()

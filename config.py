@@ -64,6 +64,9 @@ DISABLE_INITDATA = os.getenv("DISABLE_INITDATA", "0").strip() == "1"
 # Gemini AI for reviews
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 PAYOUT_REVIEWS_CHANNEL = "@ReviewCashPayout"
+PAYOUT_CHANNEL = os.getenv("PAYOUT_CHANNEL", "@ReviewCashPayout").strip()
+NEWS_CHANNEL = os.getenv("NEWS_CHANNEL", "").strip()
+BOT_NAME = os.getenv("BOT_NAME", "ReviewCash").strip()
 
 # Proof upload (Supabase Storage)
 PROOF_BUCKET = os.getenv("PROOF_BUCKET", "proofs").strip() or "proofs"

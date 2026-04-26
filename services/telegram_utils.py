@@ -185,3 +185,12 @@ async def tg_is_member(chat: str, user_id: int, bot_instance: Bot | None = None)
     except Exception as e:
         log.warning("subscription check error: %s", e)
         return False
+def get_miniapp_url() -> str:
+    url = (MINIAPP_URL or '').strip()
+    if not url:
+        base = (SERVER_BASE_URL or BASE_URL or '').strip()
+        if base:
+            url = base.rstrip('/') + f'/app/?v={APP_BUILD}'
+    if url and 'v=' not in url:
+        url = url + ('&' if '?' in url else '?') + f'v={APP_BUILD}'
+    return url or '/app/'

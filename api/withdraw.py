@@ -21,7 +21,8 @@ import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
-from main import *
+from services.user_service import *
+from services.web_utils import *
 from api.task_helpers import *
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
@@ -32,15 +33,6 @@ async def api_withdraw_create(req: web.Request):
     if wb:
         return web.json_response({"ok": False, "error": f"Выводы временно заблокированы до {wb.strftime('%Y-%m-%d %H:%M')} UTC"}, status=403)
 
-    # Withdrawals only on Mon/Wed/Sat/Sun (Moscow time). Admins can bypass.
-    try:
-        if int(uid) not in ADMIN_IDS:
-            msk = timezone(timedelta(hours=3))
-            wd = datetime.now(msk).weekday()  # Mon=0 ... Sun=6
-            if wd not in (0, 2, 5, 6):
-                return web.json_response({"ok": False, "error": "Заявки на вывод принимаются только по понедельникам, средам, субботам и воскресеньям."}, status=400)
-    except Exception:
-        pass
 
     body = await safe_json(req)
 
@@ -51,6 +43,17 @@ async def api_withdraw_create(req: web.Request):
     full_name = str(body.get("full_name") or body.get("fio") or body.get("name") or "").strip()
     payout_value = str(body.get("payout_value") or body.get("phone") or body.get("card") or body.get("wallet") or body.get("requisites") or body.get("requisites_text") or body.get("details") or "").strip()
     payout_method = str(body.get("payout_method") or "").strip().lower()
+
+    # Withdrawals only on Mon/Wed/Sat/Sun (Moscow time) for non-crypto. Admins can bypass.
+    if payout_method != "cryptobot":
+        try:
+            if int(uid) not in ADMIN_IDS:
+                msk = timezone(timedelta(hours=3))
+                wd = datetime.now(msk).weekday()  # Mon=0 ... Sun=6
+                if wd not in (0, 2, 5, 6):
+                    return web.json_response({"ok": False, "error": "Вывод на карту/телефон доступен: ПН, СР, СБ, ВС. Крипто-вывод доступен в любой день!"}, status=400)
+        except Exception:
+            pass
 
     if amount < 300:
         return web.json_response({"ok": False, "error": "Минимальная сумма для вывода — 300 ₽"}, status=400)

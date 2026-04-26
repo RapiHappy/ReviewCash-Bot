@@ -24,7 +24,8 @@ from typing import Any
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
-from main import *
+from services.user_service import *
+from services.web_utils import *
 from api.task_helpers import *
 async def api_task_create(req: web.Request):
     _, user = await require_init(req)
