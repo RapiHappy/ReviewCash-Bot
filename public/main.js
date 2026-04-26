@@ -2785,16 +2785,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   window.toggleTopWanted = toggleTopWanted;
 
   function updateTopUi() {
-    const card = $("top-option-card");
-    const badge = $("top-option-badge");
-    const hint = $("top-option-hint");
-    if (!card) return;
-    const on = !!state.createTopWanted;
-    card.classList.toggle("checked", on);
-    card.setAttribute("aria-pressed", on ? "true" : "false");
-    if (badge) badge.textContent = on ? "Выбрано" : "Не выбрано";
-    if (hint) hint.textContent = on ? `К сумме добавится ${TOP_FIXED_PRICE_RUB} ₽ за 24 часа.` : `Поднимет задание выше остальных на 24 часа.`;
+    recalc();
   }
+
 
 
   function syncTaskCommentUi(type) {
@@ -2891,6 +2884,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
     const vipWrapper = $("vip-toggle-wrap");
     if (vipWrapper) vipWrapper.classList.toggle("checked", isVipOnly);
+    const topWrapper = $("top-option-card");
+    if (topWrapper) topWrapper.classList.toggle("checked", isTopWanted());
     
     const cur = $("t-cur") ? $("t-cur").value : "rub";
     const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
@@ -4562,8 +4557,8 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
       const baseTotal = pricePer * qty;
       const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
-      const vipTotal = isVip ? Math.ceil(baseTotal * 0.10) : 0;
-      const topPrice = isTop ? 250 : 0;
+      const vipTotal = isVipOnly() ? Math.ceil(baseTotal * 0.10) : 0;
+      const topPrice = isTopWanted() ? 250 : 0;
       
       const summaryLines = [
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Кол-во:</span> <b>${qty} шт.</b></div>`,

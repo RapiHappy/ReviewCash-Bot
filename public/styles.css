@@ -1074,7 +1074,7 @@ body.light-mode textarea{
 .top-option-card:active{
   transform: translateY(0) scale(.992);
 }
-.top-option-card.selected{
+.top-option-card.checked{
   border-color: rgba(255, 170, 0, 0.45);
   background:
     radial-gradient(circle at 10% 10%, rgba(255, 170, 0, 0.15), transparent 40%),
@@ -1092,7 +1092,7 @@ body.light-mode textarea{
   transform: translateX(-100%);
   transition: transform 0.6s ease;
 }
-.top-option-card.selected::before { transform: translateX(100%); }
+.top-option-card.checked::before { transform: translateX(100%); }
 
 
 
@@ -1198,12 +1198,12 @@ body.light-mode textarea{
   font-size: 11px;
   font-weight: 800;
 }
-.top-option-card.selected .top-option-badge{
+.top-option-card.checked .top-option-badge{
   background: rgba(255,209,104,0.12);
   border-color: rgba(255,209,104,0.22);
   color: #ffe08b;
 }
-.top-option-card.selected .top-option-hint{
+.top-option-card.checked .top-option-hint{
   color: rgba(255,243,204,0.9);
 }
 html.theme-light .top-option-card,
@@ -1216,8 +1216,8 @@ body.light-mode .top-option-card{
     0 12px 30px rgba(15,23,42,0.08),
     inset 0 1px 0 rgba(255,255,255,0.72);
 }
-html.theme-light .top-option-card.selected,
-body.light-mode .top-option-card.selected{
+html.theme-light .top-option-card.checked,
+body.light-mode .top-option-card.checked{
   border-color: rgba(245,158,11,0.26);
   box-shadow:
     0 16px 34px rgba(15,23,42,0.1),
@@ -3159,6 +3159,7 @@ html.theme-light .faq-q{
   background: #000000; /* Black handle as in screenshot */
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
+
 
 
 
