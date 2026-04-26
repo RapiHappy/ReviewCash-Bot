@@ -3122,43 +3122,44 @@ html.theme-light .faq-q{
 }
 .vip-toggle-wrap.checked::before { transform: translateX(100%); }
 
-/* High-end Switch */
+/* High-end Pill Switch (Exactly like user screenshot) */
 .rc-switch {
   position: relative;
-  width: 44px;
-  height: 24px;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 20px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  width: 42px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 100px; /* Fully pill-shaped */
+  transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
   display: block;
 }
 .rc-switch::after {
   content: "";
   position: absolute;
-  top: 3px;
-  left: 3px;
+  top: 2px;
+  left: 2px;
   width: 16px;
   height: 16px;
-  background: rgba(255, 255, 255, 0.9);
+  background: #ffffff;
   border-radius: 50%;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1.2);
+  transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 .vip-toggle-wrap.checked .rc-switch,
-.top-option-card.selected .rc-switch {
-  background: linear-gradient(135deg, #ffd700, #ffaa00);
-  border-color: rgba(255, 255, 255, 0.2);
-  box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+.top-option-card.checked .rc-switch {
+  background: linear-gradient(135deg, #ffb000, #ff8c00);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 15px rgba(255, 150, 0, 0.4);
 }
 .vip-toggle-wrap.checked .rc-switch::after,
-.top-option-card.selected .rc-switch::after {
-  left: 23px;
-  background: #000;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+.top-option-card.checked .rc-switch::after {
+  left: 22px;
+  background: #000000; /* Black handle as in screenshot */
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
+
 
 
 .commission-toggle-admin {
