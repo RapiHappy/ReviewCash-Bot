@@ -75,6 +75,34 @@ async def broadcast_new_task(bot: Bot, task: dict):
     except Exception as e:
         log.warning('broadcast_new_task failed: %s', e)
 
+async def notify_vips_about_fat_task(bot: Bot, task: dict):
+    """Exclusive notification for VIP users about high-reward tasks."""
+    try:
+        title = str(task.get('title') or 'Жирное задание').strip()
+        reward = float(task.get('reward_rub') or 0)
+        
+        text_msg = (
+            f"<b>🔥 ЭКСКЛЮЗИВ ДЛЯ VIP!</b>\n\n"
+            f"Появилось жирное задание: <b>{html.escape(title)}</b>\n"
+            f"💰 Награда: <b>{reward:.0f} ₽</b>\n\n"
+            f"Успей выполнить, пока есть места! 🚀"
+        )
+        kb = InlineKeyboardBuilder()
+        kb.button(text='💎 Открыть задания', web_app=WebAppInfo(url=get_miniapp_url()))
+        markup = kb.as_markup()
+        
+        vips = await get_all_vip_uids()
+        for uid in vips:
+            if await is_notify_muted(uid):
+                continue
+            try:
+                await bot.send_message(uid, text_msg, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
+    except Exception as e:
+        log.warning('notify_vips_about_fat_task failed: %s', e)
+
 async def process_tg_holds_once(bot: Bot):
     now_dt = _now()
     due_rows = await tg_hold_list_due(now_dt)

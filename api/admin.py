@@ -700,6 +700,9 @@ async def api_admin_proof_decision(req: web.Request):
             "moderated_by": int(admin["id"]),
             "moderated_at": _now().isoformat(),
         })
+        
+        # Reset fake report strikes on successful completion
+        await reset_fake_report_strikes(user_id)
 
         try:
             left = int(task.get("qty_left") or 0)
@@ -733,17 +736,28 @@ async def api_admin_proof_decision(req: web.Request):
         })
         if fake:
             try:
-                until = await set_task_ban(user_id, days=3)
+                # Track fake strikes and check for auto-ban
+                banned = await track_fake_report(user_id)
+                until = await get_task_ban_until(user_id)
             except Exception:
+                banned = False
                 until = None
-            txt = "🚫 Отчёт отмечен как фейк. Доступ к заданиям ограничен на 3 дня.\n\n⚠️ Предупреждение: за фейки применяются штрафы — блокировки, заморозка выплат и возможное снятие бонусов."
+            
+            if banned:
+                txt = "🚫 <b>Авто-бан на 24 часа!</b>\n\nВы прислали 3 фейковых отчёта подряд. Доступ к заданиям временно ограничен."
+            else:
+                txt = "🚫 <b>Отчёт отмечен как фейк.</b>\n\n⚠️ Предупреждение: при получении 3 фейковых отчётов подряд ваш аккаунт будет заблокирован на 24 часа."
+            
             if until:
-                txt += f"\n\nБлокировка до: {until.strftime('%d.%m %H:%M')}"
+                txt += f"\n\nБлокировка до: <b>{until.strftime('%d.%m %H:%M')} UTC</b>"
             await notify_user(user_id, txt)
         else:
-            msg = "❌ Отчёт отклонён модератором."
+            # Simple rejection - reset strikes? No, usually "in a row" means consecutive FAKES.
+            # But maybe we should reset on rejection too? Usually rejection is just "incorrect", not "fake".
+            # We'll leave strikes as is for normal rejections.
+            msg = "❌ <b>Отчёт отклонён модератором.</b>"
             if comment:
-                msg += f"\n\nКомментарий: {comment}"
+                msg += f"\n\nКомментарий: <i>{comment}</i>"
             if task_type in ("ya", "gm"):
                 msg += "\n\n🗑 Удали свой отзыв как можно скорее. Если отклонённый отзыв не удалить, аккаунт могут забанить и применить штраф."
             await notify_user(user_id, msg)

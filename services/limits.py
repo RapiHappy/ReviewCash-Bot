@@ -229,6 +229,48 @@ TBANK_COOLDOWN_SEC = int(os.getenv("TBANK_COOLDOWN_SEC", str(24 * 3600)).strip()
 CLICK_PREFIX = "clicked_task:"
 CLICK_WINDOW_SEC = int(os.getenv("CLICK_WINDOW_SEC", str(6 * 3600)).strip())
 
+CONSECUTIVE_FAKE_KEY = "consecutive_fake_strikes"
+
+async def track_fake_report(uid: int):
+    """Increment consecutive fake report counter and ban if reached 3."""
+    r = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": CONSECUTIVE_FAKE_KEY}, limit=1)
+    strikes = 1
+    if r.data:
+        try:
+            strikes = int(r.data[0].get("proof_text") or 0) + 1
+        except Exception:
+            strikes = 1
+    
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(uid), "limit_key": CONSECUTIVE_FAKE_KEY, "proof_text": str(strikes), "last_at": _now().isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+    
+    if strikes >= 3:
+        # Ban for 24 hours
+        await set_task_ban(uid, days=1)
+        # Reset strikes after ban so they can start over after ban expires
+        await reset_fake_report_strikes(uid)
+        return True # Banned
+    return False
+
+async def reset_fake_report_strikes(uid: int):
+    try:
+        await sb_delete(T_LIMITS, {"user_id": int(uid), "limit_key": CONSECUTIVE_FAKE_KEY})
+    except Exception:
+        pass
+
+async def get_all_vip_uids() -> list[int]:
+    """Fetch all users who currently have VIP status."""
+    try:
+        def _f():
+            return sb.table(T_LIMITS).select("user_id").eq("limit_key", VIP_UNTIL_KEY).gt("last_at", _now().isoformat()).execute()
+        res = await sb_exec(_f)
+        return [int(r["user_id"]) for r in (res.data or []) if r.get("user_id")]
+    except Exception:
+        return []
+
 async def get_task_ban_until(uid: int):
     return await get_limit_until(uid, TASK_BAN_KEY)
 

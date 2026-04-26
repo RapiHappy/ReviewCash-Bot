@@ -261,7 +261,10 @@ async def api_task_create(req: web.Request):
     pay_text = f"{int(charged_amount)}⭐" if charged_currency == "star" else f"{charged_amount:.2f}₽"
     await notify_admin(f"🆕 Новое задание\n• {title}\n• Награда исполнителю: {reward_rub}₽\n• Оплата заказчиком: {pay_text}")
     try:
-        asyncio.create_task(broadcast_new_task(task))
+        from services.background_workers import broadcast_new_task, notify_vips_about_fat_task
+        asyncio.create_task(broadcast_new_task(bot, task))
+        if reward_rub >= 50:
+            asyncio.create_task(notify_vips_about_fat_task(bot, task))
     except Exception:
         pass
 
