@@ -2952,8 +2952,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
 
     const priceLabel = $("t-price-label");
     if (priceLabel) {
-      // Show min performer reward to match the input field
-      priceLabel.textContent = `Цена за 1 шт. (мин ${minReward} ₽)`;
+      priceLabel.textContent = `Оплата исполнителю (мин ${minReward} ₽)`;
     }
 
     syncReviewTextsHint();
@@ -4567,8 +4566,8 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       
       const summaryLines = [
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Кол-во:</span> <b>${qty} шт.</b></div>`,
-        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Награда (ед.):</span> <b>${fmtRub(pricePer)}</b></div>`,
-        `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Итого награда:</span> <b>${fmtRub(baseTotal)}</b></div>`,
+        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Оплата исполнителю (1 шт):</span> <b>${fmtRub(pricePer)}</b></div>`,
+        `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Сумма для исполнителей:</span> <b>${fmtRub(baseTotal)}</b></div>`,
         commTotal > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса:</span> <b>${fmtRub(commTotal)}</b></div>` : null,
         vipTotal > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка:</span> <b>${fmtRub(vipTotal)}</b></div>` : null,
         topPrice > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null
