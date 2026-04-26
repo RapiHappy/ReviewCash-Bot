@@ -3153,12 +3153,19 @@ html.theme-light .faq-q{
   border-color: rgba(255, 255, 255, 0.1);
   box-shadow: 0 0 15px rgba(255, 150, 0, 0.4);
 }
+/* Red state for maintenance */
+.vip-toggle-wrap.checked.red .rc-switch {
+  background: linear-gradient(135deg, #ff4d4f, #cf1322);
+  box-shadow: 0 0 15px rgba(255, 77, 79, 0.4);
+}
+
 .vip-toggle-wrap.checked .rc-switch::after,
 .top-option-card.checked .rc-switch::after {
   left: 22px;
   background: #000000; /* Black handle as in screenshot */
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
+
 
 
 

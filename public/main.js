@@ -3092,8 +3092,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   }
   window.buyVip = buyVip;
 
+  let _adminToggling = false;
   async function adminToggleCommission() {
-    if (!state.isMainAdmin) return;
+    if (!state.isMainAdmin || _adminToggling) return;
+    _adminToggling = true;
     try {
       tgHaptic("impact");
       const current = !!(state.config && state.config.commission_enabled);
@@ -3102,23 +3104,26 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const res = await apiPost("/api/admin/config/toggle_commission", { enabled: next });
       if (res && res.ok) {
         tgHaptic("success");
-        // Update local state immediately for better UI experience
         if (!state.config) state.config = {};
-        state.config.commission_enabled = next;
+        state.config.commission_enabled = !!res.commission_enabled;
         
-        tgAlert(next ? "✅ Комиссия ВКЛЮЧЕНА (20%)" : "❌ Комиссия ВЫКЛЮЧЕНА (0%)");
-        await checkAdmin(); // Full refresh
+        tgAlert(state.config.commission_enabled ? "✅ Комиссия ВКЛЮЧЕНА (20%)" : "❌ Комиссия ВЫКЛЮЧЕНА (0%)");
+        await syncAll(); // Refresh UI components
       } else {
-        throw new Error(res.error || "Ошибка");
+        throw new Error(res.error || "Ошибка сервера");
       }
     } catch (e) {
       tgHaptic("error");
-      tgAlert("Ошибка управления комиссией");
+      tgAlert("Ошибка управления комиссией: " + e.message);
+    } finally {
+      _adminToggling = false;
     }
   }
   window.adminToggleCommission = adminToggleCommission;
 
   window.adminToggleMaintenance = async function () {
+    if (!state.isMainAdmin || _adminToggling) return;
+    _adminToggling = true;
     try {
       tgHaptic("impact");
       const current = !!(state.config && state.config.maintenance_enabled);
@@ -3128,16 +3133,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       if (res && res.ok) {
         tgHaptic("success");
         if (!state.config) state.config = {};
-        state.config.maintenance_enabled = next;
+        state.config.maintenance_enabled = !!res.maintenance_mode;
         
-        tgAlert(next ? "⚙️ Режим техобслуживания ВКЛЮЧЁН. Исполнители будут видеть сообщение о работах." : "✅ Режим техобслуживания ВЫКЛЮЧЕН. Бот доступен всем.");
-        await checkAdmin();
+        tgAlert(state.config.maintenance_enabled ? "⚙️ Режим техобслуживания ВКЛЮЧЁН." : "✅ Режим техобслуживания ВЫКЛЮЧЕН.");
+        await syncAll();
       } else {
-        throw new Error(res.error || "Ошибка");
+        throw new Error(res.error || "Ошибка сервера");
       }
     } catch (e) {
       tgHaptic("error");
-      tgAlert(String(e.message || e));
+      tgAlert("Ошибка: " + e.message);
+    } finally {
+      _adminToggling = false;
     }
   };
 
