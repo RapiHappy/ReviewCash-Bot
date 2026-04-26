@@ -28,6 +28,10 @@ def _ff_get(key: str):
 def _ff_set(key: str, val, ttl: int = 60):
     GLOBAL_FF_CACHE[key] = (val, time.time() + ttl)
 
+def _ff_clear(key: str):
+    if key in GLOBAL_FF_CACHE:
+        del GLOBAL_FF_CACHE[key]
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -471,6 +475,7 @@ async def set_maintenance_mode(on: bool) -> bool:
         )
     else:
         await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": MAINTENANCE_MODE_KEY})
+    _ff_clear("maintenance_mode")
     return bool(on)
 
 async def is_stars_payments_enabled() -> bool:
@@ -501,6 +506,7 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
             await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY})
         except Exception:
             pass
+        _ff_clear("stars_payments")
         return True
 
     await sb_upsert(
@@ -512,6 +518,7 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
         },
         on_conflict="user_id,limit_key"
     )
+    _ff_clear("stars_payments")
     return False
 
 async def is_commission_enabled() -> bool:
@@ -541,6 +548,7 @@ async def set_commission_enabled(enabled: bool) -> bool:
             await sb_delete(T_LIMITS, {"user_id": ff_uid, "limit_key": COMMISSION_DISABLED_KEY})
         except Exception:
             pass
+        _ff_clear("commission_enabled")
         return True
     await sb_upsert(
         T_LIMITS,
@@ -551,6 +559,7 @@ async def set_commission_enabled(enabled: bool) -> bool:
         },
         on_conflict="user_id,limit_key"
     )
+    _ff_clear("commission_enabled")
     return False
 
 async def is_notify_muted(uid: int) -> bool:
