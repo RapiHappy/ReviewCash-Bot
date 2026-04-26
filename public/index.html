@@ -974,18 +974,13 @@
           <input type="checkbox" id="t-vip-only" onchange="recalc()" style="display:none;">
         </div>
 
-        <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()" style="margin-top:12px; transform: scale(0.95); margin-left:-2.5%; width:105%;">
-          <div class="top-option-main">
-            <div class="top-option-icon">🔥</div>
-            <div class="top-option-copy">
-              <div class="top-option-title">В ТОП на 24ч</div>
-              <div class="top-option-hint">Задание будет в самом верху</div>
-            </div>
+        <div id="top-option-card" class="vip-toggle-wrap" onclick="toggleTopWanted()" style="margin-top:12px;">
+          <div style="flex:1; pointer-events:none;">
+            <div style="font-weight:900; color:var(--accent-gold); font-size:14px; letter-spacing:0.3px;">🔥 В ТОП на 24ч (+250₽)</div>
+            <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Ваше задание увидят первым</div>
           </div>
-          <div class="top-option-side">
-            <div class="top-option-price">250₽</div>
-          </div>
-        </button>
+          <div class="rc-switch"></div>
+        </div>
 
         <div class="total-badge" style="margin-top:15px; padding:15px; background: rgba(0,234,255,0.05);">
           <div class="price-calc-row total" style="margin:0; border:none; padding:0;">

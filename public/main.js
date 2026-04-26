@@ -2790,7 +2790,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const hint = $("top-option-hint");
     if (!card) return;
     const on = !!state.createTopWanted;
-    card.classList.toggle("selected", on);
+    card.classList.toggle("checked", on);
     card.setAttribute("aria-pressed", on ? "true" : "false");
     if (badge) badge.textContent = on ? "Выбрано" : "Не выбрано";
     if (hint) hint.textContent = on ? `К сумме добавится ${TOP_FIXED_PRICE_RUB} ₽ за 24 часа.` : `Поднимет задание выше остальных на 24 часа.`;
