@@ -615,14 +615,19 @@
       </div>
 
       <div id="admin-panel-card" class="card" style="display:none; padding:15px; border:1px dashed var(--accent-gold); background:rgba(255,204,0,0.05);">
-        <div class="commission-toggle-admin" id="admin-comm-toggle-wrap" style="display:none;">
-          <div style="font-size:12px; font-weight:700; color:var(--accent-gold);">Комиссия 20%: <span id="admin-comm-status">ВКЛ</span></div>
-          <button class="btn btn-sm btn-secondary" onclick="adminToggleCommission()">Переключить</button>
+        <div id="admin-commission-toggle-wrap" class="vip-toggle-wrap" onclick="adminToggleCommission()" style="display:none; margin-top:0; border-radius:12px; background:rgba(255,204,0,0.03); border:1px solid rgba(255,204,0,0.08); padding:12px;">
+          <div style="flex:1; pointer-events:none;">
+            <div style="font-weight:900; color:var(--accent-gold); font-size:13px; letter-spacing:0.3px;">💰 КОМИССИЯ СЕРВИСА (20%)</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:2px;">(Добавляет +20% к стоимости для заказчика)</div>
+          </div>
+          <div class="rc-switch"></div>
         </div>
-        <div id="admin-maintenance-toggle-wrap" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,204,0,0.15);">
-          <div style="font-size:12px; font-weight:700; color:#ff4d4f;">ТЕХОБСЛУЖИВАНИЕ: <span id="admin-maint-status">ВЫКЛ</span></div>
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:5px;">(Выключает бота для всех кроме Вас)</div>
-          <button class="btn btn-sm btn-danger" onclick="adminToggleMaintenance()">Переключить</button>
+        <div id="admin-maintenance-toggle-wrap" class="vip-toggle-wrap" onclick="adminToggleMaintenance()" style="display:none; margin-top:12px; border-top:1px solid rgba(255,204,0,0.1); padding-top:12px; border-radius:0; background:transparent; padding-left:0; padding-right:0;">
+          <div style="flex:1; pointer-events:none;">
+            <div style="font-weight:900; color:#ff4d4f; font-size:13px; letter-spacing:0.3px;">🛠️ ТЕХОБСЛУЖИВАНИЕ</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:2px;">(Выключает бота для всех кроме Вас)</div>
+          </div>
+          <div class="rc-switch"></div>
         </div>
         <div class="menu-item" onclick="openAdminPanel()" style="margin:0; background:transparent; border:none; padding:5px;">
           <span style="color: var(--accent-gold);">🛡️ Панель администратора</span>

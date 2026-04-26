@@ -3630,26 +3630,18 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         const apc = $("admin-panel-card");
         if (apc) apc.style.display = "block";
         
-        const actw = $("admin-comm-toggle-wrap");
+        const actw = $("admin-commission-toggle-wrap");
         if (actw) {
           actw.style.display = state.isMainAdmin ? "flex" : "none";
-          const statusEl = $("admin-comm-status");
-          if (statusEl) {
-             const en = (state.config && state.config.commission_enabled !== undefined) ? state.config.commission_enabled : true;
-             statusEl.textContent = en ? "ВКЛ" : "ВЫКЛ";
-             statusEl.style.color = en ? "#22c55e" : "#ef4444";
-          }
+          const en = (state.config && state.config.commission_enabled !== undefined) ? state.config.commission_enabled : true;
+          actw.classList.toggle("checked", en);
         }
         
         const amtw = $("admin-maintenance-toggle-wrap");
         if (amtw) {
-          amtw.style.display = state.isMainAdmin ? "block" : "none";
-          const statusEl = $("admin-maint-status");
-          if (statusEl) {
-            const en = !!(state.config && state.config.maintenance_enabled);
-            statusEl.textContent = en ? "ВКЛЮЧЕНО" : "ВЫКЛЮЧЕНО";
-            statusEl.style.color = en ? "#ef4444" : "#94a3b8";
-          }
+          amtw.style.display = state.isMainAdmin ? "flex" : "none";
+          const en = !!(state.config && state.config.maintenance_enabled);
+          amtw.classList.toggle("checked", en);
         }
       } else {
         state.isAdmin = false;
