@@ -4568,9 +4568,9 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Кол-во:</span> <b>${qty} шт.</b></div>`,
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Оплата исполнителю (1 шт):</span> <b>${fmtRub(pricePer)}</b></div>`,
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Сумма для исполнителей:</span> <b>${fmtRub(baseTotal)}</b></div>`,
-        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса (20%):</span> <b>${fmtRub(commTotal)}</b></div>`,
-        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка (10%):</span> <b>${fmtRub(vipTotal)}</b></div>`,
-        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>`,
+        commissionEnabled ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса (20%):</span> <b>${fmtRub(commTotal)}</b></div>` : null,
+        isVipOnly() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка (10%):</span> <b>${fmtRub(vipTotal)}</b></div>` : null,
+        isTopWanted() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null,
         `<div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid rgba(0,234,255,0.3); padding-top:8px; font-weight:900; color:var(--accent-cyan); font-size:14px;"><span>ИТОГО К ОПЛАТЕ:</span> <b>${fmtRub(baseTotal + commTotal + vipTotal + topPrice)}</b></div>`
       ].filter(Boolean);
 
