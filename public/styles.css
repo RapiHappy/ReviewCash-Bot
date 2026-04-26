@@ -3201,9 +3201,21 @@ html.theme-light .faq-q{
 }
 .platform-card:active { transform: scale(0.95); background: rgba(0,234,255,0.1); border-color: var(--accent-cyan); }
 .platform-card.selected { background: rgba(0,234,255,0.15); border-color: var(--accent-cyan); box-shadow: 0 0 20px rgba(0,234,255,0.1); }
-.platform-card .p-icon { font-size: 28px; margin-bottom: 8px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2)); }
+.platform-card .p-icon { 
+  height: 40px; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  margin-bottom: 10px; 
+}
+.platform-card .p-icon img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 10px rgba(0,0,0,0.3));
+}
 .platform-card .p-name { font-weight: 900; font-size: 14px; margin-bottom: 4px; }
-.platform-card .p-desc { font-size: 10px; color: var(--text-dim); }
+.platform-card .p-desc { font-size: 10px; color: var(--text-dim); line-height: 1.2; }
 
 .wiz-content { animation: wizSlideIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1); }
 @keyframes wizSlideIn {
