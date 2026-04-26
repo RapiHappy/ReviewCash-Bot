@@ -62,6 +62,7 @@ async def sb_select_in(
     table: str,
     col: str,
     values: list,
+    match: dict | None = None,
     columns: str = "*",
     order: str | None = None,
     desc: bool = True,
@@ -69,6 +70,9 @@ async def sb_select_in(
 ):
     def _f():
         q = sb.table(table).select(columns).in_(col, values)
+        if match:
+            for k, v in match.items():
+                q = q.eq(k, v)
         if order:
             q = q.order(order, desc=desc)
         if limit:
