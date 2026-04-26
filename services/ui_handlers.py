@@ -1,10 +1,23 @@
 import logging
+import os
 from datetime import datetime, timezone, timedelta, date, time as dt_time
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    Message, 
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton, 
+    ReplyKeyboardMarkup, 
+    KeyboardButton, 
+    ReplyKeyboardRemove,
+    FSInputFile
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 
-from config import BOT_NAME, NEWS_CHANNEL, PAYOUT_CHANNEL, MAIN_ADMIN_ID, ADMIN_IDS, T_USERS, T_LIMITS, T_TASKS, T_COMP, T_PAY, T_WD, T_STATS
+from config import (
+    BOT_NAME, NEWS_CHANNEL, PAYOUT_CHANNEL, MAIN_ADMIN_ID, ADMIN_IDS, 
+    T_USERS, T_LIMITS, T_TASKS, T_COMP, T_PAY, T_WD, T_STATS,
+    WELCOME_BANNER_PATH
+)
 from database import sb_count, sb_select, sb_distinct_count
 from services.limits import tg_evt_key, is_stars_payments_enabled
 from services.telegram_utils import get_required_sub_channel
@@ -50,6 +63,19 @@ async def send_main_welcome(message: Message, uid: int):
         r"Жми кнопку ниже и начинай зарабатывать\! 👇"
     )
     kb.adjust(1)
+    
+    if WELCOME_BANNER_PATH and os.path.exists(WELCOME_BANNER_PATH):
+        try:
+            await message.answer_photo(
+                photo=FSInputFile(WELCOME_BANNER_PATH),
+                caption=text,
+                reply_markup=kb.as_markup(),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return
+        except Exception as e:
+            log.warning(f"Failed to send welcome banner photo: {e}")
+
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN_V2)
 
 def _stars_pay_toggle_kb(enabled: bool):

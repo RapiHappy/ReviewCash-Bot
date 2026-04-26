@@ -144,3 +144,6 @@ USER_GENDER_FEMALE_KEY = "gender_f"
 
 # Rewards
 DAILY_BONUS_RUB = 0.5
+
+# Assets
+WELCOME_BANNER_PATH = "assets/welcome_banner.png"
