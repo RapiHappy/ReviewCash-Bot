@@ -6,8 +6,7 @@ from aiogram.enums import ParseMode
 
 from config import BOT_NAME, NEWS_CHANNEL, PAYOUT_CHANNEL, MAIN_ADMIN_ID, ADMIN_IDS, T_USERS, T_LIMITS, T_TASKS, T_COMP, T_PAY, T_WD, T_STATS
 from database import sb_count, sb_select, sb_distinct_count
-from services.balances import is_stars_payments_enabled
-from services.limits import tg_evt_key
+from services.limits import tg_evt_key, is_stars_payments_enabled
 from services.telegram_utils import get_required_sub_channel
 
 log = logging.getLogger("reviewcash")
@@ -36,14 +35,14 @@ async def send_main_welcome(message: Message, uid: int):
     news_line = ""
     news = get_required_sub_channel() or NEWS_CHANNEL
     if news:
-        news_line = f"📢 *Новости:* {news} — будь в курсе всех событий\!\n"
+        news_line = fr"📢 *Новости:* {news} — будь в курсе всех событий\!\n"
 
     text = (
-        f"👋 *Добро пожаловать в {BOT_NAME or 'ReviewCash'}\!* 💰\n\n"
-        "Мы — сервис, где ты можешь легко зарабатывать, выполняя простые задания в Telegram и на популярных картах\.\n\n"
+        fr"👋 *Добро пожаловать в {BOT_NAME or 'ReviewCash'}\!* 💰\n\n"
+        r"Мы — сервис, где ты можешь легко зарабатывать, выполняя простые задания в Telegram и на популярных картах\.\n\n"
         "Ссылку для приглашения найдёшь во вкладке *Друзья* 👥\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📊 *Наши выплаты:* {PAYOUT_CHANNEL or '@ReviewCashPayout'} — подтверждения выплат пользователям\.\n"
+        fr"📊 *Наши выплаты:* {PAYOUT_CHANNEL or '@ReviewCashPayout'} — подтверждения выплат пользователям\.\n"
         f"{news_line}"
         "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
         r"🤖 *TG\-задания* проверяются автоматически\n"
