@@ -14,6 +14,7 @@ log = logging.getLogger("reviewcash")
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
 TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
+TG_SUB_CACHE: dict[int, tuple[float, bool, str | None, str]] = {}
 
 def _now():
     return datetime.now(timezone.utc)
@@ -37,6 +38,13 @@ def get_required_sub_channel() -> str | None:
     return normalize_tg_chat(MANDATORY_SUB_CHANNEL)
 
 async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None = None) -> tuple[bool, str | None, str]:
+    uid = int(user_id)
+    now = _now().timestamp()
+    if uid in TG_SUB_CACHE:
+        ts, ok, chat, msg = TG_SUB_CACHE[uid]
+        if (now - ts) < 300: # 5 min cache
+            return ok, chat, msg
+
     chat = get_required_sub_channel()
     if not chat:
         return True, None, ""
@@ -46,7 +54,7 @@ async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None 
         return True, chat, "Бот не инициализирован"
 
     try:
-        member = await b.get_chat_member(chat_id=chat, user_id=int(user_id))
+        member = await b.get_chat_member(chat_id=chat, user_id=uid)
         cls_name = type(member).__name__.lower()
         raw_status = getattr(member, "status", None)
         status = str(raw_status).lower() if raw_status is not None else ""
@@ -54,18 +62,14 @@ async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None 
         subscribed_classes = ("chatmembermember", "chatmemberadministrator", "chatmemberowner", "chatmemberrestricted")
         left_classes = ("chatmemberleft", "chatmemberbanned")
 
-        if cls_name in subscribed_classes:
-            return True, chat, ""
-        if cls_name in left_classes:
-            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
+        ok, msg = False, "Не удалось определить подписку."
+        if cls_name in subscribed_classes or status in ("member", "administrator", "creator", "restricted"):
+            ok, msg = True, ""
+        elif cls_name in left_classes or status in ("left", "kicked", "banned"):
+            ok, msg = False, "Подпишись на канал и нажми «Проверить подписку»."
 
-        if status in ("member", "administrator", "creator", "restricted"):
-            return True, chat, ""
-        if status in ("left", "kicked", "banned"):
-            return False, chat, "Подпишись на канал и нажми «Проверить подписку»."
-
-        logging.warning(f"subscription check: unknown member type={cls_name} status={status} for user={user_id}")
-        return False, chat, "Не удалось определить подписку."
+        TG_SUB_CACHE[uid] = (now, ok, chat, msg)
+        return ok, chat, msg
 
     except Exception as e:
         err_str = str(e).lower()

@@ -12,6 +12,20 @@ from database import sb_select, sb_upsert, sb_delete, sb_update, sb_exec, sb
 
 log = logging.getLogger("reviewcash")
 
+# Simple async cache for feature flags and settings
+GLOBAL_FF_CACHE = {} # {key: (value, expires_at)}
+
+def _ff_get(key: str):
+    now = time.time()
+    if key in GLOBAL_FF_CACHE:
+        val, exp = GLOBAL_FF_CACHE[key]
+        if exp > now:
+            return val
+    return None
+
+def _ff_set(key: str, val, ttl: int = 60):
+    GLOBAL_FF_CACHE[key] = (val, time.time() + ttl)
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -403,12 +417,16 @@ async def tg_set_gender(user_id: int, gender: str):
     )
 
 async def tg_get_gender(user_id: int) -> str | None:
-    rm = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_MALE_KEY}, limit=1)
-    if rm.data:
-        return TASK_GENDER_MALE
-    rf = await sb_select(T_LIMITS, {"user_id": int(user_id), "limit_key": USER_GENDER_FEMALE_KEY}, limit=1)
-    if rf.data:
-        return TASK_GENDER_FEMALE
+    try:
+        from database import sb_select_in
+        res = await sb_select_in(T_LIMITS, "limit_key", [USER_GENDER_MALE_KEY, USER_GENDER_FEMALE_KEY], match={"user_id": int(user_id)})
+        rows = res.data or []
+        for r in rows:
+            k = r.get("limit_key")
+            if k == USER_GENDER_MALE_KEY: return TASK_GENDER_MALE
+            if k == USER_GENDER_FEMALE_KEY: return TASK_GENDER_FEMALE
+    except Exception:
+        pass
     return None
 
 def normalize_task_gender(value: str | None) -> str:
@@ -418,12 +436,16 @@ def normalize_task_gender(value: str | None) -> str:
     return TASK_GENDER_ANY
 
 async def is_maintenance_mode() -> bool:
+    cached = _ff_get("maintenance_mode")
+    if cached is not None: return cached
+    
     ff_uid = _feature_flags_user_id()
-    if ff_uid <= 0:
-        return False
+    if ff_uid <= 0: return False
     try:
         r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": MAINTENANCE_MODE_KEY}, limit=1)
-        return bool(r.data)
+        val = bool(r.data)
+        _ff_set("maintenance_mode", val, ttl=30)
+        return val
     except Exception:
         return False
 
@@ -450,12 +472,16 @@ async def set_maintenance_mode(on: bool) -> bool:
     return bool(on)
 
 async def is_stars_payments_enabled() -> bool:
+    cached = _ff_get("stars_payments")
+    if cached is not None: return cached
+
     ff_uid = _feature_flags_user_id()
-    if ff_uid <= 0:
-        return True
+    if ff_uid <= 0: return True
     try:
         r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": FEATURE_STARS_PAY_DISABLED_KEY}, limit=1)
-        return not bool(r.data)
+        val = not bool(r.data)
+        _ff_set("stars_payments", val, ttl=60)
+        return val
     except Exception:
         return True
 
@@ -487,12 +513,16 @@ async def set_stars_payments_enabled(enabled: bool, admin_id: int | None = None)
     return False
 
 async def is_commission_enabled() -> bool:
+    cached = _ff_get("commission_enabled")
+    if cached is not None: return cached
+
     ff_uid = _feature_flags_user_id()
-    if ff_uid <= 0:
-        return True
+    if ff_uid <= 0: return True
     try:
         r = await sb_select(T_LIMITS, {"user_id": ff_uid, "limit_key": COMMISSION_DISABLED_KEY}, limit=1)
-        return not bool(r.data)
+        val = not bool(r.data)
+        _ff_set("commission_enabled", val, ttl=300)
+        return val
     except Exception:
         return True
 
@@ -522,13 +552,20 @@ async def set_commission_enabled(enabled: bool) -> bool:
     return False
 
 async def is_notify_muted(uid: int) -> bool:
+    key = f"mute:{uid}"
+    cached = _ff_get(key)
+    if cached is not None: return cached
     try:
         r = await sb_select(T_LIMITS, {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY}, limit=1)
-        return bool(r.data)
+        val = bool(r.data)
+        _ff_set(key, val, ttl=300) # 5 min cache
+        return val
     except Exception:
         return False
 
 async def set_notify_muted(uid: int, muted: bool):
+    key = f"mute:{uid}"
+    _ff_set(key, bool(muted), ttl=300)
     if muted:
         await sb_upsert(
             T_LIMITS,

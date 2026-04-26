@@ -79,19 +79,6 @@ async def send_main_welcome(message: Message, uid: int):
             log.warning(f"Failed to send welcome banner photo: {e}")
 
     await message.answer(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
-OME_BANNER_PATH):
-        try:
-            await message.answer_photo(
-                photo=FSInputFile(WELCOME_BANNER_PATH),
-                caption=text,
-                reply_markup=kb.as_markup(),
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
-            return
-        except Exception as e:
-            log.warning(f"Failed to send welcome banner photo: {e}")
-
-    await message.answer(text, reply_markup=kb.as_markup(), parse_mode=ParseMode.MARKDOWN_V2)
 
 def _stars_pay_toggle_kb(enabled: bool):
     kb = InlineKeyboardBuilder()

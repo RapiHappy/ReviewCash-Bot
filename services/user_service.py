@@ -163,8 +163,11 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
     uid = int(user.get("id") or user.get("user_id") or user.get("tg_user_id"))
     username = user.get("username")
 
-    existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-    is_new = not (existing.data or [])
+    # Check if user is new (only if referrer provided)
+    is_new = False
+    if referrer_id and referrer_id != uid:
+        existing = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+        is_new = not (existing.data or [])
 
     upd = {
         "user_id": uid,
@@ -175,31 +178,19 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
         "last_seen_at": _now().isoformat(),
     }
 
-    if is_new and referrer_id and referrer_id != uid:
+    if is_new:
         upd["referrer_id"] = referrer_id
 
+    # Single upsert for user
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
-    try:
-        await sb_upsert(T_BAL, {"user_id": uid, "username": username}, on_conflict="user_id")
-    except Exception as e:
-        if not _is_pgrst_missing_column(e, "username"):
-            log.warning("ensure_user: balances_upsert failed: %s", e)
-        else:
-            try:
-                await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
-            except Exception:
-                pass
+    
+    # Background balance upsert
+    asyncio.create_task(sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id"))
 
-    if is_new and referrer_id and referrer_id != uid:
+    if is_new:
         await ensure_referral_event(uid, referrer_id)
 
-    u = await sb_select(T_USERS, {"user_id": uid}, limit=1)
-    row = (u.data or [upd])[0] or {}
-    if "id" not in row:
-        row["id"] = uid
-    if "user_id" not in row:
-        row["user_id"] = uid
-    return row
+    return upd
 
 async def resolve_user_id(input_str: str) -> int | None:
     s = str(input_str or "").strip()
