@@ -14,7 +14,7 @@ from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
 from services.user_service import ensure_user, referrals_summary, stats_add
-from services.ui_handlers import send_main_welcome
+from services.ui_handlers import send_main_welcome, build_welcome_kb
 import html
 import logging
 from aiogram import Router, F, Bot
@@ -244,21 +244,8 @@ async def cb_toggle_notify(cq: CallbackQuery):
     await set_notify_muted(uid, new_muted)
 
     try:
-        kb = InlineKeyboardBuilder()
-
-        miniapp_url = MINIAPP_URL
-        if not miniapp_url:
-            base = SERVER_BASE_URL or BASE_URL
-            if base:
-                miniapp_url = base.rstrip("/") + f"/app/?v={APP_BUILD}"
-
-        if miniapp_url:
-            kb.button(text="🚀 Открыть приложение", web_app=WebAppInfo(url=miniapp_url))
-        kb.button(text=("🔕 Уведомления: ВЫКЛ" if new_muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
-        kb.button(text="📌 Инструкция новичку", callback_data="help_newbie")
-        kb.adjust(1)
-
-        await cq.message.edit_reply_markup(reply_markup=kb.as_markup())
+        markup = await build_welcome_kb(uid)
+        await cq.message.edit_reply_markup(reply_markup=markup)
     except Exception:
         pass
 

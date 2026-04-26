@@ -19,8 +19,8 @@ from config import (
     WELCOME_BANNER_PATH
 )
 from database import sb_count, sb_select, sb_distinct_count
-from services.limits import tg_evt_key, is_stars_payments_enabled
-from services.telegram_utils import get_required_sub_channel
+from services.limits import tg_evt_key, is_stars_payments_enabled, is_notify_muted
+from services.telegram_utils import get_required_sub_channel, get_miniapp_url
 
 log = logging.getLogger("reviewcash")
 
@@ -30,41 +30,56 @@ def _now():
 def _day():
     return date.today()
 
-async def send_main_welcome(message: Message, uid: int):
-    from services.telegram_utils import get_miniapp_url
-    
-    stars_enabled = await is_stars_payments_enabled()
-    
+async def build_welcome_kb(uid: int):
     kb = InlineKeyboardBuilder()
     kb.button(text="🚀 Зарабатывать", web_app={"url": get_miniapp_url()})
     
-    if stars_enabled:
-        kb.button(text="⭐ Купить за Stars", web_app={"url": get_miniapp_url() + "&path=stars_pay"})
+    news = get_required_sub_channel() or NEWS_CHANNEL
+    if news:
+        # ensure url is valid
+        news_id = news.lstrip('@')
+        kb.button(text="📢 Канал с новостями", url=f"https://t.me/{news_id}")
         
-    kb.button(text="👥 Друзья", web_app={"url": get_miniapp_url() + "&path=referrals"})
-    kb.button(text="👤 Профиль", web_app={"url": get_miniapp_url() + "&path=profile"})
+    muted = await is_notify_muted(uid)
+    kb.button(text=("🔕 Уведомления: ВЫКЛ" if muted else "🔔 Уведомления: ВКЛ"), callback_data="toggle_notify")
     kb.button(text="📚 Инструкция", callback_data="help_newbie")
-    
+    kb.adjust(1)
+    return kb.as_markup()
+
+async def send_main_welcome(message: Message, uid: int):
     news_line = ""
     news = get_required_sub_channel() or NEWS_CHANNEL
     if news:
-        news_line = fr"📢 *Новости:* {news} — будь в курсе всех событий\!\n"
+        news_line = f"📢 *Новости:* {news} — будь в курсе всех событий\\!\n"
 
     text = (
-        fr"👋 *Добро пожаловать в {BOT_NAME or 'ReviewCash'}\!* 💰\n\n"
-        r"Мы — сервис, где ты можешь легко зарабатывать, выполняя простые задания в Telegram и на популярных картах\.\n\n"
-        "Ссылку для приглашения найдёшь во вкладке *Друзья* 👥\n\n"
+        f"👋 *Добро пожаловать в {BOT_NAME or 'ReviewCash'}\\!* 💰\n\n"
+        "Мы — сервис, где ты можешь легко зарабатывать, выполняя простые задания в Telegram и на популярных картах\\.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        fr"📊 *Наши выплаты:* {PAYOUT_CHANNEL or '@ReviewCashPayout'} — подтверждения выплат пользователям\.\n"
+        f"📊 *Наши выплаты:* {PAYOUT_CHANNEL or '@ReviewCashPayout'} — подтверждения выплат пользователям\\.\n"
         f"{news_line}"
         "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        r"🤖 *TG\-задания* проверяются автоматически\n"
-        r"📝 *Отзывы* проверяет модератор \(обычно до 24ч\)\n\n"
-        r"Жми кнопку ниже и начинай зарабатывать\! 👇"
+        "🤖 *TG\\-задания* проверяются автоматически\n"
+        "📝 *Отзывы* проверяет модератор \\(обычно до 24ч\\)\n\n"
+        "Жми кнопку ниже и начинай зарабатывать\\! 👇"
     )
-    kb.adjust(1)
+    
+    markup = await build_welcome_kb(uid)
     
     if WELCOME_BANNER_PATH and os.path.exists(WELCOME_BANNER_PATH):
+        try:
+            await message.answer_photo(
+                photo=FSInputFile(WELCOME_BANNER_PATH),
+                caption=text,
+                reply_markup=markup,
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return
+        except Exception as e:
+            log.warning(f"Failed to send welcome banner photo: {e}")
+
+    await message.answer(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+OME_BANNER_PATH):
         try:
             await message.answer_photo(
                 photo=FSInputFile(WELCOME_BANNER_PATH),
