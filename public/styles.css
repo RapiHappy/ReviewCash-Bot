@@ -3207,6 +3207,7 @@ html.theme-light .faq-q{
   align-items: center; 
   justify-content: center; 
   margin-bottom: 10px; 
+  font-size: 28px; /* For fallback emojis */
 }
 .platform-card .p-icon img {
   width: 36px;
