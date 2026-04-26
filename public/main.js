@@ -3228,7 +3228,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
       const st = String(w.status || "pending");
       const stLabel = st === "paid" ? "✅ Выплачено" : (st === "rejected" ? "❌ Отклонено" : "⏳ В обработке");
       const info = parseWithdrawDetails(w.details || "");
-      const methodLabel = info.method === "card" ? "Карта" : (info.method === "phone" ? "Телефон" : "Реквизиты");
+      const m = String(info.method || "").toLowerCase();
+      const methodLabel = (m === "card") ? "Карта" : (m === "phone") ? "Телефон" : (m === "cryptobot") ? "Crypto Bot" : "Реквизиты";
       const row = document.createElement("div");
       row.className = "card";
       row.style.margin = "0";
@@ -3247,6 +3248,23 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     });
   }
 
+  window.onWithdrawMethodChange = function() {
+    const m = String($("w-method").value || "phone");
+    const d = $("w-details");
+    if (!d) return;
+    if (m === "cryptobot") {
+      d.placeholder = "Telegram ID (автоматически)";
+      d.value = "Telegram ID";
+      d.disabled = true;
+      d.style.opacity = "0.6";
+    } else {
+      d.placeholder = "Номер телефона или карты";
+      if (d.value === "Telegram ID") d.value = "";
+      d.disabled = false;
+      d.style.opacity = "1";
+    }
+  };
+
   window.requestWithdraw = async function () {
     const fullName = String(($("w-fullname") && $("w-fullname").value) || "").trim();
     const payoutMethod = String(($("w-method") && $("w-method").value) || "phone").trim();
@@ -3254,7 +3272,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const amount = Number(($("w-amount") && $("w-amount").value) || 0);
 
     if (!fullName || !fullName.includes(" ")) return tgAlert("Укажи имя и фамилию");
-    if (!payoutValue) return tgAlert("Укажи номер телефона или карты");
+    if (payoutMethod !== "cryptobot" && !payoutValue) return tgAlert("Укажи номер телефона или карты");
     if (!amount || amount < 300) return tgAlert("Минимум 300₽");
 
     try {
@@ -3271,7 +3289,10 @@ function brandIconHtml(taskOrType, sizePx = 38) {
         if ($("w-fullname")) $("w-fullname").value = "";
         if ($("w-details")) $("w-details").value = "";
         if ($("w-amount")) $("w-amount").value = "";
-        if ($("w-method")) $("w-method").value = "phone";
+        if ($("w-method")) {
+          $("w-method").value = "phone";
+          onWithdrawMethodChange();
+        }
         await syncAll();
         await refreshWithdrawals();
       } else {

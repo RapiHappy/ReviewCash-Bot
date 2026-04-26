@@ -56,20 +56,28 @@ async def api_withdraw_create(req: web.Request):
         return web.json_response({"ok": False, "error": "Минимальная сумма для вывода — 300 ₽"}, status=400)
     if not full_name or len(full_name) < 5 or " " not in full_name:
         return web.json_response({"ok": False, "error": "Укажи имя и фамилию"}, status=400)
-    if not payout_value:
-        return web.json_response({"ok": False, "error": "Укажи номер телефона или карты"}, status=400)
-
-    normalized = "".join(ch for ch in payout_value if ch.isdigit())
-    if payout_method == "phone":
-        if len(normalized) < 10:
-            return web.json_response({"ok": False, "error": "Некорректный номер телефона"}, status=400)
-    elif payout_method == "card":
-        if len(normalized) < 16:
-            return web.json_response({"ok": False, "error": "Некорректный номер карты"}, status=400)
+    
+    if payout_method == "cryptobot":
+        # For cryptobot, we use the user's TG ID, so we don't strictly need a payout_value from frontend
+        # but the frontend sends "Telegram ID" as a placeholder/value.
+        if not payout_value:
+            payout_value = "Telegram ID"
+        normalized = "cryptobot"
     else:
-        if len(normalized) < 10:
-            return web.json_response({"ok": False, "error": "Укажи корректный номер телефона или карты"}, status=400)
-        payout_method = "card" if len(normalized) >= 16 else "phone"
+        if not payout_value:
+            return web.json_response({"ok": False, "error": "Укажи номер телефона или карты"}, status=400)
+
+        normalized = "".join(ch for ch in payout_value if ch.isdigit())
+        if payout_method == "phone":
+            if len(normalized) < 10:
+                return web.json_response({"ok": False, "error": "Некорректный номер телефона"}, status=400)
+        elif payout_method == "card":
+            if len(normalized) < 16:
+                return web.json_response({"ok": False, "error": "Некорректный номер карты"}, status=400)
+        else:
+            if len(normalized) < 10:
+                return web.json_response({"ok": False, "error": "Укажи корректный номер телефона или карты"}, status=400)
+            payout_method = "card" if len(normalized) >= 16 else "phone"
 
     details = f"{full_name} | {payout_method} | {payout_value}"
 

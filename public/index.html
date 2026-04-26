@@ -1294,9 +1294,10 @@
         </div>
       </div>
       <input type="text" id="w-fullname" placeholder="Имя и фамилия">
-      <select id="w-method" style="margin-top:10px;">
+      <select id="w-method" style="margin-top:10px;" onchange="onWithdrawMethodChange()">
         <option value="phone">По номеру телефона</option>
         <option value="card">По номеру карты</option>
+        <option value="cryptobot">Крипто-бот (USDT)</option>
       </select>
       <input type="text" id="w-details" placeholder="Номер телефона или карты" inputmode="numeric" style="margin-top:10px;">
       <input type="number" id="w-amount" placeholder="Сумма вывода" style="margin-top:10px;">

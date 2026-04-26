@@ -219,19 +219,33 @@ async def api_admin_withdraw_decision(req: web.Request):
 
     uid = int(wd.get("user_id") or 0)
     amount = float(wd.get("amount_rub") or 0)
+    details = str(wd.get("details") or "")
+    
+    # Parse payout_method from details: "full_name | method | value"
+    payout_method = "phone"
+    if "|" in details:
+        parts = [p.strip().lower() for p in details.split("|")]
+        if len(parts) >= 2:
+            payout_method = parts[1]
 
     if approved:
-        # Автоматическая выплата через CryptoBot (USDT)
-        # Округляем до 2 знаков для API
-        amount_usdt = round(amount / max(CRYPTO_RUB_PER_USDT, 0.01), 2)
-        
-        is_success, msg = await auto_payout_crypto(uid, amount_usdt, withdraw_id)
-        if not is_success:
-            return web.json_response({"ok": False, "error": f"Ошибка перевода крипты: {msg}"})
+        if payout_method == "cryptobot":
+            # Автоматическая выплата через CryptoBot (USDT)
+            # Округляем до 2 знаков для API
+            amount_usdt = round(amount / max(CRYPTO_RUB_PER_USDT, 0.01), 2)
+            
+            is_success, msg = await auto_payout_crypto(uid, amount_usdt, withdraw_id)
+            if not is_success:
+                return web.json_response({"ok": False, "error": f"Ошибка перевода крипты: {msg}"})
 
-        await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
-        await stats_add("payouts_rub", amount)
-        await notify_user(uid, f"✅ Заявка на вывод подтверждена. Переведено {amount_usdt} USDT через CryptoBot. Ожидай зачисление.")
+            await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
+            await stats_add("payouts_rub", amount)
+            await notify_user(uid, f"✅ Заявка на вывод подтверждена. Переведено {amount_usdt} USDT через CryptoBot. Ожидай зачисление.")
+        else:
+            # Ручная выплата (карта/телефон) - админ уже перевел средства сам
+            await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
+            await stats_add("payouts_rub", amount)
+            await notify_user(uid, f"✅ Ваша заявка на вывод ({amount}₽) успешно обработана и выплачена.")
     else:
         await add_rub(uid, amount)
         await sb_update(T_WD, {"id": withdraw_id}, {"status": "rejected"})
