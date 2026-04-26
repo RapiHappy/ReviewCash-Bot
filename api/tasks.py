@@ -53,15 +53,17 @@ async def api_task_create(req: web.Request):
     vip_for_all = bool(body.get("vip_for_all") or False)
     comm_enabled = await is_commission_enabled()
     
-    # Commission (20%) - round down as requested
+    base_total = price_per_unit * qty_total
+    
+    # Commission (20%) - round down on total
     comm_rate = 0.20 if comm_enabled else 0.0
-    comm_per_unit = math.floor(price_per_unit * comm_rate)
+    comm_total = math.floor(base_total * comm_rate)
     
-    # VIP rate (10%) - use math.ceil to match frontend and ensure at least 1 rub
+    # VIP rate (10%) - use math.ceil on total
     vip_rate = 0.10 if vip_for_all else 0.0
-    vip_per_unit = math.ceil(price_per_unit * vip_rate)
+    vip_total = math.ceil(base_total * vip_rate)
     
-    total_cost_per_unit = price_per_unit + comm_per_unit + vip_per_unit
+    total_cost_rub = base_total + comm_total + vip_total
     
     # Validation of TOTAL COST (Advertiser Price)
     if ttype == "ya" and price_per_unit < 100:
@@ -96,9 +98,8 @@ async def api_task_create(req: web.Request):
         if price_per_unit < min_tg_price_per_unit:
              return json_error(400, f"Минимальная стоимость задания (+{extra_days} дн. удержания) — {min_tg_price_per_unit} ₽", code="MIN_COST_TG")
 
-    # Base cost and total
-    total_cost_rub = (price_per_unit + comm_per_unit + vip_per_unit) * qty_total
-    reward_rub = price_per_unit  # Performer gets the price per unit
+    # Reward for performer is price_per_unit
+    reward_rub = price_per_unit
     
     check_type = str(body.get("check_type") or "manual").strip()
     tg_chat = str(body.get("tg_chat") or "").strip() or None

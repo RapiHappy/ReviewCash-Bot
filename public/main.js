@@ -2774,6 +2774,14 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     recalc();
   }
   function toggleTopWanted() { setTopWanted(!state.createTopWanted); }
+  window.toggleVipCheckbox = function() {
+    const cb = $("t-vip-only");
+    if (cb) {
+      cb.checked = !cb.checked;
+      recalc();
+    }
+  };
+
   window.toggleTopWanted = toggleTopWanted;
 
   function updateTopUi() {
@@ -2881,6 +2889,8 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     
     const vipOnlyInput = $("t-vip-only");
     const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
+    const vipWrapper = $("vip-toggle-wrap");
+    if (vipWrapper) vipWrapper.classList.toggle("checked", isVipOnly);
     
     const cur = $("t-cur") ? $("t-cur").value : "rub";
     const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
@@ -2898,18 +2908,17 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     // Base cost
     const baseTotal = pricePerUnit * qty;
     
-    // Commission (20%) - round down per unit to match backend
-    const commPerUnit = commissionEnabled ? Math.floor(pricePerUnit * 0.20) : 0;
-    const commTotal = commPerUnit * qty;
+    // Commission (20%) on total
+    const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
     
-    // VIP surcharge (10%) - use Math.ceil to ensure it's at least 1 rub if enabled
-    const vipPerUnit = isVipOnly ? Math.ceil(pricePerUnit * 0.10) : 0;
-    const vipTotal = vipPerUnit * qty;
+    // VIP surcharge (10%) on total
+    const vipTotal = isVipOnly ? Math.ceil(baseTotal * 0.10) : 0;
     
     // Top visibility (250 RUB)
     const topPrice = isTopWanted() ? 250 : 0;
     
     const grandTotal = baseTotal + commTotal + vipTotal + topPrice;
+
 
     const totalPrice = grandTotal;
     
@@ -4550,19 +4559,21 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
       const rawPrice = Number(priceInput.value || 0);
       const pricePer = Math.max(rawPrice, minReward); // Clamped value
       
-      const isVip = !!(document.getElementById("t-vip-only") && document.getElementById("t-vip-only").checked);
-      const isTop = isTopWanted();
-      
-      const commPer = Math.floor(pricePer * 0.20);
-      const vipPer = isVip ? Math.ceil(pricePer * 0.10) : 0;
+      const commissionEnabled = (state.config && state.config.commission_enabled !== undefined) ? !!state.config.commission_enabled : true;
+      const baseTotal = pricePer * qty;
+      const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
+      const vipTotal = isVip ? Math.ceil(baseTotal * 0.10) : 0;
+      const topPrice = isTop ? 250 : 0;
       
       const summaryLines = [
-        `Кол-во: <b>${qty} шт.</b>`,
-        `Награда: <b>${fmtRub(pricePer)}</b>`,
-        commPer > 0 ? `Комиссия: <b>${fmtRub(commPer)}</b>` : null,
-        vipPer > 0 ? `VIP-наценка: <b>${fmtRub(vipPer)}</b>` : null,
-        isTop ? `Закреп в ТОПе: <b>250 ₽</b>` : null
+        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Кол-во:</span> <b>${qty} шт.</b></div>`,
+        `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Награда (ед.):</span> <b>${fmtRub(pricePer)}</b></div>`,
+        `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Итого награда:</span> <b>${fmtRub(baseTotal)}</b></div>`,
+        commTotal > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса:</span> <b>${fmtRub(commTotal)}</b></div>` : null,
+        vipTotal > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка:</span> <b>${fmtRub(vipTotal)}</b></div>` : null,
+        topPrice > 0 ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null
       ].filter(Boolean);
+
 
       const sumBody = document.getElementById("wiz-sum-body");
       if (sumBody) sumBody.innerHTML = summaryLines.join("<br>");

@@ -965,12 +965,13 @@
           </div>
         </div>
 
-        <div class="vip-toggle-wrap" style="margin-top:15px; padding:12px; cursor:pointer;" onclick="const cb = document.getElementById('t-vip-only'); cb.checked = !cb.checked; recalc();">
+        <div id="vip-toggle-wrap" class="vip-toggle-wrap" onclick="toggleVipCheckbox()">
           <div style="flex:1; pointer-events:none;">
-            <div style="font-weight:900; color:var(--accent-gold); font-size:13px;">👑 VIP Задание (+10%)</div>
-            <div style="font-size:10px; color:var(--text-dim);">Только для опытных исполнителей</div>
+            <div style="font-weight:900; color:var(--accent-gold); font-size:14px; letter-spacing:0.3px;">👑 VIP Задание (+10%)</div>
+            <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Выполняют только опытные исполнители</div>
           </div>
-          <input type="checkbox" id="t-vip-only" onchange="recalc()" style="width:20px; height:20px;" onclick="event.stopPropagation()">
+          <div class="rc-switch"></div>
+          <input type="checkbox" id="t-vip-only" onchange="recalc()" style="display:none;">
         </div>
 
         <button id="top-option-card" class="top-option-card" type="button" onclick="toggleTopWanted()" style="margin-top:12px; transform: scale(0.95); margin-left:-2.5%; width:105%;">
