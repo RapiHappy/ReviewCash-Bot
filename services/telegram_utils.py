@@ -1,17 +1,18 @@
 import re
 import logging
 from datetime import datetime, timezone
-from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.enums import ParseMode
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 import html
 
 from config import MANDATORY_SUB_CHANNEL, BOT_TOKEN, MINIAPP_URL, SERVER_BASE_URL, BASE_URL, APP_BUILD, BOT_USERNAME
 
 log = logging.getLogger("reviewcash")
 
-# create a shared bot instance
+# create a shared bot and dispatcher instance
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
+dp = Dispatcher(storage=MemoryStorage())
 
 TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
 TG_SUB_CACHE: dict[int, tuple[float, bool, str | None, str]] = {}

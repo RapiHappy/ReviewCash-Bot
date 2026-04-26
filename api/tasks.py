@@ -317,7 +317,7 @@ async def api_task_click(req: web.Request):
 async def api_task_submit(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    rate_limit_enforce(uid, "task_submit", min_interval_sec=10, spam_strikes=12, block_sec=120)
+    await rate_limit_enforce(uid, "task_submit", min_interval_sec=10, spam_strikes=12, block_sec=120)
     body = await safe_json(req)
 
     banned_until = await get_task_ban_until(uid)

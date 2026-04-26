@@ -143,17 +143,29 @@ async def api_sync(req: web.Request):
         tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
         raw = tsel.data or []
 
+        active_ids = [str(t["id"]) for t in raw]
+        completions_batch = []
+        if active_ids:
+            try:
+                # Fetch completions only for tasks we are interested in
+                csel = await sb_select_in(
+                    T_COMP,
+                    "task_id",
+                    active_ids,
+                    columns="task_id,status,rework_until",
+                    limit=3000 # Enough for 200 tasks * 15 active slots each
+                )
+                completions_batch = csel.data or []
+            except Exception as e:
+                log.error(f"Sync: batch completions fetch failed: {e}")
+
+        # 1. Build pending_task_counts for task filtering
         pending_task_counts = {}
-        try:
-            psel = await sb_select(T_COMP, {"status": "pending"}, order="created_at", desc=True, limit=1000)
-            for x in (psel.data or []):
-                tid = x.get("task_id")
-                if tid is None:
-                    continue
-                k = str(tid)
-                pending_task_counts[k] = int(pending_task_counts.get(k, 0) or 0) + 1
-        except Exception:
-            pending_task_counts = {}
+        for c in completions_batch:
+            if str(c.get("status") or "").lower() == "pending":
+                tid = str(c.get("task_id") or "")
+                if tid:
+                    pending_task_counts[tid] = pending_task_counts.get(tid, 0) + 1
 
         completed_tg_stack_keys: set[str] = set()
         try:
@@ -206,18 +218,16 @@ async def api_sync(req: web.Request):
                 and tg_task_identity(t) in completed_tg_stack_keys
             )
         ]
+        # 2. Build task_slot_map for review text picking
         task_slot_map = {}
-        try:
-            comp_for_slots = await sb_select(T_COMP, {}, order="created_at", desc=False, limit=5000)
-            for comp in (comp_for_slots.data or []):
-                tid = str(comp.get("task_id") or "")
-                if not tid:
-                    continue
-                st = str(comp.get("status") or "").lower()
-                if st in {"pending", "pending_hold", "paid", "fake"} or is_rework_active(comp):
-                    task_slot_map[tid] = int(task_slot_map.get(tid, 0) or 0) + 1
-        except Exception:
-            task_slot_map = {}
+        for c in completions_batch:
+            tid = str(c.get("task_id") or "")
+            if not tid: continue
+            st = str(c.get("status") or "").lower()
+            # is_rework_active check
+            is_rw = st == "rework" # is_rework_active(c) is essentially this
+            if st in {"pending", "pending_hold", "paid", "fake"} or is_rw:
+                task_slot_map[tid] = task_slot_map.get(tid, 0) + 1
 
         for t in tasks:
             t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")

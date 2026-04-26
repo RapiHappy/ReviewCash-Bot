@@ -585,3 +585,44 @@ async def set_notify_muted(uid: int, muted: bool):
         )
     else:
         await sb_delete(T_LIMITS, {"user_id": uid, "limit_key": MUTE_NOTIFY_KEY})
+async def rate_limit_get(uid: int, action: str) -> dict:
+    """Get rate limit state from DB."""
+    key = f"rl:{action}"
+    r = await sb_select(T_LIMITS, {"user_id": int(uid), "limit_key": key}, limit=1)
+    if not r.data:
+        return {"last_ok": 0.0, "strikes": 0, "blocked_until": 0.0}
+    
+    row = r.data[0]
+    # We store state as JSON in proof_text or just use multiple rows. 
+    # Let's use a JSON string in a new meta field if possible, or just parse it.
+    # Actually, we can just use the 'last_at' for last_ok and maybe another key for strikes.
+    # To keep it simple, let's use a single row and encode strikes in a string or use a dedicated table.
+    # Since we have T_LIMITS, let's use it.
+    
+    # We'll store: last_ok|strikes|blocked_until
+    raw = str(row.get("proof_text") or "0.0|0|0.0")
+    try:
+        parts = raw.split("|")
+        return {
+            "last_ok": float(parts[0]),
+            "strikes": int(parts[1]),
+            "blocked_until": float(parts[2])
+        }
+    except Exception:
+        return {"last_ok": 0.0, "strikes": 0, "blocked_until": 0.0}
+
+async def rate_limit_set(uid: int, action: str, state: dict):
+    """Save rate limit state to DB."""
+    key = f"rl:{action}"
+    raw = f"{state['last_ok']}|{state['strikes']}|{state['blocked_until']}"
+    # last_at will be used as a TTL hint for cleanup
+    await sb_upsert(
+        T_LIMITS,
+        {
+            "user_id": int(uid),
+            "limit_key": key,
+            "proof_text": raw,
+            "last_at": (_now() + timedelta(days=1)).isoformat()
+        },
+        on_conflict="user_id,limit_key"
+    )

@@ -185,7 +185,7 @@ async def api_tbank_claim(req: web.Request):
         h = left // 3600
         m = (left % 3600) // 60
         return web.json_response({"ok": False, "error": f"Пополнение через Т-Банк доступно раз в сутки. Повтори через {h}ч {m}м."}, status=429)
-    rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
+    await rate_limit_enforce(uid, "topup", min_interval_sec=60, spam_strikes=3, block_sec=600)
     body = await safe_json(req)
 
     amount = parse_amount_rub(body.get("amount_rub") or body.get("amount") or body.get("sum") or body.get("value") or body.get("rub"))

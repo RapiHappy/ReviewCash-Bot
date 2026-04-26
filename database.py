@@ -150,3 +150,16 @@ async def sb_distinct_count(
     except Exception as e:
         log.warning("sb_distinct_count failed table=%s column=%s: %s", table, column, e)
         return 0
+async def sb_storage_upload(bucket: str, path: str, data: bytes, content_type: str):
+    def _f():
+        return sb.storage.from_(bucket).upload(
+            path=path,
+            file=data,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+    return await sb_exec(_f)
+
+async def sb_storage_public_url(bucket: str, path: str) -> str:
+    def _f():
+        return sb.storage.from_(bucket).get_public_url(path)
+    return await sb_exec(_f)

@@ -28,7 +28,7 @@ async def api_tg_check_chat(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
     # Light rate limit: ~1 request per 2 seconds; spam -> 1 minute block
-    rate_limit_enforce(uid, "tg_check", min_interval_sec=2, spam_strikes=8, block_sec=60)
+    await rate_limit_enforce(uid, "tg_check", min_interval_sec=2, spam_strikes=8, block_sec=60)
 
     body = await safe_json(req)
     target = str(body.get("target") or body.get("chat") or body.get("target_url") or "").strip()

@@ -76,6 +76,99 @@ def get_tg_meta(task: dict | None, key: str) -> str | None:
 def get_tg_subtype(task: dict | None) -> str | None:
     return get_meta(task, "TG_SUBTYPE")
 
+from urllib.parse import urlparse
+import logging
+
+log = logging.getLogger("reviewcash")
+
+YA_ALLOWED_HOST = ("yandex.ru", "yandex.com", "yandex.kz", "yandex.by", "yandex.uz")
+GM_ALLOWED_HOST = ("google.com", "google.ru", "google.kz", "google.by", "google.com.ua", "maps.app.goo.gl", "goo.gl")
+DG_ALLOWED_HOST = ("2gis.ru", "2gis.kz", "2gis.com", "go.2gis.com", "2gis.by")
+
+def _norm_url(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if not s.lower().startswith(("http://", "https://")):
+        s = "https://" + s
+    return s
+
+def _host_allowed(host: str, allowed: tuple[str, ...]) -> bool:
+    h = (host or "").lower()
+    return any(h == a or h.endswith("." + a) for a in allowed)
+
+def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
+    """Return (ok, normalized_url, error_message)."""
+    url = _norm_url(raw)
+    if not url:
+        return False, "", "Нужна ссылка"
+    try:
+        u = urlparse(url)
+        if u.scheme not in ("http", "https") or not u.netloc:
+            return False, "", "Некорректная ссылка"
+        if any(ch.isspace() for ch in url):
+            return False, "", "Ссылка не должна содержать пробелы"
+        host = (u.hostname or "").lower()
+        path = (u.path or "").lower()
+
+        if ttype == "ya":
+            if "yandex" not in host:
+                return False, "", "Ссылка не похожа на Яндекс. Нужна ссылка на Яндекс Карты"
+            if not _host_allowed(host, YA_ALLOWED_HOST):
+                return False, "", "Разрешены только ссылки Яндекс (yandex.*)"
+            if ("/maps" not in path) and ("/profile" not in path) and ("maps" not in host):
+                return False, "", "Нужна ссылка именно на Яндекс Карты (место/организация)"
+        elif ttype == "gm":
+            if host in ("maps.app.goo.gl", "goo.gl"):
+                return True, url, ""
+            if "google" not in host:
+                return False, "", "Ссылка не похожа на Google. Нужна ссылка на Google Maps"
+            if not _host_allowed(host, GM_ALLOWED_HOST):
+                return False, "", "Разрешены только ссылки Google Maps"
+            if ("/maps" not in path) and (not host.startswith("maps.")):
+                return False, "", "Нужна ссылка именно на Google Maps (место/организация)"
+        elif ttype == "dg":
+            if "2gis" not in host and host != "go.2gis.com":
+                return False, "", "Ссылка не похожа на 2GIS. Нужна ссылка на 2GIS"
+            if not _host_allowed(host, DG_ALLOWED_HOST):
+                return False, "", "Разрешены только ссылки 2GIS"
+        return True, url, ""
+    except Exception:
+        return False, "", "Некорректная ссылка"
+
+def cast_id(v):
+    s = str(v or "").strip()
+    if s.isdigit():
+        try:
+            return int(s)
+        except Exception:
+            return s
+    return s
+
+async def check_url_alive(url: str) -> tuple[bool, str]:
+    try:
+        import aiohttp
+        timeout = aiohttp.ClientTimeout(total=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; ReviewCashBot/1.0; +https://t.me/ReviewCashOrg_Bot)"
+        }
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            def _ok_status(st: int) -> bool:
+                return (st < 400) or (st in (401, 403, 429))
+
+            try:
+                async with session.head(url, allow_redirects=True) as r:
+                    if _ok_status(r.status):
+                        return True, ""
+                    return False, f"HTTP {r.status}"
+            except Exception:
+                async with session.get(url, allow_redirects=True) as r:
+                    if _ok_status(r.status):
+                        return True, ""
+                    return False, f"HTTP {r.status}"
+    except Exception:
+        return False, "не удалось открыть ссылку"
+
 def is_rework_active(comp: dict | None) -> bool:
     if not comp: return False
     return str(comp.get("status") or "").lower() == "rework"

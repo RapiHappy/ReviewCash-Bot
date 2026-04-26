@@ -14,11 +14,14 @@ from database import sb, sb_select, sb_upsert
 
 log = logging.getLogger("reviewcash")
 
-# Global rate limit state
-RATE_LIMIT_STATE = {}
+# Global rate limit state removed - using persistent DB storage via services.limits
 
 def _now():
     return datetime.now(timezone.utc)
+def safe_filename(name: str) -> str:
+    name = (name or "proof").strip()
+    name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
+    return name[:80] or "proof.png"
 
 def _b64url(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
@@ -223,13 +226,15 @@ def json_error(status: int, error: str, code: str | None = None, **extra):
     data.update(extra)
     return web.json_response(data, status=status)
 
-def rate_limit_enforce(uid: int, action: str, min_interval_sec: int = 60, spam_strikes: int = 3, block_sec: int = 600):
+async def rate_limit_enforce(uid: int, action: str, min_interval_sec: int = 60, spam_strikes: int = 3, block_sec: int = 600):
+    from services.limits import rate_limit_get, rate_limit_set
     now = time.time()
-    key = (int(uid), str(action))
-    st = RATE_LIMIT_STATE.get(key, {"last_ok": 0.0, "strikes": 0, "blocked_until": 0.0})
+    st = await rate_limit_get(uid, action)
+    
     if st.get("blocked_until", 0.0) > now:
         left = int(st["blocked_until"] - now)
         raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": f"Слишком часто. Блок {max(1, left // 60)} мин.", "code": "SPAM_BLOCK", "retry_after": left}), content_type="application/json")
+    
     last_ok = float(st.get("last_ok", 0.0))
     if last_ok and (now - last_ok) < min_interval_sec:
         st["strikes"] = int(st.get("strikes", 0)) + 1
@@ -237,10 +242,11 @@ def rate_limit_enforce(uid: int, action: str, min_interval_sec: int = 60, spam_s
         if st["strikes"] >= spam_strikes:
             st["blocked_until"] = now + block_sec
             st["strikes"] = 0
-            RATE_LIMIT_STATE[key] = st
+            await rate_limit_set(uid, action, st)
             raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": "Слишком часто. Блок 10 минут.", "code": "SPAM_BLOCK", "retry_after": block_sec}), content_type="application/json")
-        RATE_LIMIT_STATE[key] = st
+        await rate_limit_set(uid, action, st)
         raise web.HTTPTooManyRequests(text=json.dumps({"ok": False, "error": f"Лимит: раз в 1 минуту. Осталось ~{left}с", "code": "RATE_LIMIT", "retry_after": left}), content_type="application/json")
+    
     st["last_ok"] = now
     st["strikes"] = 0
-    RATE_LIMIT_STATE[key] = st
+    await rate_limit_set(uid, action, st)
