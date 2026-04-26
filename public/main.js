@@ -2768,6 +2768,11 @@ function brandIconHtml(taskOrType, sizePx = 38) {
   const TOP_FIXED_PRICE_RUB = 250;
 
   function isTopWanted() { return !!state.createTopWanted; }
+  function isVipOnly() {
+    const cb = document.getElementById("t-vip-only");
+    return !!(cb && cb.checked);
+  }
+
   function setTopWanted(v) {
     state.createTopWanted = !!v;
     updateTopUi();
@@ -2881,9 +2886,9 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const pricePerUnit = clamp(Number((priceInput && priceInput.value) || minReward), minReward, 1000000);
     
     const vipOnlyInput = $("t-vip-only");
-    const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
+    const vipActive = !!(vipOnlyInput && vipOnlyInput.checked);
     const vipWrapper = $("vip-toggle-wrap");
-    if (vipWrapper) vipWrapper.classList.toggle("checked", isVipOnly);
+    if (vipWrapper) vipWrapper.classList.toggle("checked", vipActive);
     const topWrapper = $("top-option-card");
     if (topWrapper) topWrapper.classList.toggle("checked", isTopWanted());
     
@@ -2907,7 +2912,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const commTotal = commissionEnabled ? Math.floor(baseTotal * 0.20) : 0;
     
     // VIP surcharge (10%) on total
-    const vipTotal = isVipOnly ? Math.ceil(baseTotal * 0.10) : 0;
+    const vipTotal = vipActive ? Math.ceil(baseTotal * 0.10) : 0;
     
     // Top visibility (250 RUB)
     const topPrice = isTopWanted() ? 250 : 0;
@@ -2964,7 +2969,7 @@ function brandIconHtml(taskOrType, sizePx = 38) {
     const reviewTexts = getCustomReviewTexts();
     
     const vipOnlyInput = $("t-vip-only");
-    const isVipOnly = !!(vipOnlyInput && vipOnlyInput.checked);
+    const vipActive = !!(vipOnlyInput && vipOnlyInput.checked);
     const pricePerUnitInput = $("t-price-per-unit");
     const pricePerUnit = Number((pricePerUnitInput && pricePerUnitInput.value) || 100);
     const cur = ($("t-cur") && $("t-cur").value) || "rub";
