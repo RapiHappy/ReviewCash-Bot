@@ -1506,7 +1506,7 @@ async function syncAll() {
   // Brand icons (original logos, embedded as tiny WEBP = instant, no network)
   // --------------------
   const BRAND_ICON_URLS = {
-    ya: "https://img.icons8.com/color/144/yandex-international.png",
+    ya: "https://img.icons8.com/color/144/yandex.png",
     gm: "https://img.icons8.com/color/144/google-maps-new.png",
     tg: "https://img.icons8.com/color/144/telegram-app.png",
     dg: "https://img.icons8.com/color/144/2gis.png"
