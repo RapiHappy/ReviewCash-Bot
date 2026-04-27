@@ -14,17 +14,17 @@ from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
 from crypto_service import auto_payout_crypto
-import logging
-from aiohttp import web
-import json
-import base64
-import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
 from services.user_service import *
 from services.web_utils import *
 from api.task_helpers import *
+from api.payments import parse_amount_rub
+
+def _now():
+    return datetime.now(timezone.utc)
+
 async def api_admin_withdraw_list(req: web.Request):
     await require_admin(req)
     # 1. Simple fetch without join first to guarantee it works
@@ -594,7 +594,7 @@ async def api_admin_tg_audit(req: web.Request):
 
         if upd:
             try:
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
+                await sb_update(T_TASKS, {"id": cast_id(task_id)}, upd)
                 changed += 1
                 if desired_check_type == "auto":
                     set_auto += 1

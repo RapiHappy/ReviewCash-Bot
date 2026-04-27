@@ -13,11 +13,6 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
-import logging
-from aiohttp import web
-import json
-import base64
-import asyncio
 
 from api.task_helpers import *
 # Removed from main import * to avoid circularity issues

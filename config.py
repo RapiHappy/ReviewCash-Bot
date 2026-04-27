@@ -1,12 +1,11 @@
-import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Build/version string used for cache-busting in Telegram WebView
 APP_BUILD = (
     os.getenv("APP_BUILD")
     or os.getenv("RENDER_GIT_COMMIT")
     or os.getenv("GIT_COMMIT")
-    or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
+    or datetime.now(timezone.utc).strftime("rc_%Y%m%d_%H%M%S")
 )
 
 # -------------------------
@@ -122,7 +121,6 @@ T_REF = "referral_events"
 BUILD_TAG = 'rc_backend_release5_lvldouble'
 REWORK_GRACE_DAYS = 3
 ACTIVE_REWORK_STATUSES = {"rework"}
-TG_MEMBER_SUBTYPES = {"channel", "group", "bot"}
 TASK_GENDER_ANY = "any"
 TASK_GENDER_MALE = "male"
 TASK_GENDER_FEMALE = "female"
@@ -131,17 +129,35 @@ TASK_GENDER_FEMALE = "female"
 TG_EVT_PREFIX = "tge:"
 TG_HOLD_PREFIX = "tgh:"
 
-# TG subtypes
+# TG subtypes — channel subscription
 TG_SUB_24H_KEY = "sub_24h"
 TG_SUB_48H_KEY = "sub_48h"
 TG_SUB_72H_KEY = "sub_72h"
-TG_JOIN_GROUP_24H_KEY = "jg_24h"
-TG_JOIN_GROUP_48H_KEY = "jg_48h"
-TG_JOIN_GROUP_72H_KEY = "jg_72h"
+# TG subtypes — group join
+TG_JOIN_GROUP_24H_KEY = "join_group_24h"
+TG_JOIN_GROUP_48H_KEY = "join_group_48h"
+TG_JOIN_GROUP_72H_KEY = "join_group_72h"
 
 TG_SUB_CHANNEL_KEY = "sub_24h"
-TG_JOIN_GROUP_KEY = "jg_24h"
+TG_JOIN_GROUP_KEY = "join_group_24h"
 TG_START_BOT_KEY = "start_bot"
+
+# TG subtypes — event-based tasks
+TG_BOT_START_KEY = "bot_start"
+TG_BOT_CALLBACK_KEY = "bot_callback"
+TG_BOT_MESSAGE_KEY = "bot_message"
+TG_MINIAPP_OPEN_KEY = "miniapp_open"
+TG_INVITE_FRIENDS_KEY = "invite_friends"
+TG_POLL_VOTE_KEY = "poll_vote"
+
+# TG subtype sets
+TG_CHANNEL_SUBTYPES = {"sub_24h", "sub_48h", "sub_72h"}
+TG_GROUP_SUBTYPES = {"join_group_24h", "join_group_48h", "join_group_72h"}
+TG_MEMBER_SUBTYPES = TG_CHANNEL_SUBTYPES | TG_GROUP_SUBTYPES | {"bot", "start_bot"}
+TG_EVENT_SUBTYPES = {
+    TG_BOT_START_KEY, TG_BOT_CALLBACK_KEY, TG_BOT_MESSAGE_KEY,
+    TG_MINIAPP_OPEN_KEY, TG_INVITE_FRIENDS_KEY, TG_POLL_VOTE_KEY,
+}
 
 # Gender keys (user_limits)
 USER_GENDER_MALE_KEY = "gender_m"

@@ -13,20 +13,23 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
-import logging
-from aiohttp import web
-import json
-import base64
-import asyncio
-import math
-from datetime import datetime, timezone, timedelta
-from typing import Any
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
 from services.user_service import *
 from services.web_utils import *
 from api.task_helpers import *
+
+def _now():
+    return datetime.now(timezone.utc)
+
+def _dt_after_task(dt, task) -> bool:
+    if not dt:
+        return False
+    created = _task_created_at(task)
+    return dt >= created
+
+
 async def api_task_create(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])

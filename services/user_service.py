@@ -78,14 +78,8 @@ async def referral_paid_reviews_count(uid: int) -> int:
         chunk_size = 100
         for i in range(0, len(task_ids), chunk_size):
             chunk = task_ids[i:i + chunk_size]
-            ids_sql_parts = []
-            for x in chunk:
-                if isinstance(x, int):
-                    ids_sql_parts.append(str(x))
-                else:
-                    ids_sql_parts.append('"' + str(x).replace('"', '') + '"')
-            ids_sql = ",".join(ids_sql_parts)
-            tasks = await sb_select(T_TASKS, filters={"id": f"in.({ids_sql})"}, columns="id,type", limit=len(chunk))
+            from database import sb_select_in
+            tasks = await sb_select_in(T_TASKS, "id", chunk, columns="id,type", limit=len(chunk))
             for task in (tasks.data or []):
                 if str(task.get("type") or "").lower() in ("ya", "gm"):
                     review_count += 1

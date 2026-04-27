@@ -64,8 +64,6 @@ async def cb_starspay_toggle(cq: CallbackQuery):
     except Exception:
         pass
 
-    await cq.answer("Сохранено")
-
 @router.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
     if int(message.from_user.id) != int(MAIN_ADMIN_ID or 0):

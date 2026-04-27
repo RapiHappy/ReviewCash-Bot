@@ -13,17 +13,19 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
-import logging
-from aiohttp import web
-import json
-import base64
-import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
-from services.user_service import *
+from services.user_service import *, _is_pgrst_missing_column
 from services.web_utils import *
 from api.task_helpers import *
+from api.payments import parse_amount_rub
+from aiogram.enums import ParseMode
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
 async def api_withdraw_create(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])

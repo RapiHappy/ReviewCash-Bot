@@ -12,7 +12,7 @@ from database import *
 from services.balances import add_rub, add_xp, task_xp
 from services.limits import *
 from services.telegram_utils import tg_is_member, get_miniapp_url, notify_user
-from services.user_service import maybe_pay_referral_bonus, cast_id
+from services.user_service import maybe_pay_referral_bonus, cast_id, stats_add
 
 log = logging.getLogger("reviewcash.workers")
 
@@ -113,23 +113,16 @@ async def notify_vips_about_fat_task(bot: Bot, task: dict):
         log.warning('notify_vips_about_fat_task failed: %s', e)
 
 async def process_tg_holds_once(bot: Bot):
-    now_dt = _now()
-    due_rows = await tg_hold_list_due(now_dt)
+    due_rows = await tg_hold_list_due()
     for row in due_rows:
-        parsed = tg_hold_parse_key(row.get("limit_key"))
-        if not parsed:
-            continue
-        task_id, user_id = parsed
+        user_id = row["user_id"]
+        task_id = row["task_id"]
         task_id_db = cast_id(task_id)
         try:
             t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
             task = (t.data or [None])[0]
-            if not task or str(task.get("type") or "") != "tg":
-                await tg_hold_clear(task_id, user_id)
-                continue
-
-            chat = str(task.get("tg_chat") or "").strip()
-            if not chat:
+            chat = task.get("tg_chat") or ""
+            if not task or str(task.get("type") or "") != "tg" or not chat:
                 await tg_hold_clear(task_id, user_id)
                 continue
 
@@ -201,42 +194,41 @@ async def vip_expiry_worker(bot: Bot):
     while True:
         try:
             now = _now()
-            users_res = await sb_exec(lambda: sb.table(T_USERS).select("*").not_.is_("vip_until", "null").execute())
-            for u in (users_res.data or []):
-                uid = int(u.get("user_id") or 0)
-                if not uid: continue
-                
-                v_str = u.get("vip_until")
-                if not v_str: continue
-                v_dt = _parse_dt(v_str)
-                if not v_dt: continue
-                
-                diff = v_dt - now
-                hours_left = diff.total_seconds() / 3600
-                
-                if 0 < hours_left <= 72:
-                    reminded = await get_limit_until(uid, "vip_remind_3d")
-                    if not reminded:
-                        msg = (f"👑 <b>Ваш VIP-статус заканчивается через {int(hours_left/24) + 1} дн.</b>\n\n"
-                               f"Продлите его в профиле, чтобы сохранить бонус +10% к доходу и +50% к опыту! ✨")
-                        await notify_user(uid, msg)
-                        await set_limit_until(uid, "vip_remind_3d", 7 * 24 * 3600)
-                
-                if 0 < hours_left <= 24:
-                    reminded = await get_limit_until(uid, "vip_remind_1d")
-                    if not reminded:
-                        msg = (f"👑 <b>Внимание! Ваш VIP-статус закончится через 24 часа.</b>\n\n"
-                               f"Успейте выполнить все VIP-задания и продлить статус! 🚀")
-                        await notify_user(uid, msg)
-                        await set_limit_until(uid, "vip_remind_1d", 7 * 24 * 3600)
-                
-                if -1 < hours_left <= 0:
-                    reminded = await get_limit_until(uid, "vip_remind_expired")
-                    if not reminded:
-                        msg = (f"🚫 <b>Ваш VIP-статус закончился.</b>\n\n"
-                               f"Бонусы к доходу и опыту больше не действуют. Ждем вас снова! 👋")
-                        await notify_user(uid, msg)
-                        await set_limit_until(uid, "vip_remind_expired", 30 * 24 * 3600)
+            vip_uids = await get_all_vip_uids()
+            for uid in vip_uids:
+                try:
+                    v_dt = await get_vip_until(uid)
+                    if not v_dt:
+                        continue
+
+                    diff = v_dt - now
+                    hours_left = diff.total_seconds() / 3600
+
+                    if 0 < hours_left <= 72:
+                        reminded = await get_limit_until(uid, "vip_remind_3d")
+                        if not reminded:
+                            msg = (f"👑 <b>Ваш VIP-статус заканчивается через {int(hours_left/24) + 1} дн.</b>\n\n"
+                                   f"Продлите его в профиле, чтобы сохранить бонус +10% к доходу и +50% к опыту! ✨")
+                            await notify_user(uid, msg)
+                            await set_limit_until(uid, "vip_remind_3d", 7 * 24 * 3600)
+
+                    if 0 < hours_left <= 24:
+                        reminded = await get_limit_until(uid, "vip_remind_1d")
+                        if not reminded:
+                            msg = (f"👑 <b>Внимание! Ваш VIP-статус закончится через 24 часа.</b>\n\n"
+                                   f"Успейте выполнить все VIP-задания и продлить статус! 🚀")
+                            await notify_user(uid, msg)
+                            await set_limit_until(uid, "vip_remind_1d", 7 * 24 * 3600)
+
+                    if -1 < hours_left <= 0:
+                        reminded = await get_limit_until(uid, "vip_remind_expired")
+                        if not reminded:
+                            msg = (f"🚫 <b>Ваш VIP-статус закончился.</b>\n\n"
+                                   f"Бонусы к доходу и опыту больше не действуют. Ждем вас снова! 👋")
+                            await notify_user(uid, msg)
+                            await set_limit_until(uid, "vip_remind_expired", 30 * 24 * 3600)
+                except Exception as e:
+                    log.warning("VIP worker uid=%s failed: %s", uid, e)
         except Exception as e:
             log.warning("VIP worker tick failed: %s", e)
         await asyncio.sleep(3600)

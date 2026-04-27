@@ -719,3 +719,31 @@ def tg_hold_delay_sec(subtype: str, extra_days: int = 0) -> int:
 
 def tg_hold_delay_hours(subtype: str, extra_days: int = 0) -> int:
     return tg_required_retention_days(subtype, extra_days) * 24
+
+
+async def tg_referrals_paid_since(uid: int, since: datetime) -> int:
+    """Count paid referral completions for uid since a given datetime."""
+    try:
+        from config import T_REF
+        r = await sb_select(T_REF, {"referrer_id": int(uid), "status": "paid"}, order="paid_at", desc=True, limit=1000)
+        count = 0
+        for row in (r.data or []):
+            paid_at = _parse_dt(row.get("paid_at"))
+            if paid_at and paid_at >= since:
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+
+async def tg_poll_answer_seen_since(uid: int, since: datetime, poll_id: str | None = None) -> bool:
+    """Check if user voted in a poll since given datetime."""
+    try:
+        key = tg_evt_key("poll_answer", poll_id) if poll_id else tg_evt_key("poll_answer")
+        dt = await tg_evt_get(uid, "poll_answer", poll_id) if poll_id else await tg_evt_get(uid, "poll_answer")
+        if not dt:
+            return False
+        return dt >= since
+    except Exception:
+        return False
+

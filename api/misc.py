@@ -13,11 +13,6 @@ from database import *
 from services.balances import *
 from services.limits import *
 from services.telegram_utils import *
-import logging
-from aiohttp import web
-import json
-import base64
-import asyncio
 
 # The main.py will later import these and inject missing dependencies
 # or they will import from main/config/services properly.
@@ -35,14 +30,6 @@ async def api_tg_check_chat(req: web.Request):
 
     chat = normalize_tg_chat(target)
     if not chat:
-        # hide internal tags from instructions (XP:/DIFF:/TG_SUBTYPE)
-        try:
-            for _t in (tasks or []):
-                if isinstance(_t, dict) and _t.get("instructions"):
-                    _t["instructions"] = strip_meta_tags(_t.get("instructions") or "")
-        except Exception:
-            pass
-
         return web.json_response({
             "ok": True,
             "valid": False,

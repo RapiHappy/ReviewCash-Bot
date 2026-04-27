@@ -12,6 +12,14 @@ from config import *
 from database import *
 from services.balances import *
 from services.limits import *
+from services.telegram_utils import (
+    _format_star_amount_obj, _format_unix_ts, _star_partner_text,
+    get_bot_stars_balance, get_bot_star_transactions,
+    bot, dp, notify_admin, notify_user, back_to_app_kb,
+    tg_check_required_subscription, required_subscribe_kb,
+    get_miniapp_url, setup_menu_button, _now,
+    normalize_tg_chat, tg_task_identity, ensure_bot_in_chat,
+)
 from services.telegram_utils import *
 from services.user_service import ensure_user, referrals_summary, stats_add
 from services.ui_handlers import send_main_welcome, build_welcome_kb
@@ -37,36 +45,12 @@ async def open_app_cmd(m: Message):
     ]])
     await m.answer("Открывай Mini App только этой кнопкой (WebApp):", reply_markup=kb)
 
-sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
-
-crypto = None
-if CRYPTO_PAY_TOKEN and AioCryptoPay:
-    crypto = AioCryptoPay(
-        token=CRYPTO_PAY_TOKEN,
-        network=Networks.MAIN_NET if CRYPTO_PAY_NETWORK.upper().startswith("MAIN") else Networks.TEST_NET
-    )
-
-# -------------------------
-# DB table names
-# -------------------------
-T_USERS = "users"
-T_BAL = "balances"
-T_TASKS = "tasks"
-T_COMP = "task_completions"
-T_DEV = "user_devices"
-T_PAY = "payments"
-T_WD = "withdrawals"
-T_LIMITS = "user_limits"
-T_STATS = "stats_daily"
-T_REF = "referral_events"
-
 # -------------------------
 # In-memory rate limiting (per process)
 #   - 1 minute between actions
 #   - if spamming, block for 10 minutes
 # -------------------------
 RATE_LIMIT_STATE: dict[tuple[int, str], dict] = {}
-TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
 
 
 # -------------------------

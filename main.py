@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from aiohttp import web
 
 from config import BOT_TOKEN, SERVER_BASE_URL, BASE_URL, WEBHOOK_PATH, USE_WEBHOOK, PORT, ADMIN_IDS, MAIN_ADMIN_ID
@@ -19,7 +19,7 @@ APP_BUILD = (
     os.getenv("APP_BUILD")
     or os.getenv("RENDER_GIT_COMMIT")
     or os.getenv("GIT_COMMIT")
-    or datetime.utcnow().strftime("rc_%Y%m%d_%H%M%S")
+    or datetime.now(timezone.utc).strftime("rc_%Y%m%d_%H%M%S")
 )
 
 def make_app():
