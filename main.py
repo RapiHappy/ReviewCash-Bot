@@ -29,6 +29,8 @@ def make_app():
     app.on_cleanup.append(on_cleanup)
     return app
 
+app = make_app()
+
 async def on_startup(app: web.Application):
     # Include handlers
     from handlers.users import router as users_router
@@ -70,4 +72,4 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    web.run_app(make_app(), host="0.0.0.0", port=PORT)
+    web.run_app(app, host="0.0.0.0", port=PORT)
