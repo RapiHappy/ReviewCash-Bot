@@ -29,7 +29,7 @@ def make_app():
     app.on_cleanup.append(on_cleanup)
     return app
 
-app = make_app()
+
 
 async def on_startup(app: web.Application):
     # Include handlers
@@ -66,6 +66,8 @@ async def on_cleanup(app: web.Application):
     except Exception:
         pass
     await bot.session.close()
+
+app = make_app()
 
 if __name__ == "__main__":
     logging.basicConfig(
