@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
-from config import XP_PER_LEVEL, XP_LEVEL_STEP, T_BAL
+from config import (
+    XP_PER_LEVEL, XP_LEVEL_STEP, T_BAL,
+    XP_EASY, XP_MEDIUM, XP_HARD, XP_MANUAL_BONUS, XP_REVIEW_BONUS, XP_MAX_PER_TASK
+)
 from database import sb_update, sb_select, sb_upsert
 
 def _now():
@@ -160,3 +163,23 @@ async def sub_stars(uid: int, amount: int | float) -> bool:
         return False
     await balances_update(uid, {"stars_balance": cur - sub, "updated_at": _now().isoformat()})
     return True
+
+def task_xp(task: dict) -> int:
+    """Calculate base XP for a task based on its type and check method."""
+    ttype = str(task.get("type") or "").lower()
+    check_type = str(task.get("check_type") or "").lower()
+    
+    if ttype == "tg":
+        base = XP_EASY
+    elif ttype in ("ya", "gm", "dg"):
+        base = XP_HARD
+    else:
+        base = XP_MEDIUM
+        
+    bonus = 0
+    if check_type == "manual":
+        bonus += XP_MANUAL_BONUS
+    if ttype in ("ya", "gm", "dg"):
+        bonus += XP_REVIEW_BONUS
+        
+    return min(int(base + bonus), XP_MAX_PER_TASK)

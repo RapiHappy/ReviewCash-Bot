@@ -9,15 +9,24 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import *
 from database import *
-from services.balances import add_rub, add_xp
+from services.balances import add_rub, add_xp, task_xp
 from services.limits import *
 from services.telegram_utils import tg_is_member, get_miniapp_url, notify_user
-from services.ui_handlers import task_xp, maybe_pay_referral_bonus
+from services.user_service import maybe_pay_referral_bonus, cast_id
 
 log = logging.getLogger("reviewcash.workers")
 
 def _now():
     return datetime.now(timezone.utc)
+
+def _parse_dt(s):
+    if not s: return None
+    try:
+        if isinstance(s, datetime): return s
+        s = str(s).replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
 
 async def _iter_user_ids(batch: int = 1000):
     start = 0
@@ -159,7 +168,7 @@ async def process_tg_holds_once(bot: Bot):
                         "proof_url": None,
                         "moderated_at": _now().isoformat(),
                     })
-                await notify_user(bot, user_id, f"✅ Проверка срока удержания пройдена. Начислено +{reward:.2f}₽")
+                await notify_user(user_id, f"✅ Проверка срока удержания пройдена. Начислено +{reward:.2f}₽")
             else:
                 c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
                 if c.data:
@@ -173,7 +182,7 @@ async def process_tg_holds_once(bot: Bot):
                     until_txt = until.strftime('%d.%m %H:%M') if until else 'на 3 дня'
                 except Exception:
                     until_txt = 'на 3 дня'
-                await notify_user(bot, user_id, f"❌ Проверка срока удержания не пройдена: пользователь вышел из канала/группы раньше срока. Выплата отменена, применён штраф: доступ к заданиям ограничен {until_txt}.")
+                await notify_user(user_id, f"❌ Проверка срока удержания не пройдена: пользователь вышел из канала/группы раньше срока. Выплата отменена, применён штраф: доступ к заданиям ограничен {until_txt}.")
         except Exception as e:
             log.warning("tg hold process failed task=%s user=%s err=%s", task_id, user_id, e)
         finally:
@@ -210,7 +219,7 @@ async def vip_expiry_worker(bot: Bot):
                     if not reminded:
                         msg = (f"👑 <b>Ваш VIP-статус заканчивается через {int(hours_left/24) + 1} дн.</b>\n\n"
                                f"Продлите его в профиле, чтобы сохранить бонус +10% к доходу и +50% к опыту! ✨")
-                        await notify_user(bot, uid, msg)
+                        await notify_user(uid, msg)
                         await set_limit_until(uid, "vip_remind_3d", 7 * 24 * 3600)
                 
                 if 0 < hours_left <= 24:
@@ -218,7 +227,7 @@ async def vip_expiry_worker(bot: Bot):
                     if not reminded:
                         msg = (f"👑 <b>Внимание! Ваш VIP-статус закончится через 24 часа.</b>\n\n"
                                f"Успейте выполнить все VIP-задания и продлить статус! 🚀")
-                        await notify_user(bot, uid, msg)
+                        await notify_user(uid, msg)
                         await set_limit_until(uid, "vip_remind_1d", 7 * 24 * 3600)
                 
                 if -1 < hours_left <= 0:
@@ -226,7 +235,7 @@ async def vip_expiry_worker(bot: Bot):
                     if not reminded:
                         msg = (f"🚫 <b>Ваш VIP-статус закончился.</b>\n\n"
                                f"Бонусы к доходу и опыту больше не действуют. Ждем вас снова! 👋")
-                        await notify_user(bot, uid, msg)
+                        await notify_user(uid, msg)
                         await set_limit_until(uid, "vip_remind_expired", 30 * 24 * 3600)
         except Exception as e:
             log.warning("VIP worker tick failed: %s", e)
