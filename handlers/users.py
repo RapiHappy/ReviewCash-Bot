@@ -117,8 +117,7 @@ async def cmd_start(message: Message):
 @router.message(F.text.in_(["👨 Мужской", "👩 Женский"]))
 async def handle_gender_pick(message: Message):
     uid = int(message.from_user.id)
-
-    sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
+    sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid, ignore_cache=True)
     if not sub_ok:
         channel_name = (sub_chat or 'канал').lstrip('@')
         await message.answer(
@@ -140,7 +139,7 @@ async def handle_gender_pick(message: Message):
 @router.callback_query(F.data == "check_required_sub")
 async def cb_check_required_sub(cq: CallbackQuery):
     uid = int(cq.from_user.id)
-    sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
+    sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid, ignore_cache=True)
     if not sub_ok:
         await cq.answer("❌ Подписка не найдена. Подпишись и попробуй снова.", show_alert=True)
         try:

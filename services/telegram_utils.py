@@ -27,6 +27,9 @@ def normalize_tg_chat(s: str | None) -> str | None:
     t = str(s).strip()
     if not t:
         return None
+    # If it's a numeric ID (starts with - or digit)
+    if t.startswith("-") or t.isdigit():
+        return t
     # accept https://t.me/name or @name or name
     t = re.sub(r"^https?://t\.me/", "", t)
     t = t.split("?")[0].split("/")[0]
@@ -37,14 +40,16 @@ def normalize_tg_chat(s: str | None) -> str | None:
     return t if len(t) > 1 else None
 
 def get_required_sub_channel() -> str | None:
+    from config import MANDATORY_SUB_CHANNEL
     return normalize_tg_chat(MANDATORY_SUB_CHANNEL)
 
-async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None = None) -> tuple[bool, str | None, str]:
+async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None = None, ignore_cache: bool = False) -> tuple[bool, str | None, str]:
     uid = int(user_id)
     now = _now().timestamp()
-    if uid in TG_SUB_CACHE:
+    if not ignore_cache and uid in TG_SUB_CACHE:
         ts, ok, chat, msg = TG_SUB_CACHE[uid]
-        if (now - ts) < 300: # 5 min cache
+        ttl = 300 if ok else 60 # 5 min for success, 1 min for failure
+        if (now - ts) < ttl:
             return ok, chat, msg
 
     chat = get_required_sub_channel()
@@ -56,18 +61,19 @@ async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None 
         return True, chat, "Бот не инициализирован"
 
     try:
-        member = await b.get_chat_member(chat_id=chat, user_id=uid)
-        cls_name = type(member).__name__.lower()
-        raw_status = getattr(member, "status", None)
-        status = str(raw_status).lower() if raw_status is not None else ""
-
-        subscribed_classes = ("chatmembermember", "chatmemberadministrator", "chatmemberowner", "chatmemberrestricted")
-        left_classes = ("chatmemberleft", "chatmemberbanned")
-
+        # If numeric ID, convert to int
+        c_id = int(chat) if (chat.startswith("-") or chat.isdigit()) else chat
+        member = await b.get_chat_member(chat_id=c_id, user_id=uid)
+        
+        # In aiogram 3, status is an enum member that behaves like a string
+        raw_status = getattr(member, "status", "")
+        status = str(raw_status).lower().replace("chatmemberstatus.", "")
+        
         ok, msg = False, "Не удалось определить подписку."
-        if cls_name in subscribed_classes or status in ("member", "administrator", "creator", "restricted"):
+        # Status 'owner' used in some versions/libs, 'creator' in others
+        if status in ("member", "administrator", "creator", "restricted", "owner"):
             ok, msg = True, ""
-        elif cls_name in left_classes or status in ("left", "kicked", "banned"):
+        elif status in ("left", "kicked", "banned"):
             ok, msg = False, "Подпишись на канал и нажми «Проверить подписку»."
 
         TG_SUB_CACHE[uid] = (now, ok, chat, msg)
@@ -75,10 +81,12 @@ async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None 
 
     except Exception as e:
         err_str = str(e).lower()
-        logging.warning(f"subscription check error for user={user_id} chat={chat}: {e}")
         if "chat not found" in err_str or "bot is not a member" in err_str or "not enough rights" in err_str or "forbidden" in err_str:
-            logging.error(f"[SUBSCRIPTION] Bot cannot check membership in {chat}. Make sure the bot is an ADMIN of the channel. Allowing user through.")
+            log.error(f"[SUBSCRIPTION] Bot cannot check membership in {chat}. Make sure the bot is an ADMIN of the channel. Allowing user through.")
             return True, chat, ""
+        
+        # Don't cache hard errors for too long
+        log.warning(f"Subscription check hard error for user={user_id} chat={chat}: {e}")
         return False, chat, "Не удалось проверить подписку. Подпишись на канал и нажми кнопку проверки ещё раз."
 
 def required_subscribe_kb() -> InlineKeyboardMarkup | None:
