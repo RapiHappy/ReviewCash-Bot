@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 
 # Build/version string used for cache-busting in Telegram WebView
