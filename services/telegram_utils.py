@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from aiogram.enums import ParseMode
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, MenuButtonWebApp, WebAppInfo
 import html
 
 from config import MANDATORY_SUB_CHANNEL, BOT_TOKEN, MINIAPP_URL, SERVER_BASE_URL, BASE_URL, APP_BUILD, BOT_USERNAME
@@ -304,3 +304,13 @@ def get_miniapp_url() -> str:
     if url and 'v=' not in url:
         url = url + ('&' if '?' in url else '?') + f'v={APP_BUILD}'
     return url or '/app/'
+
+async def setup_menu_button(bot: Bot):
+    if not bot: return
+    try:
+        url = get_miniapp_url()
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Открыть MiniApp", web_app=WebAppInfo(url=url))
+        )
+    except Exception as e:
+        log.warning(f"setup_menu_button failed: {e}")
