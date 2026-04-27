@@ -3,7 +3,9 @@ import logging
 from pathlib import Path
 from aiohttp import web
 from config import WEBHOOK_PATH, APP_BUILD, CRYPTO_WEBHOOK_PATH, STARS_RUB_RATE, XP_PER_TOPUP_100, T_PAY
-from database import sb_select, sb_update, add_rub, stats_add, add_xp
+from database import sb_select, sb_update
+from services.balances import add_rub, add_xp
+from services.user_service import stats_add
 from services.telegram_utils import bot, dp, notify_user
 from services.web_utils import safe_json
 
