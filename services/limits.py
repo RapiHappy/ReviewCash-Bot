@@ -8,7 +8,7 @@ import asyncio
 from config import (
     T_LIMITS, T_DEV, T_USERS, T_COMP,
     MAX_ACCOUNTS_PER_DEVICE, MAX_SUBMITS_10M, SUBMIT_WINDOW_SEC, SUBMIT_WINDOW_BLOCK_SEC,
-    NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS, MAIN_ADMIN_ID
+    NEW_ACCOUNT_EXPENSIVE_LOCK_DAYS, MAIN_ADMIN_ID, TG_HOLD_PREFIX
 )
 from database import sb_select, sb_upsert, sb_delete, sb_update, sb_exec, sb
 
@@ -668,3 +668,54 @@ async def rate_limit_set(uid: int, action: str, state: dict):
         },
         on_conflict="user_id,limit_key"
     )
+
+# -------------------------
+# TG Hold logic
+# -------------------------
+async def tg_hold_get(task_id: str, user_id: int) -> datetime | None:
+    key = f"{TG_HOLD_PREFIX}{task_id}"
+    return await get_limit_until(user_id, key)
+
+async def tg_hold_set(task_id: str, user_id: int, until: datetime):
+    key = f"{TG_HOLD_PREFIX}{task_id}"
+    await sb_upsert(
+        T_LIMITS,
+        {"user_id": int(user_id), "limit_key": key, "last_at": until.isoformat()},
+        on_conflict="user_id,limit_key"
+    )
+
+async def tg_hold_clear(task_id: str, user_id: int):
+    key = f"{TG_HOLD_PREFIX}{task_id}"
+    await clear_limit(user_id, key)
+
+async def tg_hold_list_due() -> list[dict]:
+    """Returns list of {user_id, task_id} where hold is over."""
+    try:
+        def _f():
+            return sb.table(T_LIMITS).select("*").like("limit_key", f"{TG_HOLD_PREFIX}%").lte("last_at", _now().isoformat()).execute()
+        res = await sb_exec(_f)
+        out = []
+        for r in (res.data or []):
+            key = r.get("limit_key")
+            tid = tg_hold_parse_key(key)
+            if tid:
+                out.append({"user_id": int(r["user_id"]), "task_id": tid})
+        return out
+    except Exception:
+        return []
+
+def tg_hold_parse_key(key: str) -> str | None:
+    if not key or not key.startswith(TG_HOLD_PREFIX): return None
+    return key[len(TG_HOLD_PREFIX):]
+
+def tg_required_retention_days(subtype: str, extra_days: int = 0) -> int:
+    base = 1
+    if "72h" in str(subtype): base = 3
+    elif "48h" in str(subtype): base = 2
+    return base + int(extra_days)
+
+def tg_hold_delay_sec(subtype: str, extra_days: int = 0) -> int:
+    return tg_required_retention_days(subtype, extra_days) * 24 * 3600
+
+def tg_hold_delay_hours(subtype: str, extra_days: int = 0) -> int:
+    return tg_required_retention_days(subtype, extra_days) * 24

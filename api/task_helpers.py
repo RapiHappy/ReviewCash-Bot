@@ -61,6 +61,10 @@ def _parse_dt(v):
     except Exception:
         return None
 
+def _task_created_at(task: dict) -> datetime:
+    from services.telegram_utils import _now
+    return _parse_dt(task.get("created_at")) or _now()
+
 def top_bought_at(task: dict | None) -> datetime | None:
     return _parse_dt(get_meta(task, "TOP_BOUGHT_AT"))
 
@@ -172,3 +176,20 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
 def is_rework_active(comp: dict | None) -> bool:
     if not comp: return False
     return str(comp.get("status") or "").lower() == "rework"
+
+async def expire_rework_if_needed(comp: dict) -> dict:
+    if not comp or str(comp.get("status") or "").lower() != "rework":
+        return comp
+    
+    from services.telegram_utils import _now
+    until = _parse_dt(comp.get("rework_until"))
+    if until and until <= _now():
+        # reset to pending
+        comp["status"] = "pending"
+        from config import T_COMP
+        from database import sb_update
+        try:
+            await sb_update(T_COMP, {"id": comp.get("id")}, {"status": "pending", "rework_until": None})
+        except Exception:
+            pass
+    return comp

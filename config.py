@@ -139,6 +139,10 @@ TG_JOIN_GROUP_24H_KEY = "jg_24h"
 TG_JOIN_GROUP_48H_KEY = "jg_48h"
 TG_JOIN_GROUP_72H_KEY = "jg_72h"
 
+TG_SUB_CHANNEL_KEY = "sub_24h"
+TG_JOIN_GROUP_KEY = "jg_24h"
+TG_START_BOT_KEY = "start_bot"
+
 # Gender keys (user_limits)
 USER_GENDER_MALE_KEY = "gender_m"
 USER_GENDER_FEMALE_KEY = "gender_f"
