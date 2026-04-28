@@ -3,7 +3,10 @@ from config import (
     XP_PER_LEVEL, XP_LEVEL_STEP, T_BAL,
     XP_EASY, XP_MEDIUM, XP_HARD, XP_MANUAL_BONUS, XP_REVIEW_BONUS, XP_MAX_PER_TASK
 )
-from database import sb_update, sb_select, sb_upsert
+from database import sb_update, sb_select, sb_upsert, sb
+import logging
+
+log = logging.getLogger("reviewcash.balances")
 
 def _now():
     return datetime.now(timezone.utc)
@@ -133,11 +136,22 @@ async def add_xp(uid: int, amount: int):
     cur = int(bal.get("xp") or 0)
     return await set_xp_level(uid, cur + int(amount))
 
+async def change_balance(uid: int, amount: float):
+    try:
+        res = await sb.rpc("update_balance_atomic", {
+            "p_user_id": int(uid),
+            "p_amount_rub": float(amount)
+        }).execute()
+        if not res.data or not res.data.get("ok"):
+            log.error(f"Ошибка баланса: {res.data}")
+            return False
+        return res.data["rub_balance"]
+    except Exception as e:
+        log.error(f"Критическая ошибка баланса {uid}: {e}")
+        return False
+
 async def add_rub(uid: int, amount: float):
-    bal = await get_balance(uid)
-    new_val = float(bal.get("rub_balance") or 0) + float(amount)
-    await balances_update(uid, {"rub_balance": new_val, "updated_at": _now().isoformat()})
-    return new_val
+    return await change_balance(uid, amount)
 
 async def add_stars(uid: int, amount: int | float):
     bal = await get_balance(uid)
@@ -148,12 +162,8 @@ async def add_stars(uid: int, amount: int | float):
     return new_val
 
 async def sub_rub(uid: int, amount: float) -> bool:
-    bal = await get_balance(uid)
-    cur = float(bal.get("rub_balance") or 0)
-    if cur < float(amount):
-        return False
-    await balances_update(uid, {"rub_balance": cur - float(amount), "updated_at": _now().isoformat()})
-    return True
+    res = await change_balance(uid, -float(amount))
+    return res is not False
 
 async def sub_stars(uid: int, amount: int | float) -> bool:
     bal = await get_balance(uid)

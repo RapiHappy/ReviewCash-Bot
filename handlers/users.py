@@ -424,13 +424,16 @@ async def handle_screenshot(message: Message):
                 await msg_wait.edit_text("✅ Вы уже отправили отчет по этому заданию.")
                 return
 
-        await sb_insert(T_COMP, {
-            "task_id": task_id,
-            "user_id": uid,
-            "status": "pending",
-            "proof_url": f"tg_file:{photo.file_id}", # Ссылка на файл в ТГ (временно)
-            "meta": {"ai_score": ai_score, "ai_moderated": True}
-        })
+        rpc_res = await sb.rpc("submit_task_atomic", {
+            "p_user_id": uid,
+            "p_task_id": task_id,
+            "p_proof_text": f"ai_vision_moderated_{ai_score}",
+            "p_proof_url": f"tg_file:{photo.file_id}",
+            "p_ai_score": ai_score
+        }).execute()
+
+        if not rpc_res.data or not rpc_res.data.get("ok"):
+            return await msg_wait.edit_text("К сожалению, места в этом задании только что закончились.")
         
         # Очищаем клик
         from services.limits import clear_task_click

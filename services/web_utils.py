@@ -97,6 +97,22 @@ def verify_init_data(init_data: str, token: str) -> dict | None:
             pass
     return pairs
 
+def verify_telegram_init_data(init_data: str, bot_token: str):
+    """Криптографическая проверка данных от Telegram Mini App."""
+    try:
+        vals = dict(parse_qsl(init_data))
+        auth_hash = vals.pop("hash")
+        # Сортировка ключей обязательна для формирования data_check_string
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(vals.items()))
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        h = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if h == auth_hash:
+            return json.loads(vals.get("user", "{}"))
+    except Exception as e:
+        log.error(f"InitData verify error: {e}")
+        return None
+    return None
+
 async def require_init(req: web.Request):
     from services.user_service import ensure_user
     from services.limits import get_global_ban_until, tg_evt_touch

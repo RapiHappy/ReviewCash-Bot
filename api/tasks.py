@@ -589,13 +589,16 @@ async def api_task_submit(req: web.Request):
     if not proof_url:
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
-    await sb_insert(T_COMP, {
-        "task_id": task_id_db,
-        "user_id": uid,
-        "status": "pending",
-        "proof_text": proof_text,
-        "proof_url": proof_url
-    })
+    rpc_res = await sb.rpc("submit_task_atomic", {
+        "p_user_id": uid,
+        "p_task_id": task_id_db,
+        "p_proof_text": proof_text,
+        "p_proof_url": proof_url,
+        "p_ai_score": 0
+    }).execute()
+
+    if not rpc_res.data or not rpc_res.data.get("ok"):
+        return web.json_response({"ok": False, "error": "К сожалению, места в этом задании только что закончились."}, status=400)
 
     await clear_task_click(uid, task_id)
 
