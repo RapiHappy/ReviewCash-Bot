@@ -25,6 +25,7 @@ from services.user_service import ensure_user, referrals_summary, stats_add
 from services.ui_handlers import send_main_welcome, build_welcome_kb
 import html
 import logging
+import io
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery, PreCheckoutQuery, LabeledPrice, 
@@ -382,6 +383,67 @@ async def check_review_ai(text: str) -> tuple[bool, str]:
         log.warning("check_review_ai error: %s", e)
         return True, "Ошибка проверки"
 
+
+@router.message(F.photo)
+async def handle_screenshot(message: Message):
+    uid = int(message.from_user.id)
+    
+    # 1. Находим текущее задание
+    from services.task_engine import TaskEngine
+    task = await TaskEngine.get_current_task(uid)
+    
+    if not task:
+        await message.answer("❌ Вы не выбрали задание в приложении. Сначала нажмите «Перейти к выполнению» в Mini App.")
+        return
+
+    # 2. Подготовка
+    msg_wait = await message.answer("🔍 Нейросеть проверяет скриншот, пожалуйста, подождите...")
+    
+    try:
+        photo = message.photo[-1]
+        photo_bytes_io = io.BytesIO()
+        await message.bot.download(photo.file_id, destination=photo_bytes_io)
+        image_data = photo_bytes_io.getvalue()
+        
+        # 3. AI модерация
+        from services.ai_moderation import ai_moderation_check_image
+        ai_score = await ai_moderation_check_image(image_data, task)
+        
+        if ai_score < 45:
+            await msg_wait.edit_text(f"❌ **Отчёт отклонён (Оценка ИИ: {ai_score}/100)**\n\nНейросеть не нашла текста отзыва на скриншоте или он не соответствует заданию.\n\nПожалуйста, отправьте скриншот, где чётко виден ваш опубликованный отзыв.")
+            return
+
+        # 4. Сохраняем отчет
+        task_id = task.get("id")
+        
+        # Проверяем, нет ли уже отчета
+        existing = await sb_select(T_COMP, {"user_id": uid, "task_id": task_id}, limit=1)
+        if existing.data:
+            st = str(existing.data[0].get("status") or "").lower()
+            if st in {"pending", "paid"}:
+                await msg_wait.edit_text("✅ Вы уже отправили отчет по этому заданию.")
+                return
+
+        await sb_insert(T_COMP, {
+            "task_id": task_id,
+            "user_id": uid,
+            "status": "pending",
+            "proof_url": f"tg_file:{photo.file_id}", # Ссылка на файл в ТГ (временно)
+            "meta": {"ai_score": ai_score, "ai_moderated": True}
+        })
+        
+        # Очищаем клик
+        from services.limits import clear_task_click
+        await clear_task_click(uid, task_id)
+        
+        await msg_wait.edit_text(f"✅ **Отчёт принят (Оценка ИИ: {ai_score}/100)**\n\nЗадание отправлено на проверку модератору. Обычно это занимает до 24 часов.")
+        
+        # Уведомляем админа
+        await notify_admin(f"📸 Новый отчет (AI: {ai_score})\nЗадание: {task.get('title')}\nUser: {uid}")
+        
+    except Exception as e:
+        logging.exception(f"Error handling photo for user {uid}: {e}")
+        await msg_wait.edit_text("⚠️ Ошибка при обработке скриншота. Попробуйте еще раз или напишите в поддержку.")
 
 @router.message()
 async def fallback_handler(m: Message):

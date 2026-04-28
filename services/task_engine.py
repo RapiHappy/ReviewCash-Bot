@@ -36,6 +36,28 @@ class TaskEngine:
         qty = int(task.get("qty_total") or 1)
         return min(1 + (qty // 10), 3)
 
+    @staticmethod
+    async def get_current_task(user_id: int) -> dict | None:
+        """Находит последнее задание, по которому кликнул пользователь в Mini App."""
+        from services.limits import CLICK_PREFIX
+        try:
+            # Ищем в T_LIMITS ключи clicked_task:
+            def _f():
+                return sb.table(T_LIMITS).select("limit_key").eq("user_id", int(user_id)).like("limit_key", f"{CLICK_PREFIX}%").order("last_at", desc=True).limit(1).execute()
+            res = await sb_exec(_f)
+            if not res.data:
+                return None
+            
+            key = res.data[0]["limit_key"]
+            task_id_str = key.replace(CLICK_PREFIX, "")
+            
+            # Проверяем, существует ли такое задание и активно ли оно
+            t_res = await sb_select(T_TASKS, {"id": task_id_str, "status": "active"}, limit=1)
+            return t_res.data[0] if t_res.data else None
+        except Exception as e:
+            log.error(f"get_current_task failed for {user_id}: {e}")
+            return None
+
     # ====================== LINK USAGE ======================
     @staticmethod
     async def log_link_usage(user_id: int, task_id: int | str, url: str):
