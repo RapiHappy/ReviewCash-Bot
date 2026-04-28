@@ -81,12 +81,18 @@ async def api_referrals(req: web.Request):
 # -------------------------
 
 async def api_sync(req: web.Request):
+    """
+    Основной эндпоинт синхронизации MiniApp.
+    Вся логика доступности заданий централизована в TaskEngine.
+    """
     _, user = await require_init_optional(req)
     if not user:
         return web.json_response({"ok": True, "auth": False, "user": None, "tasks": [], "balances": None})
-    body = await safe_json(req)
 
+    body = await safe_json(req)
     uid = int(user.get("id") or user.get("user_id") or 0)
+
+    # Анти-фрод + регистрация пользователя
     device_hash = str(body.get("device_hash") or "").strip()
     device_id = str(body.get("device_id") or "").strip()
     ua = req.headers.get("User-Agent", "")
@@ -99,185 +105,91 @@ async def api_sync(req: web.Request):
     except Exception:
         ref = None
 
-    urow = await ensure_user(user, referrer_id=ref)
+    await ensure_user(user, referrer_id=ref)
 
+    # Анти-фрод проверка
     ok, reason = await anti_fraud_check_and_touch(uid, device_hash, ip, ua, device_id=device_id)
     if not ok:
         return web.json_response({"ok": False, "error": reason}, status=403)
 
-    # MAINTENANCE CHECK
     if await is_maintenance_mode():
         is_adm = (uid in ADMIN_IDS) or (uid == MAIN_ADMIN_ID)
         if not is_adm:
-            return web.json_response({
-                "ok": False,
-                "error": "Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте позже.",
-                "code": "MAINTENANCE"
-            }, status=503)
+            return web.json_response({"ok": False, "error": "Бот временно отключен на техническое обслуживание.", "code": "MAINTENANCE"}, status=503)
 
-    if urow.get("is_banned"):
+    # Бан пользователя
+    u_row = await sb_select(T_USERS, {"user_id": uid}, limit=1)
+    if u_row.data and u_row.data[0].get("is_banned"):
         return web.json_response({"ok": False, "error": "Аккаунт заблокирован"}, status=403)
 
-    bal = await get_balance(uid)
-    risk_score = await calc_user_risk_score(uid)
-    trust_level = "high" if risk_score < 30 else ("medium" if risk_score < 60 else "low")
-    expensive_ok, expensive_reason = await can_access_expensive_tasks(uid)
-
     banned_until = await get_task_ban_until(uid)
-    
-    is_vip = False
-    vip_until = urow.get("vip_until")
-    if vip_until:
-        v_dt = _parse_dt(vip_until)
-        if v_dt and v_dt > _now():
-            is_vip = True
+    if banned_until:
+        return web.json_response({
+            "ok": True,
+            "auth": True,
+            "user": {"user_id": uid},
+            "banned_until": banned_until.isoformat(),
+            "tasks": []
+        })
 
-    tasks = []
+    # Основные данные
+    bal = await get_balance(uid)
+    vip_until_dt = await get_vip_until(uid)
     user_gender = normalize_task_gender(await tg_get_gender(uid))
-    if not banned_until:
-        tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=200)
-        raw = tsel.data or []
 
-        active_ids = [str(t["id"]) for t in raw]
-        completions_batch = []
-        if active_ids:
-            try:
-                # Fetch completions only for tasks we are interested in
-                csel = await sb_select_in(
-                    T_COMP,
-                    "task_id",
-                    active_ids,
-                    columns="task_id,status,rework_until",
-                    limit=3000 # Enough for 200 tasks * 15 active slots each
-                )
-                completions_batch = csel.data or []
-            except Exception as e:
-                log.error(f"Sync: batch completions fetch failed: {e}")
+    # === ЗАГРУЗКА И ФИЛЬТРАЦИЯ ЗАДАНИЙ ===
+    from services.task_engine import TaskEngine
 
-        # 1. Build pending_task_counts for task filtering
-        pending_task_counts = {}
-        for c in completions_batch:
-            if str(c.get("status") or "").lower() == "pending":
-                tid = str(c.get("task_id") or "")
-                if tid:
-                    pending_task_counts[tid] = pending_task_counts.get(tid, 0) + 1
+    tsel = await sb_select(T_TASKS, {"status": "active"}, order="created_at", desc=True, limit=250)
+    raw_tasks = tsel.data or []
 
-        completed_tg_stack_keys: set[str] = set()
-        try:
-            user_comp = await sb_select(T_COMP, {"user_id": uid}, order="created_at", desc=True, limit=300)
-            done_statuses = {"pending", "pending_hold", "paid", "fake", "approved"}
-            done_task_ids = list({
-                cast_id(x.get("task_id"))
-                for x in (user_comp.data or [])
-                if str(x.get("status") or "").lower() in done_statuses and x.get("task_id") is not None
-            })
-            if done_task_ids:
-                done_tasks = await sb_select_in(
-                    T_TASKS,
-                    "id",
-                    done_task_ids,
-                    columns="id,type,target_url,tg_chat,instructions",
-                    limit=max(len(done_task_ids), 1),
-                )
-                for dt in (done_tasks.data or []):
-                    if str(dt.get("type") or "") != "tg":
-                        continue
-                    stack_key = tg_task_identity(dt)
-                    if stack_key:
-                        completed_tg_stack_keys.add(stack_key)
-        except Exception:
-            completed_tg_stack_keys = set()
+    user_rep = await TaskEngine.calculate_user_rep(uid)
 
-        # 3. Optimized TaskEngine checks
-        from services.task_engine import TaskEngine, sha256_hash
-        
-        # Pre-filter basic eligibility
-        pre_tasks = [
-            t for t in raw
-            if (int(t.get("owner_id") or 0) == uid or int(t.get("qty_left") or 0) > 0)
-            and (int(t.get("owner_id") or 0) == uid or t.get("type") != "tg" or t.get("check_type") == "auto")
-            and not (
-                int(t.get("owner_id") or 0) != uid
-                and int(pending_task_counts.get(str(t.get("id")), 0) or 0) >= int(t.get("qty_left") or 0)
-            )
-            and (
-                int(t.get("owner_id") or 0) == uid
-                or expensive_ok
-                or str(t.get("type") or "") in ("ya", "gm")
-                or float(t.get("reward_rub") or 0) < EXPENSIVE_TASK_REWARD_RUB
-            )
-            and (
-                int(t.get("owner_id") or 0) == uid
-                or get_task_target_gender(t) == TASK_GENDER_ANY
-                or get_task_target_gender(t) == user_gender
-            )
-        ]
+    filtered = []
+    for t in raw_tasks:
+        is_owner = int(t.get("owner_id") or 0) == uid
+        if is_owner:
+            filtered.append(t)
+            continue
 
-        # Batch check link usage
-        relevant_urls = {t["target_url"] for t in pre_tasks if t.get("target_url")}
-        url_hashes = [sha256_hash(u) for u in relevant_urls]
-        usage_map = {}
-        user_link_history = set()
-        
-        if url_hashes:
-            since = (_now() - timedelta(hours=24)).isoformat()
-            try:
-                # Count usage per url_hash in last 24h
-                def _f_usage():
-                    return sb.table(T_LINK_LOG).select("url_hash").in_("url_hash", url_hashes).gte("used_at", since).execute()
-                res_u = await sb_exec(_f_usage)
-                for r in (res_u.data or []):
-                    h = r["url_hash"]
-                    usage_map[h] = usage_map.get(h, 0) + 1
-                
-                # Check if this user ever did these links
-                def _f_history():
-                    return sb.table(T_LINK_LOG).select("url_hash").eq("user_id", uid).in_("url_hash", url_hashes).execute()
-                res_h = await sb_exec(_f_history)
-                user_link_history = {r["url_hash"] for r in (res_h.data or [])}
-            except Exception as e:
-                log.error(f"Sync: batch link usage fetch failed: {e}")
+        # Единая проверка доступности через TaskEngine
+        ok_take, _ = await TaskEngine.can_user_take_task(uid, t, user_rep=user_rep)
+        if not ok_take:
+            continue
 
-        # Final filtering using TaskEngine
-        tasks = []
-        user_rep = await TaskEngine.calculate_user_rep(uid)
-        
-        for t in pre_tasks:
-            is_owner = int(t.get("owner_id") or 0) == uid
-            if is_owner:
-                tasks.append(t)
-                continue
-            
-            # Centralized eligibility check with optimized rep check
-            ok, _ = await TaskEngine.can_user_take_task(uid, t, user_rep=user_rep)
-            if not ok:
-                continue
-                
-            # Additional TG Duplicate check (identity-based)
-            if str(t.get("type") or "") == "tg":
-                if tg_task_identity(t) in completed_tg_stack_keys:
-                    continue
-                    
-            tasks.append(t)
+        # Гендерный таргетинг
+        target_g = get_task_target_gender(t)
+        if target_g != TASK_GENDER_ANY and target_g != user_gender:
+            continue
 
-        # 4. Sorting: Weighted Randomization
-        for t in tasks:
-            t["_rank"] = TaskEngine.calculate_task_rank(t)
-            # Ensure top active tasks are always at the top regardless of rank
-            if is_top_active(t):
-                t["_rank"] += 100.0
-        
-        tasks.sort(key=lambda x: x["_rank"], reverse=True)
+        filtered.append(t)
 
-        # 5. Build task_slot_map for review text picking (same as before)
-        task_slot_map = {}
-        for c in completions_batch:
-            tid = str(c.get("task_id") or "")
-            if not tid: continue
-            st = str(c.get("status") or "").lower()
-            is_rw = st == "rework"
-            if st in {"pending", "pending_hold", "paid", "fake"} or is_rw:
-                task_slot_map[tid] = task_slot_map.get(tid, 0) + 1
+    # Ранжирование
+    for t in filtered:
+        t["_rank"] = TaskEngine.calculate_task_rank(t)
+        if is_top_active(t):
+            t["_rank"] += 100.0
+
+    filtered.sort(key=lambda x: x.get("_rank", 0), reverse=True)
+
+    # Ответ
+    session_token = _make_session_token(uid)
+
+    return web.json_response({
+        "ok": True,
+        "auth": True,
+        "session_token": session_token,
+        "user": {
+            "user_id": uid,
+            "username": user.get("username"),
+            "is_vip": vip_until_dt is not None,
+            "vip_until": vip_until_dt.isoformat() if vip_until_dt else None,
+            "is_admin": uid in ADMIN_IDS or uid == MAIN_ADMIN_ID,
+        },
+        "balance": bal,
+        "tasks": filtered,
+        "banned_until": None
+    })
 
         for t in tasks:
             t["top_active_until"] = get_top_meta(t, "TOP_ACTIVE_UNTIL")
