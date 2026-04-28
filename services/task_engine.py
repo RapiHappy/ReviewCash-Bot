@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 
 from config import T_COMP, T_LINK_LOG, T_USERS, T_TASKS
-from database import sb_select, sb_insert, sb_count, sb_exec, sb, sb_update
+from database import sb_select, sb_insert, sb_count, sb, sb_update
 from services.balances import add_rub
 from api.task_helpers import get_meta
 
@@ -27,6 +27,7 @@ def _parse_dt(v):
     except Exception:
         return None
 
+
 class TaskEngine:
 
     @staticmethod
@@ -43,9 +44,9 @@ class TaskEngine:
         try:
             await sb_insert(T_LINK_LOG, {
                 "url_hash": url_hash,
-                "user_id": user_id,
+                "user_id": int(user_id),
                 "task_id": str(task_id),
-                "used_at": datetime.now(timezone.utc).isoformat()
+                "used_at": _now().isoformat()
             })
         except Exception as e:
             log.error(f"Failed to log link usage: {e}")
@@ -53,7 +54,7 @@ class TaskEngine:
     @staticmethod
     async def get_link_usage_last_24h(url: str) -> int:
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        since = (_now() - timedelta(hours=24)).isoformat()
         try:
             return await sb_count(T_LINK_LOG, {"url_hash": url_hash}, gte={"used_at": since})
         except Exception:
@@ -100,7 +101,7 @@ class TaskEngine:
             success_rate = success / max(1, total) if total > 0 else 0.8
 
             total_len = int(u.get("total_text_length") or 0)
-            avg_len = total_len / max(1, success)
+            avg_len = total_len / max(1, success) if success > 0 else 0
             avg_len_score = min(1.0, avg_len / 200.0)
 
             created_at = _parse_dt(u.get("created_at"))
@@ -108,7 +109,7 @@ class TaskEngine:
             age_score = min(1.0, days / 30.0)
 
             score = (success_rate * 0.6) + (avg_len_score * 0.2) + (age_score * 0.2)
-            return round(score, 2)
+            return round(max(0.0, score), 2)
         except Exception:
             return 0.5
 
@@ -119,7 +120,7 @@ class TaskEngine:
 
         rep = await TaskEngine.calculate_user_rep(user_id)
         if rep < 0.25:
-            return False, "Ваш рейтинг слишком низкий. Выполните несколько простых заданий для повышения доверия."
+            return False, "Ваш рейтинг слишком низкий. Выполните несколько простых заданий."
 
         return True, None
 
@@ -148,19 +149,19 @@ class TaskEngine:
         proof_text: str, 
         time_since_click: float | None = None
     ) -> tuple[bool, str | None]:
-        """Единая точка всех проверок при отправке отзыва"""
+        """Единая точка всех проверок при отправке отзыва (v3)"""
 
-        # 1. Поведение
+        # 1. Поведение и скорость
         ok, err = await TaskEngine.check_behavior(user_id, task, time_since_click)
         if not ok:
             return False, err
 
-        # 2. Базовое качество текста
+        # 2. Качество текста
         ok, err = await TaskEngine.basic_quality_filters(proof_text, task)
         if not ok:
             return False, err
 
-        # 3. Лимит по ссылке (атомарно)
+        # 3. Лимит по ссылке (атомарно + защита от гонок)
         url = task.get("target_url")
         if url:
             limit = TaskEngine.get_daily_limit(task)
@@ -168,79 +169,71 @@ class TaskEngine:
             if not ok:
                 return False, err
 
-        # 4. Репутация (мягкий фильтр)
+        # 4. Проверка репутации для дорогих заданий
         rep = await TaskEngine.calculate_user_rep(user_id)
         min_rep = float(get_meta(task, "MIN_REP") or 0.0)
         if rep < min_rep and float(task.get("reward_rub", 0)) >= 50:
-            return False, f"Ваш рейтинг ({rep:.2f}) недостаточен для этого задания."
+            return False, f"Ваш рейтинг ({rep:.2f}) недостаточен для этого задания (требуется минимум {min_rep})."
 
         return True, None
 
     @staticmethod
     async def cancel_task(owner_id: int, task_id: int) -> tuple[bool, str | None, float]:
-        """
-        Cancels an active task and refunds only the performer's reward for unused slots.
-        """
         try:
             res = await sb_select(T_TASKS, {"id": task_id, "owner_id": owner_id}, limit=1)
-            if not res.data: return False, "Задание не найдено", 0.0
-            
+            if not res.data:
+                return False, "Задание не найдено", 0.0
+
             task = res.data[0]
             if task.get("status") != "active":
                 return False, "Задание уже неактивно", 0.0
-                
+
             qty_left = int(task.get("qty_left") or 0)
             reward_per_unit = float(task.get("reward_rub") or 0)
-            
             refund_amount = round(qty_left * reward_per_unit, 2)
-            
+
             await sb_update(T_TASKS, {"id": task_id}, {"status": "cancelled", "qty_left": 0})
+
             if refund_amount > 0:
                 await add_rub(owner_id, refund_amount)
-                
+
             return True, None, refund_amount
         except Exception as e:
             log.error(f"Cancel task error: {e}")
             return False, str(e), 0.0
 
     @staticmethod
+    def calculate_task_rank(task: dict) -> float:
+        priority = int(task.get("priority") or 0)
+        p_score = min(1.0, priority / 10.0)
+
+        created_at = _parse_dt(task.get("created_at"))
+        hours_old = (_now() - created_at).total_seconds() / 3600 if created_at else 72
+        f_score = math.exp(-hours_old / 24.0)
+
+        r_score = random.random()
+        return (p_score * 0.5) + (r_score * 0.3) + (f_score * 0.2)
+
+    @staticmethod
     async def can_user_take_task(user_id: int, task: dict) -> tuple[bool, str | None]:
-        """Checks if a user is eligible to see/pick this task."""
-        # 1. Behavior
+        """Проверка видимости задания пользователю"""
         ok, reason = await TaskEngine.check_behavior(user_id, task)
-        if not ok: return False, reason
-        
-        # 2. URL Limits
+        if not ok:
+            return False, reason
+
         url = task.get("target_url")
         if url:
             limit = TaskEngine.get_daily_limit(task)
             usage = await TaskEngine.get_link_usage_last_24h(url)
             if usage >= limit:
-                return False, "Лимит ссылок на сегодня исчерпан."
+                return False, "Лимит отзывов на эту ссылку сегодня исчерпан."
             if await TaskEngine.user_did_link_ever(user_id, url):
-                return False, "Вы уже выполняли это задание."
-                
-        # 3. Reputation min requirements
-        min_rep = get_meta(task, "MIN_REP")
-        if min_rep:
-            user_rep = await TaskEngine.calculate_user_rep(user_id)
-            if user_rep < float(min_rep):
-                return False, f"Требуется рейтинг {min_rep}, у вас {user_rep:.2f}"
-                
-        return True, None
+                return False, "Вы уже выполняли задание с этой ссылкой."
 
-    @staticmethod
-    def calculate_task_rank(task: dict) -> float:
-        """
-        Formula: (Priority * 0.5) + (Random * 0.3) + (Freshness * 0.2)
-        Freshness uses exponential decay: exp(-hours_old / 24)
-        """
-        priority = int(task.get("priority") or 0)
-        p_score = min(1.0, priority / 10.0)
-        
-        created_at = _parse_dt(task.get("created_at"))
-        hours_old = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600 if created_at else 72
-        f_score = math.exp(-hours_old / 24.0)
-        
-        r_score = random.random()
-        return (p_score * 0.5) + (r_score * 0.3) + (f_score * 0.2)
+        min_rep = float(get_meta(task, "MIN_REP") or 0.0)
+        if min_rep > 0:
+            rep = await TaskEngine.calculate_user_rep(user_id)
+            if rep < min_rep:
+                return False, f"Требуется рейтинг {min_rep}, у вас {rep:.2f}"
+
+        return True, None
