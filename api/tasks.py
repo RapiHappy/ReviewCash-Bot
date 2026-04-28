@@ -345,9 +345,17 @@ async def api_task_cancel(req: web.Request):
     if qty_left <= 0:
         return web.json_response({"ok": False, "error": "Нет оставшихся выполнений для отмены"}, status=400)
 
-    # Refund logic: Reward only (platform keeps fee)
+    # Refund logic: (qty_left * reward) - cancellation_fee
     reward_per_unit = float(task.get("reward_rub") or 0)
-    refund_amount = round(qty_left * reward_per_unit, 2)
+    base_refund = qty_left * reward_per_unit
+    
+    # 5% cancellation fee if more than 0 completions already done
+    qty_total = int(task.get("qty_total") or 1)
+    completed = qty_total - qty_left
+    cancel_fee_rate = 0.05 if completed > 0 else 0.0
+    cancel_fee = round(base_refund * cancel_fee_rate, 2)
+    
+    refund_amount = round(base_refund - cancel_fee, 2)
 
     # Update task
     await sb_update(T_TASKS, {"id": task_id_db}, {"status": "cancelled", "qty_left": 0})
@@ -355,7 +363,10 @@ async def api_task_cancel(req: web.Request):
     # Refund to user balance
     if refund_amount > 0:
         await add_rub(uid, refund_amount)
-        await notify_user(bot, uid, f"✅ Задание отменено. Возврат средств: {refund_amount}₽ (за вычетом комиссии сервиса)")
+        msg = f"✅ Задание отменено. Возврат средств: {refund_amount}₽"
+        if cancel_fee > 0:
+            msg += f" (удержана комиссия за отмену {cancel_fee}₽)"
+        await notify_user(bot, uid, msg)
 
     return web.json_response({"ok": True, "refund_amount": refund_amount})
 
@@ -449,27 +460,35 @@ async def api_task_submit(req: web.Request):
         if elapsed is not None and elapsed < 60: # User said 60s for naturalness
             return web.json_response({"ok": False, "error": "Выполняете слишком быстро. Для качественного отзыва нужно хотя бы 1-2 минуты изучения объекта."}, status=400)
         
-        # Link Usage & Uniqueness Check (Atomic)
-        from services.task_engine import TaskEngine
-        url = task.get("target_url")
-        if url:
-            limit = TaskEngine.get_daily_limit(task)
-            ok, err = await TaskEngine.try_reserve_link_usage(uid, task_id_db, url, limit)
-            if not ok:
-                return web.json_response({"ok": False, "error": err}, status=400)
+            # Layered Quality Check
+            from services.task_engine import TaskEngine
             
-            # Text quality & uniqueness check
+            # 1. Basic Filters (Fast & Reliable)
             if proof_text:
-                if len(proof_text) < 50:
-                    # Note: if we reject here, we already logged usage. 
-                    # This is okay as it penalizes bad quality by taking a "slot" for the day, 
-                    # or we could implement a rollback, but usually bad text is a user error.
-                    return web.json_response({"ok": False, "error": "Отзыв слишком короткий. Напишите подробнее (минимум 50 символов)."}, status=400)
+                ok_q, err_q = await TaskEngine.basic_quality_filters(proof_text, task)
+                if not ok_q:
+                    return web.json_response({"ok": False, "error": err_q}, status=400)
                 
                 # Check for exact duplicate in this task (by anyone)
                 existing = await sb_select(T_COMP, {"task_id": task_id_db, "proof_text": proof_text}, limit=1)
                 if existing.data:
                     return web.json_response({"ok": False, "error": "Такой текст отзыва уже отправляли для этого задания. Напишите свой уникальный текст."}, status=400)
+
+            # 2. Link Usage & Uniqueness Check (Atomic)
+            url = task.get("target_url")
+            if url:
+                limit = TaskEngine.get_daily_limit(task)
+                ok, err = await TaskEngine.try_reserve_link_usage(uid, task_id_db, url, limit)
+                if not ok:
+                    return web.json_response({"ok": False, "error": err}, status=400)
+
+            # 3. AI Moderation (Optional / Second Layer)
+            if proof_text:
+                from services.ai_moderation import analyze_review_quality
+                ai_res = await analyze_review_quality(proof_text, task.get("instructions", ""))
+                if not ai_res["is_ok"] and ai_res["score"] < 0.4:
+                    return web.json_response({"ok": False, "error": f"AI-фильтр: {ai_res['reason']}"}, status=400)
+                # If score is between 0.4 and 0.6, we let it pass but could flag it
 
     if is_auto:
         async def _auto_pay(ok_code: str):

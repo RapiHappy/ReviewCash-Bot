@@ -12,6 +12,11 @@ log = logging.getLogger("reviewcash.task_engine")
 def _now():
     return datetime.now(timezone.utc)
 
+STOP_WORDS = {
+    "fake", "тест", "проверка", "test", "spam", "скам", "scam", 
+    "отзыв", "хорошо", "отлично", "норм" # Too generic if very short
+}
+
 def _parse_dt(v):
     try:
         if not v: return None
@@ -169,7 +174,12 @@ class TaskEngine:
     @staticmethod
     async def can_user_take_task(user_id: int, task: dict) -> tuple[bool, str | None]:
         """Final check before showing or allowing task pick."""
-        # 1. Global Link Daily Limit
+        # 1. Behavioral check
+        is_ok, reason = await TaskEngine.check_behavior(user_id)
+        if not is_ok:
+            return False, reason
+
+        # 2. Global Link Daily Limit
         url = task.get("target_url")
         if url:
             usage_today = await TaskEngine.get_link_usage_last_24h(url)
@@ -177,12 +187,11 @@ class TaskEngine:
             if usage_today >= daily_limit:
                 return False, "Лимит отзывов на эту ссылку сегодня исчерпан. Попробуй завтра."
             
-            # 2. User-Link History
+            # 3. User-Link History
             if await TaskEngine.user_did_link_ever(user_id, url):
                 return False, "Вы уже оставляли отзыв на эту ссылку."
 
-        # 3. Reputation check
-        # Some tasks might have "MIN_REP: 0.7" in meta
+        # 4. Reputation check
         from api.task_helpers import get_meta
         min_rep = get_meta(task, "MIN_REP")
         if min_rep:
@@ -194,4 +203,39 @@ class TaskEngine:
             except Exception:
                 pass
                 
+        return True, None
+
+    @staticmethod
+    async def check_behavior(user_id: int) -> tuple[bool, str | None]:
+        """Analyze user behavior for suspicious patterns."""
+        # Check success rate and account age (already in rep, but let's be strict)
+        rep = await TaskEngine.calculate_user_rep(user_id)
+        if rep < 0.3:
+            return False, "Ваш уровень доверия слишком низок. Выполняйте задания качественнее."
+            
+        # Submission frequency check (handled in api_task_submit, but could be global)
+        # For now, just return True if rep is OK
+        return True, None
+
+    @staticmethod
+    async def basic_quality_filters(text: str, task: dict) -> tuple[bool, str | None]:
+        """Basic text analysis before AI layer."""
+        t = text.strip()
+        if len(t) < 50:
+            return False, "Отзыв слишком короткий. Нужно минимум 50 символов."
+        
+        # Stop words check
+        t_low = t.lower()
+        found_stop = [w for w in STOP_WORDS if w in t_low and len(t) < 100]
+        if found_stop and len(t) < 80:
+             return False, "Отзыв выглядит слишком шаблонным или содержит запрещенные слова."
+
+        # Global uniqueness check (against last 1000 completions)
+        try:
+             existing = await sb_count(T_COMP, {"proof_text": t})
+             if existing > 0:
+                 return False, "Такой текст отзыва уже использовался ранее. Напишите свой уникальный опыт."
+        except Exception:
+             pass
+
         return True, None

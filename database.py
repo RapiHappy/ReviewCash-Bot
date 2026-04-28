@@ -8,8 +8,19 @@ log = logging.getLogger("reviewcash")
 
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
+async def sb_retry(fn, retries=3, delay=0.5):
+    last_err = None
+    for i in range(retries):
+        try:
+            return await fn()
+        except Exception as e:
+            last_err = e
+            log.warning(f"DB Retry {i+1}/{retries} failed: {e}")
+            await asyncio.sleep(delay * (i + 1))
+    raise last_err
+
 async def sb_exec(fn):
-    return await asyncio.to_thread(fn)
+    return await sb_retry(lambda: asyncio.to_thread(fn))
 
 async def sb_upsert(table: str, row: dict, on_conflict: str | None = None):
     def _f():
