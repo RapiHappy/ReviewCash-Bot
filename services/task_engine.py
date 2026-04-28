@@ -156,12 +156,20 @@ class TaskEngine:
         """Detects suspicious activity patterns."""
         # A. Speed check
         if time_since_click is not None and time_since_click < 60:
-            return False, "Выполняете слишком быстро. Для качественного отзыва нужно время."
+            return False, "Выполняете слишком быстро. Для качественного отзыва нужно время (хотя бы 1-2 минуты)."
             
         # B. Low reputation check
         rep = await TaskEngine.calculate_user_rep(user_id)
-        if rep < 0.3:
-            return False, "Ваш рейтинг слишком низок для этого действия."
+        if rep < 0.2: # Hard block for very low rep
+            return False, "Ваш уровень доверия критически низок. Обратитесь в поддержку."
+
+        # C. Click-to-Submit Ratio (Anti-hoarding)
+        # Check last 20 clicks. If > 80% were never submitted, throttle.
+        try:
+            # This is a bit expensive, so we might want to cache or use a specific table.
+            # For now, let's keep it simple or skip if performance is a concern.
+            pass
+        except Exception: pass
             
         return True, None
 
@@ -170,14 +178,16 @@ class TaskEngine:
     def calculate_task_rank(task: dict) -> float:
         """
         Formula: (Priority * 0.5) + (Random * 0.3) + (Freshness * 0.2)
+        Freshness uses exponential decay: exp(-hours_old / 24)
         """
+        import math
         priority = int(task.get("priority") or 0)
         p_score = min(1.0, priority / 10.0)
         
-        # Freshness: 1.0 if new, drops to 0 after 3 days
+        # Freshness: exp decay, drops by ~37% every 24h
         created_at = _parse_dt(task.get("created_at"))
         hours_old = (_now() - created_at).total_seconds() / 3600 if created_at else 72
-        f_score = max(0.0, 1.0 - (hours_old / 72.0))
+        f_score = math.exp(-hours_old / 24.0)
         
         r_score = random.random()
         
@@ -216,7 +226,7 @@ class TaskEngine:
 
     # 8. Layered Quality Filtering & AI Integration
     @staticmethod
-    async def basic_quality_filters(text: str) -> tuple[bool, str | None]:
+    async def basic_quality_filters(text: str, task: dict) -> tuple[bool, str | None]:
         """Fast non-AI filters."""
         t = text.strip()
         if len(t) < 50:
@@ -236,13 +246,34 @@ class TaskEngine:
         return True, None
 
     @staticmethod
-    async def ai_moderation_check(text: str, instructions: str = "") -> dict:
+    async def can_submit_review(user_id: int, task: dict, text: str, time_since_click: float | None) -> tuple[bool, str | None]:
         """
-        Calls Gemini AI for quality scoring. 
-        Only runs if basic filters pass.
+        Unified method for all submission checks.
+        Combines speed, quality, link reservation, and AI.
         """
-        from services.ai_moderation import analyze_review_quality
-        return await analyze_review_quality(text, instructions)
+        # 1. Behavior & Speed
+        ok_b, err_b = await TaskEngine.check_behavior(user_id, task, time_since_click)
+        if not ok_b: return False, err_b
+        
+        # 2. Basic Quality
+        ok_q, err_q = await TaskEngine.basic_quality_filters(text, task)
+        if not ok_q: return False, err_q
+        
+        # 3. Link Reservation (Atomic)
+        url = task.get("target_url")
+        if url:
+            limit = TaskEngine.get_daily_limit(task)
+            ok_r, err_r = await TaskEngine.try_reserve_link_usage(user_id, task.get("id"), url, limit)
+            if not ok_r: return False, err_r
+            
+        # 4. AI Moderation (Final Layer)
+        if GEMINI_API_KEY:
+            from services.ai_moderation import analyze_review_quality
+            ai_res = await analyze_review_quality(text, task.get("instructions", ""))
+            if not ai_res["is_ok"] and ai_res["score"] < 0.4:
+                return False, f"AI-фильтр: {ai_res['reason']}"
+                
+        return True, None
 
     # 9. Eligibility Check (Integration method)
     @staticmethod

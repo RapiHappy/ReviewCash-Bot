@@ -238,34 +238,20 @@ async def api_sync(req: web.Request):
             except Exception as e:
                 log.error(f"Sync: batch link usage fetch failed: {e}")
 
-        # Final filtering
+        # Final filtering using TaskEngine
         tasks = []
-        user_rep = await TaskEngine.calculate_user_rep(uid)
-        
         for t in pre_tasks:
             is_owner = int(t.get("owner_id") or 0) == uid
             if is_owner:
                 tasks.append(t)
                 continue
+            
+            # Centralized eligibility check
+            ok, _ = await TaskEngine.can_user_take_task(uid, t)
+            if not ok:
+                continue
                 
-            url = t.get("target_url")
-            if url:
-                uh = sha256_hash(url)
-                # Adaptive limit
-                if usage_map.get(uh, 0) >= TaskEngine.get_daily_limit(t):
-                    continue
-                # History check
-                if uh in user_link_history:
-                    continue
-            
-            # Reputation check
-            min_rep = get_meta(t, "MIN_REP")
-            if min_rep:
-                try:
-                    if user_rep < float(min_rep): continue
-                except Exception: pass
-            
-            # TG Duplicate check
+            # Additional TG Duplicate check (identity-based)
             if str(t.get("type") or "") == "tg":
                 if tg_task_identity(t) in completed_tg_stack_keys:
                     continue
