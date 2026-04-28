@@ -73,45 +73,31 @@ def _extract_session_token(req: web.Request) -> str | None:
     return None
 
 def verify_init_data(init_data: str, token: str) -> dict | None:
-    if not init_data:
-        return None
-    token = (token or "").strip()
-    if not token:
-        return None
-    try:
-        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
-    except Exception:
-        return None
-    received_hash = pairs.pop("hash", None)
-    if not received_hash:
-        return None
-    data_check_string = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs.keys()))
-    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
-    calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calculated_hash, received_hash):
-        return None
-    if "user" in pairs:
-        try:
-            pairs["user"] = json.loads(pairs["user"])
-        except Exception:
-            pass
-    return pairs
-
-def verify_telegram_init_data(init_data: str, bot_token: str):
     """Криптографическая проверка данных от Telegram Mini App."""
+    if not init_data or not token:
+        return None
     try:
         vals = dict(parse_qsl(init_data))
-        auth_hash = vals.pop("hash")
+        auth_hash = vals.pop("hash", None)
+        if not auth_hash:
+            return None
         # Сортировка ключей обязательна для формирования data_check_string
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(vals.items()))
-        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
         h = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        if h == auth_hash:
-            return json.loads(vals.get("user", "{}"))
+        
+        if not hmac.compare_digest(h, auth_hash):
+            return None
+            
+        if "user" in vals:
+            try:
+                vals["user"] = json.loads(vals["user"])
+            except Exception:
+                pass
+        return vals
     except Exception as e:
         log.error(f"InitData verify error: {e}")
         return None
-    return None
 
 async def require_init(req: web.Request):
     from services.user_service import ensure_user

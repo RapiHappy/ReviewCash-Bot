@@ -445,43 +445,52 @@ async def api_task_submit(req: web.Request):
         if not ok:
             return web.json_response({"ok": False, "error": err}, status=400)
 
-    if is_auto:
-        async def _auto_pay(ok_code: str):
-            reward = float(task.get("reward_rub") or 0)
-            xp_added = task_xp(task)
-            
-            vip_until_dt = await get_vip_until(uid)
-            if vip_until_dt:
-                reward = round(reward * VIP_INCOME_MULT, 2)
-                xp_added = int(round(xp_added * VIP_XP_MULT))
+    async def perform_submit_atomic(p_status: str, p_reward: float = 0, p_xp: int = 0):
+        # 1. Prepare RPC params
+        rpc_params = {
+            "p_user_id": uid,
+            "p_task_id": task_id_db,
+            "p_status": p_status,
+            "p_proof_text": proof_text or ("AUTO_TG_OK" if is_auto else ""),
+            "p_proof_url": proof_url,
+            "p_reward_rub": float(p_reward),
+            "p_xp_added": int(p_xp),
+            "p_ai_score": 0
+        }
 
-            await add_rub(uid, reward)
-            await stats_add("payouts_rub", reward)
-            await add_xp(uid, xp_added)
+        # 2. Execute atomic submission
+        rpc_res = await sb.rpc("submit_task_atomic", rpc_params).execute()
+        
+        if not rpc_res.data or not rpc_res.data.get("ok"):
+            err = (rpc_res.data or {}).get("error") or "К сожалению, места в этом задании только что закончились."
+            return web.json_response({"ok": False, "error": err}, status=400)
+
+        # 3. Handle side effects if successful
+        await clear_task_click(uid, task_id)
+        if p_status == "paid":
+            await stats_add("payouts_rub", p_reward)
             await maybe_pay_referral_bonus(uid)
-            try:
-                left = int(task.get("qty_left") or 0)
-                if left > 0:
-                    new_left = max(0, left - 1)
-                    upd = {"qty_left": new_left}
-                    if new_left <= 0:
-                        upd["status"] = "closed"
-                    await sb_update(T_TASKS, {"id": task_id_db}, upd)
-            except Exception:
-                pass
-            await sb_insert(T_COMP, {
-                "task_id": task_id_db,
-                "user_id": uid,
-                "status": "paid",
-                "proof_text": ok_code,
-                "proof_url": None,
-                "moderated_at": _now().isoformat(),
-            })
             await mark_submit_attempt(uid, ok=True)
-            return web.json_response({"ok": True, "status": "paid", "earned": reward, "xp_added": xp_added})
+            return web.json_response({"ok": True, "status": "paid", "earned": p_reward, "xp_added": p_xp})
+        else:
+            if task.get("type") == "ya":
+                await touch_limit(uid, "ya_review")
+            if task.get("type") == "gm":
+                await touch_limit(uid, "gm_review")
+            
+            await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
+            await mark_submit_attempt(uid, ok=True)
+            return web.json_response({"ok": True, "status": "pending", "xp_expected": p_xp})
+
+    if is_auto:
+        # Calculate rewards and XP for auto-pay
+        reward = float(task.get("reward_rub") or 0)
+        xp_added = task_xp(task)
+        if await get_vip_until(uid):
+            reward = round(reward * VIP_INCOME_MULT, 2)
+            xp_added = int(round(xp_added * VIP_XP_MULT))
 
         task_subtype = get_tg_subtype(task) or TG_SUB_CHANNEL_KEY
-        reward = float(task.get("reward_rub") or 0)
         chat = task.get("tg_chat") or ""
         task_created_at = _task_created_at(task)
 
@@ -500,119 +509,59 @@ async def api_task_submit(req: web.Request):
                     else:
                         left = max(1, left_raw)
                         hours = max(1, int(round(left / 3600)))
-                        return web.json_response({
-                            "ok": False,
-                            "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.",
-                            "code": "TG_HOLD_WAIT",
-                            "retry_after": left,
-                        }, status=400)
+                        return web.json_response({"ok": False, "error": f"Проверка уже запланирована. Осталось примерно {hours} ч.", "code": "TG_HOLD_WAIT", "retry_after": left}, status=400)
 
-                ok_member = await tg_is_member(chat, uid)
-                if not ok_member:
+                if not await tg_is_member(chat, uid):
                     return web.json_response({"ok": False, "error": "Бот не видит подписку сейчас. Подпишись и отправь на проверку снова."}, status=400)
 
                 due_at = _now() + timedelta(seconds=hold_delay)
                 await tg_hold_set(task_id, uid, due_at)
-                await sb_insert(T_COMP, {
-                    "task_id": task_id_db,
-                    "user_id": uid,
-                    "status": "pending_hold",
-                    "proof_text": f"AUTO_TG_WAIT_{tg_hold_delay_hours(task_subtype, max(0, retention_days - tg_required_retention_days(task_subtype, 0))) if retention_days else tg_hold_delay_hours(task_subtype)}H",
-                    "proof_url": None,
-                })
+                
+                # For pending_hold, we use the atomic submission with status 'pending_hold'
+                # Note: schema_rpc.sql might need to handle 'pending_hold' or just general non-'paid' status
+                return await perform_submit_atomic("pending_hold", p_reward=0, p_xp=0)
 
-                due_msk = due_at.astimezone(timezone(timedelta(hours=3)))
-                wait_hours = tg_hold_delay_hours(task_subtype, max(0, retention_days - tg_required_retention_days(task_subtype, 0))) if retention_days else tg_hold_delay_hours(task_subtype)
-                await mark_submit_attempt(uid, ok=True)
-                return web.json_response({
-                    "ok": True,
-                    "status": f"hold_{wait_hours}h",
-                    "message": f"Подписка подтверждена. Выходить нельзя {max(1, wait_hours // 24)} дн. Бот автоматически перепроверит участие через {wait_hours} ч. ({due_msk.strftime('%d.%m %H:%M МСК')}). Если выйти раньше — задание отменится и включится штраф.",
-                    "retry_after": max(1, int((due_at - _now()).total_seconds())),
-                })
-
-            ok_member = await tg_is_member(chat, uid)
-            if not ok_member:
+            if not await tg_is_member(chat, uid):
                 return web.json_response({"ok": False, "error": "Бот не видит подписку/участие. Подпишись и попробуй снова."}, status=400)
-            return await _auto_pay("AUTO_TG_OK")
+            return await perform_submit_atomic("paid", p_reward=reward, p_xp=xp_added)
 
-        if task_subtype == TG_BOT_START_KEY:
-            dt = await tg_evt_get(uid, "bot_start")
-            if not _dt_after_task(dt, task):
-                return web.json_response({"ok": False, "error": "Нажми /start у бота и попробуй снова."}, status=400)
-            return await _auto_pay("AUTO_TG_BOT_START")
+        # Other TG auto types
+        evt_checks = {
+            TG_BOT_START_KEY: ("bot_start", None, "Нажми /start у бота и попробуй снова."),
+            TG_BOT_CALLBACK_KEY: ("callback_data", get_tg_meta(task, "TG_CALLBACK_DATA"), "Нажми нужную inline-кнопку в боте и попробуй снова."),
+            TG_BOT_MESSAGE_KEY: ("message_text", get_tg_meta(task, "TG_EXPECT_TEXT").lower(), "Отправь боту текст: {}"),
+            TG_MINIAPP_OPEN_KEY: ("miniapp_open", None, "Открой Mini App бота и попробуй снова."),
+        }
 
-        if task_subtype == TG_BOT_CALLBACK_KEY:
-            expected_cb = get_tg_meta(task, "TG_CALLBACK_DATA")
-            dt = await tg_evt_get(uid, "callback_data", expected_cb) if expected_cb else await tg_evt_get(uid, "callback_any")
+        if task_subtype in evt_checks:
+            evt_type, extra, err_msg = evt_checks[task_subtype]
+            dt = await tg_evt_get(uid, evt_type, extra) if extra else await tg_evt_get(uid, evt_type if task_subtype != TG_BOT_CALLBACK_KEY else "callback_any")
             if not _dt_after_task(dt, task):
-                return web.json_response({"ok": False, "error": "Нажми нужную inline-кнопку в боте и попробуй снова."}, status=400)
-            return await _auto_pay("AUTO_TG_CALLBACK")
-
-        if task_subtype == TG_BOT_MESSAGE_KEY:
-            expected_text = get_tg_meta(task, "TG_EXPECT_TEXT").lower()
-            dt = await tg_evt_get(uid, "message_text", expected_text) if expected_text else await tg_evt_get(uid, "message_any")
-            if not _dt_after_task(dt, task):
-                err = "Отправь сообщение боту и попробуй снова."
-                if expected_text:
-                    err = f"Отправь боту текст: {expected_text}"
-                return web.json_response({"ok": False, "error": err}, status=400)
-            return await _auto_pay("AUTO_TG_MESSAGE")
-
-        if task_subtype == TG_MINIAPP_OPEN_KEY:
-            dt = await tg_evt_get(uid, "miniapp_open")
-            if not _dt_after_task(dt, task):
-                return web.json_response({"ok": False, "error": "Открой Mini App бота и попробуй снова."}, status=400)
-            return await _auto_pay("AUTO_TG_MINIAPP")
+                return web.json_response({"ok": False, "error": err_msg.format(extra or "")}, status=400)
+            return await perform_submit_atomic("paid", p_reward=reward, p_xp=xp_added)
 
         if task_subtype == TG_INVITE_FRIENDS_KEY:
-            need_cnt_raw = get_tg_meta(task, "TG_REF_COUNT")
-            try:
-                need_cnt = max(1, int(need_cnt_raw or "1"))
-            except Exception:
-                need_cnt = 1
-            paid_refs = await tg_referrals_paid_since(uid, task_created_at)
-            if paid_refs < need_cnt:
-                return web.json_response({"ok": False, "error": f"Нужно приглашений с выполнением: {need_cnt}. Сейчас: {paid_refs}."}, status=400)
-            return await _auto_pay("AUTO_TG_REFERRAL")
+            need_cnt = max(1, int(get_tg_meta(task, "TG_REF_COUNT") or "1"))
+            if await tg_referrals_paid_since(uid, task_created_at) < need_cnt:
+                return web.json_response({"ok": False, "error": f"Нужно приглашений с выполнением: {need_cnt}."}, status=400)
+            return await perform_submit_atomic("paid", p_reward=reward, p_xp=xp_added)
 
         if task_subtype == TG_POLL_VOTE_KEY:
-            poll_id = get_tg_meta(task, "TG_POLL_ID")
-            ok_vote = await tg_poll_answer_seen_since(uid, task_created_at, poll_id=poll_id or None)
-            if not ok_vote:
-                return web.json_response({"ok": False, "error": "Голос не найден. Проголосуй в опросе от бота и попробуй снова."}, status=400)
-            return await _auto_pay("AUTO_TG_POLL")
+            if not await tg_poll_answer_seen_since(uid, task_created_at, poll_id=get_tg_meta(task, "TG_POLL_ID")):
+                return web.json_response({"ok": False, "error": "Голос не найден."}, status=400)
+            return await perform_submit_atomic("paid", p_reward=reward, p_xp=xp_added)
 
-        return web.json_response({"ok": False, "error": "Неподдерживаемый TG подтип задания"}, status=400)
+        return web.json_response({"ok": False, "error": "Неподдерживаемый TG подтип"}, status=400)
 
     # manual proof: обязательно нужен proof_url
     if not proof_url:
         return web.json_response({"ok": False, "error": "Нужен скриншот доказательства"}, status=400)
 
-    rpc_res = await sb.rpc("submit_task_atomic", {
-        "p_user_id": uid,
-        "p_task_id": task_id_db,
-        "p_proof_text": proof_text,
-        "p_proof_url": proof_url,
-        "p_ai_score": 0
-    }).execute()
-
-    if not rpc_res.data or not rpc_res.data.get("ok"):
-        return web.json_response({"ok": False, "error": "К сожалению, места в этом задании только что закончились."}, status=400)
-
-    await clear_task_click(uid, task_id)
-
-    if task.get("type") == "ya":
-        await touch_limit(uid, "ya_review")
-    if task.get("type") == "gm":
-        await touch_limit(uid, "gm_review")
-
-    await notify_admin(f"🧾 Новый отчет на проверку\nTask: {task.get('title')}\nUser: {uid}\nTaskID: {task_id}")
     xp_expected = task_xp(task)
     if await get_vip_until(uid):
         xp_expected = int(round(xp_expected * VIP_XP_MULT))
-    await mark_submit_attempt(uid, ok=True)
-    return web.json_response({"ok": True, "status": "pending", "xp_expected": xp_expected})
+        
+    return await perform_submit_atomic("pending", p_reward=0, p_xp=xp_expected)
 
 # -------------------------
 # withdraw

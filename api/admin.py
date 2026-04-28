@@ -673,37 +673,30 @@ async def api_admin_proof_decision(req: web.Request):
         vip_until_dt = await get_vip_until(user_id)
         if vip_until_dt:
             reward = round(reward * VIP_INCOME_MULT, 2)
-
-        try:
-            await add_rub(user_id, reward)
-        except Exception as e:
-            log.exception("approve proof failed: add_rub uid=%s reward=%s err=%s", user_id, reward, e)
-            return web.json_response({
-                "ok": False,
-                "code": "PAYOUT_FAILED",
-                "message": "Не удалось принять отчёт: ошибка начисления. Проверь таблицу balances (rub_balance) и права Supabase."
-            }, status=200)
-
-        await stats_add("payouts_rub", reward)
-        try:
-            xp_added = task_xp(task)
-            if vip_until_dt:
-                xp_added = int(round(xp_added * VIP_XP_MULT))
-            await add_xp(user_id, xp_added)
-        except Exception as e:
-            log.warning("add_xp skipped: %s", e)
-
-        await maybe_pay_referral_bonus(user_id)
-
-        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
-            "status": "paid",
-            "moderated_by": int(admin["id"]),
-            "moderated_at": _now().isoformat(),
-        })
         
-        # Update User Reputation Stats
+        xp_added = task_xp(task)
+        if vip_until_dt:
+            xp_added = int(round(xp_added * VIP_XP_MULT))
+
+        # 1. Execute atomic approval
+        rpc_res = await sb.rpc("approve_proof_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_proof_id": str(proof_id),
+            "p_reward_rub": float(reward),
+            "p_xp_added": int(xp_added)
+        }).execute()
+
+        if not rpc_res.data or not rpc_res.data.get("ok"):
+            err = (rpc_res.data or {}).get("error") or "Ошибка БД при одобрении"
+            return web.json_response({"ok": False, "error": err}, status=200)
+
+        # 2. Side effects
+        await stats_add("payouts_rub", reward)
+        await maybe_pay_referral_bonus(user_id)
+        await reset_fake_report_strikes(user_id)
+        
         try:
-            # We need to fetch current stats to increment
+            # Update User Reputation Stats
             u_row = await sb_select(T_USERS, {"user_id": user_id}, limit=1)
             if u_row.data:
                 u = u_row.data[0]
@@ -713,28 +706,10 @@ async def api_admin_proof_decision(req: web.Request):
                     "success_count": new_success,
                     "total_text_length": new_len
                 })
-        except Exception as e:
-            log.warning(f"Failed to update user stats on approval: {e}")
-
-        # Reset fake report strikes on successful completion
-        await reset_fake_report_strikes(user_id)
-
-        try:
-            left = int(task.get("qty_left") or 0)
-            if left > 0:
-                new_left = max(0, left - 1)
-                upd = {"qty_left": new_left}
-                if new_left <= 0:
-                    upd["status"] = "closed"
-                await sb_update(T_TASKS, {"id": task_id_db}, upd)
         except Exception:
             pass
 
-        try:
-            xp_txt = f" +{int(xp_added)} XP" if "xp_added" in locals() and int(xp_added) > 0 else ""
-        except Exception:
-            xp_txt = ""
-            
+        xp_txt = f" +{int(xp_added)} XP" if int(xp_added) > 0 else ""
         success_msg = (
             f"<b>✨ Отчёт принят!</b>\n\n"
             f"💰 Начислено: <b>+{reward:.2f} ₽</b>\n"
