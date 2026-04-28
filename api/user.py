@@ -240,14 +240,16 @@ async def api_sync(req: web.Request):
 
         # Final filtering using TaskEngine
         tasks = []
+        user_rep = await TaskEngine.calculate_user_rep(uid)
+        
         for t in pre_tasks:
             is_owner = int(t.get("owner_id") or 0) == uid
             if is_owner:
                 tasks.append(t)
                 continue
             
-            # Centralized eligibility check
-            ok, _ = await TaskEngine.can_user_take_task(uid, t)
+            # Centralized eligibility check with optimized rep check
+            ok, _ = await TaskEngine.can_user_take_task(uid, t, user_rep=user_rep)
             if not ok:
                 continue
                 
