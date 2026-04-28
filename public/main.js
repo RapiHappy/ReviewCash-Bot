@@ -2357,7 +2357,7 @@ async function syncAll() {
     available.forEach(t => {
       const opt = document.createElement("option");
       opt.value = t.id;
-      opt.textContent = `${t.title} — ${t.reward}₽`;
+      opt.textContent = `${t.title} — ${t.cost}₽`;
       opt.dataset.reward = String(t.reward);
       opt.dataset.desc = t.desc;
       sel.appendChild(opt);
@@ -2597,22 +2597,16 @@ async function syncAll() {
       titleEl.textContent = "⚡ Автоматическая проверка:";
       const sidNow = currentTgSubtype();
       const totalDays = tgTotalRetentionDays(sidNow);
-      textEl.textContent = `После вступления выходить нельзя ${totalDays} дн. Бот проверит участие в конце срока автоматически. Если исполнитель выйдет раньше — выплата отменится и включится штраф.`;
+      textEl.textContent = `Бот проверит подписку автоматически через ${totalDays} дн. В случае отписки раньше срока — оплата отменится и будет начислен штраф.`;
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
       } catch (e) {}
     }
 
-    let warnEl = $("tg-retention-warning");
-    if (!warnEl) {
-      warnEl = document.createElement("div");
-      warnEl.id = "tg-retention-warning";
-      warnEl.style.cssText = "margin-top:8px;font-size:13px;line-height:1.35;color:#ffb74d;background:rgba(255,183,77,.08);border:1px solid rgba(255,183,77,.18);padding:8px 10px;border-radius:10px;";
-      wrap.appendChild(warnEl);
-    }
-    warnEl.textContent = `⚠️ Условия удержания: минимум ${tgTotalRetentionDays(sid)} дн. без выхода. Если исполнитель покинет канал/группу раньше срока, бот это зафиксирует, отменит оплату и выдаст штраф.`;
-    warnEl.style.display = "block";
+    // Hide previous warning if it exists (for compatibility if it was already in DOM)
+    const oldWarn = $("tg-retention-warning");
+    if (oldWarn) oldWarn.style.display = "none";
   }
 
   async function runTgCheckNow(rawValue) {
@@ -3010,6 +3004,11 @@ async function syncAll() {
       want_top: isTopWanted(),
       top_price_rub: 250,
     };
+
+    const totalEl = $("t-total");
+    const confirmText = `Вы уверены, что хотите создать это задание?\n\nТип: ${payload.title}\nВсего к оплате: ${totalEl ? totalEl.textContent : '—'}`;
+    const ok = await tgConfirm(confirmText);
+    if (!ok) return;
 
     try {
       tgHaptic("impact");
@@ -4547,8 +4546,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Сумма для исполнителей:</span> <b>${fmtRub(baseTotal)}</b></div>`,
         commissionEnabled ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса (20%):</span> <b>${fmtRub(commTotal)}</b></div>` : null,
         isVipOnly() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка (10%):</span> <b>${fmtRub(vipTotal)}</b></div>` : null,
-        isTopWanted() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null,
-        `<div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid rgba(0,234,255,0.3); padding-top:8px; font-weight:900; color:var(--accent-cyan); font-size:14px;"><span>ИТОГО К ОПЛАТЕ:</span> <b>${fmtRub(baseTotal + commTotal + vipTotal + topPrice)}</b></div>`
+        isTopWanted() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null
       ].filter(Boolean);
 
 
