@@ -233,26 +233,6 @@ function tgAlert(msg, kind = "info", title = "") {
     });
   }
 
-  async function tryCacheAvatar(url) {
-    try {
-      const prevUrl = localStorage.getItem("rc_avatar_url") || "";
-      const prevData = localStorage.getItem("rc_avatar_data") || "";
-      if (prevUrl === url && prevData.startsWith("data:image")) return prevData;
-
-      const res = await fetch(url, { cache: "force-cache" });
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      // don't cache huge files
-      if (!blob || blob.size > 160000) return null;
-      const data = await blobToDataURL(blob);
-      if (data && data.startsWith("data:image")) {
-        localStorage.setItem("rc_avatar_url", url);
-        localStorage.setItem("rc_avatar_data", data);
-        return data;
-      }
-    } catch (e) {}
-    return null;
-  }
 
   function loadAvatarFast(imgEl, url, displayName) {
     if (!imgEl) return;
@@ -260,47 +240,24 @@ function tgAlert(msg, kind = "info", title = "") {
     const placeholder = svgInitialAvatarDataUrl(initials);
     const isLowPerf = state && state.perfMode === "low";
 
-    // Make sure we always show something instantly
-    try {
-      imgEl.decoding = "async";
-      imgEl.loading = isLowPerf ? "lazy" : "eager";
-      imgEl.referrerPolicy = "no-referrer";
-    } catch (e) {}
-
-    imgEl.style.opacity = "0.96";
-    imgEl.style.transition = isLowPerf ? "none" : "opacity .22s ease";
+    // Set placeholder first
     imgEl.src = placeholder;
+    imgEl.style.opacity = "0.96";
 
     if (!url) return;
 
+    // Load real image
     if (isLowPerf) {
       imgEl.src = url;
       imgEl.style.opacity = "1";
-      imgEl.onerror = function () {
-        imgEl.onerror = null;
-        imgEl.src = placeholder;
+    } else {
+      const pre = new Image();
+      pre.src = url;
+      pre.onload = () => {
+        imgEl.src = url;
+        imgEl.style.opacity = "1";
       };
-      return;
     }
-
-    // If we have cached data-url (when CORS allows), use it immediately
-    tryCacheAvatar(url).then((data) => {
-      if (!data) return;
-      imgEl.src = data;
-      imgEl.style.opacity = "1";
-    });
-
-    // Load real image in background and swap when ready
-    const pre = new Image();
-    pre.decoding = "async";
-    pre.src = url;
-    pre.onload = () => {
-      imgEl.src = url;
-      imgEl.style.opacity = "1";
-    };
-    pre.onerror = () => {
-      // keep placeholder
-    };
   }
   function showToast(kindOrMsg, messageOrKind, title = "") {
     // Smart detection: support BOTH calling conventions:
