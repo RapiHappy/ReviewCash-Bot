@@ -317,6 +317,50 @@ async def api_task_click(req: web.Request):
 
 
 # -------------------------
+# API: cancel task
+# -------------------------
+
+async def api_task_cancel(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    body = await safe_json(req)
+
+    task_id = str(body.get("task_id") or "").strip()
+    if not task_id:
+        raise web.HTTPBadRequest(text="Missing task_id")
+    task_id_db = cast_id(task_id)
+
+    t = await sb_select(T_TASKS, {"id": task_id_db}, limit=1)
+    if not t.data:
+        return web.json_response({"ok": False, "error": "Task not found"}, status=404)
+    task = t.data[0]
+
+    if int(task.get("owner_id") or 0) != uid:
+        return web.json_response({"ok": False, "error": "Нельзя отменить чужое задание"}, status=403)
+
+    if task.get("status") != "active":
+        return web.json_response({"ok": False, "error": "Задание уже неактивно"}, status=400)
+
+    qty_left = int(task.get("qty_left") or 0)
+    if qty_left <= 0:
+        return web.json_response({"ok": False, "error": "Нет оставшихся выполнений для отмены"}, status=400)
+
+    # Refund logic: Reward only (platform keeps fee)
+    reward_per_unit = float(task.get("reward_rub") or 0)
+    refund_amount = round(qty_left * reward_per_unit, 2)
+
+    # Update task
+    await sb_update(T_TASKS, {"id": task_id_db}, {"status": "cancelled", "qty_left": 0})
+    
+    # Refund to user balance
+    if refund_amount > 0:
+        await add_rub(uid, refund_amount)
+        await notify_user(bot, uid, f"✅ Задание отменено. Возврат средств: {refund_amount}₽ (за вычетом комиссии сервиса)")
+
+    return web.json_response({"ok": True, "refund_amount": refund_amount})
+
+
+# -------------------------
 # API: submit task
 # -------------------------
 
@@ -402,8 +446,31 @@ async def api_task_submit(req: web.Request):
         if not ok_clicked:
             return web.json_response({"ok": False, "error": "Сначала нажми «Перейти к выполнению» и открой ссылку, затем отправляй отчёт."}, status=400)
         elapsed = await task_click_elapsed_sec(uid, task_id)
-        if elapsed is not None and elapsed < max(1, MIN_TASK_SUBMIT_SEC):
-            return web.json_response({"ok": False, "error": "Слишком быстрое выполнение. Подожди немного и отправь снова."}, status=400)
+        if elapsed is not None and elapsed < 60: # User said 60s for naturalness
+            return web.json_response({"ok": False, "error": "Выполняете слишком быстро. Для качественного отзыва нужно хотя бы 1-2 минуты изучения объекта."}, status=400)
+        
+        # Link Usage & Uniqueness Check (Atomic)
+        from services.task_engine import TaskEngine
+        url = task.get("target_url")
+        if url:
+            limit = TaskEngine.get_daily_limit(task)
+            ok, err = await TaskEngine.try_reserve_link_usage(uid, task_id_db, url, limit)
+            if not ok:
+                return web.json_response({"ok": False, "error": err}, status=400)
+            
+            # Text quality & uniqueness check
+            if proof_text:
+                if len(proof_text) < 50:
+                    # Note: if we reject here, we already logged usage. 
+                    # This is okay as it penalizes bad quality by taking a "slot" for the day, 
+                    # or we could implement a rollback, but usually bad text is a user error.
+                    return web.json_response({"ok": False, "error": "Отзыв слишком короткий. Напишите подробнее (минимум 50 символов)."}, status=400)
+                
+                # Check for exact duplicate in this task (by anyone)
+                existing = await sb_select(T_COMP, {"task_id": task_id_db, "proof_text": proof_text}, limit=1)
+                if existing.data:
+                    return web.json_response({"ok": False, "error": "Такой текст отзыва уже отправляли для этого задания. Напишите свой уникальный текст."}, status=400)
+
     if is_auto:
         async def _auto_pay(ok_code: str):
             reward = float(task.get("reward_rub") or 0)

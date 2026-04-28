@@ -701,6 +701,21 @@ async def api_admin_proof_decision(req: web.Request):
             "moderated_at": _now().isoformat(),
         })
         
+        # Update User Reputation Stats
+        try:
+            # We need to fetch current stats to increment
+            u_row = await sb_select(T_USERS, {"user_id": user_id}, limit=1)
+            if u_row.data:
+                u = u_row.data[0]
+                new_success = int(u.get("success_count") or 0) + 1
+                new_len = int(u.get("total_text_length") or 0) + len(str(proof.get("proof_text") or ""))
+                await sb_update(T_USERS, {"user_id": user_id}, {
+                    "success_count": new_success,
+                    "total_text_length": new_len
+                })
+        except Exception as e:
+            log.warning(f"Failed to update user stats on approval: {e}")
+
         # Reset fake report strikes on successful completion
         await reset_fake_report_strikes(user_id)
 
@@ -734,6 +749,17 @@ async def api_admin_proof_decision(req: web.Request):
             "moderated_by": int(admin["id"]),
             "moderated_at": _now().isoformat(),
         })
+
+        # Update User Reputation Stats
+        try:
+            u_row = await sb_select(T_USERS, {"user_id": user_id}, limit=1)
+            if u_row.data:
+                u = u_row.data[0]
+                new_fail = int(u.get("fail_count") or 0) + 1
+                await sb_update(T_USERS, {"user_id": user_id}, {"fail_count": new_fail})
+        except Exception as e:
+            log.warning(f"Failed to update user stats on rejection: {e}")
+
         if fake:
             try:
                 # Track fake strikes and check for auto-ban

@@ -117,6 +117,7 @@ T_WD = "withdrawals"
 T_LIMITS = "user_limits"
 T_STATS = "stats_daily"
 T_REF = "referral_events"
+T_LINK_LOG = "link_usage_log"
 
 # Misc Consts
 BUILD_TAG = 'rc_backend_release5_lvldouble'

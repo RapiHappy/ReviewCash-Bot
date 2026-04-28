@@ -188,7 +188,11 @@ async def api_sync(req: web.Request):
         except Exception:
             completed_tg_stack_keys = set()
 
-        tasks = [
+        # 3. Optimized TaskEngine checks
+        from services.task_engine import TaskEngine, sha256_hash
+        
+        # Pre-filter basic eligibility
+        pre_tasks = [
             t for t in raw
             if (int(t.get("owner_id") or 0) == uid or int(t.get("qty_left") or 0) > 0)
             and (int(t.get("owner_id") or 0) == uid or t.get("type") != "tg" or t.get("check_type") == "auto")
@@ -207,20 +211,83 @@ async def api_sync(req: web.Request):
                 or get_task_target_gender(t) == TASK_GENDER_ANY
                 or get_task_target_gender(t) == user_gender
             )
-            and not (
-                int(t.get("owner_id") or 0) != uid
-                and str(t.get("type") or "") == "tg"
-                and tg_task_identity(t) in completed_tg_stack_keys
-            )
         ]
-        # 2. Build task_slot_map for review text picking
+
+        # Batch check link usage
+        relevant_urls = {t["target_url"] for t in pre_tasks if t.get("target_url")}
+        url_hashes = [sha256_hash(u) for u in relevant_urls]
+        usage_map = {}
+        user_link_history = set()
+        
+        if url_hashes:
+            since = (_now() - timedelta(hours=24)).isoformat()
+            try:
+                # Count usage per url_hash in last 24h
+                def _f_usage():
+                    return sb.table(T_LINK_LOG).select("url_hash").in_("url_hash", url_hashes).gte("used_at", since).execute()
+                res_u = await sb_exec(_f_usage)
+                for r in (res_u.data or []):
+                    h = r["url_hash"]
+                    usage_map[h] = usage_map.get(h, 0) + 1
+                
+                # Check if this user ever did these links
+                def _f_history():
+                    return sb.table(T_LINK_LOG).select("url_hash").eq("user_id", uid).in_("url_hash", url_hashes).execute()
+                res_h = await sb_exec(_f_history)
+                user_link_history = {r["url_hash"] for r in (res_h.data or [])}
+            except Exception as e:
+                log.error(f"Sync: batch link usage fetch failed: {e}")
+
+        # Final filtering
+        tasks = []
+        user_rep = await TaskEngine.calculate_user_rep(uid)
+        
+        for t in pre_tasks:
+            is_owner = int(t.get("owner_id") or 0) == uid
+            if is_owner:
+                tasks.append(t)
+                continue
+                
+            url = t.get("target_url")
+            if url:
+                uh = sha256_hash(url)
+                # Adaptive limit
+                if usage_map.get(uh, 0) >= TaskEngine.get_daily_limit(t):
+                    continue
+                # History check
+                if uh in user_link_history:
+                    continue
+            
+            # Reputation check
+            min_rep = get_meta(t, "MIN_REP")
+            if min_rep:
+                try:
+                    if user_rep < float(min_rep): continue
+                except Exception: pass
+            
+            # TG Duplicate check
+            if str(t.get("type") or "") == "tg":
+                if tg_task_identity(t) in completed_tg_stack_keys:
+                    continue
+                    
+            tasks.append(t)
+
+        # 4. Sorting: Weighted Randomization
+        for t in tasks:
+            t["_rank"] = TaskEngine.calculate_task_rank(t)
+            # Ensure top active tasks are always at the top regardless of rank
+            if is_top_active(t):
+                t["_rank"] += 100.0
+        
+        tasks.sort(key=lambda x: x["_rank"], reverse=True)
+
+        # 5. Build task_slot_map for review text picking (same as before)
         task_slot_map = {}
         for c in completions_batch:
             tid = str(c.get("task_id") or "")
             if not tid: continue
             st = str(c.get("status") or "").lower()
-            # is_rework_active check
-            is_rw = st == "rework" # is_rework_active(c) is essentially this
+            is_rw = st == "rework"
             if st in {"pending", "pending_hold", "paid", "fake"} or is_rw:
                 task_slot_map[tid] = task_slot_map.get(tid, 0) + 1
 
@@ -229,8 +296,9 @@ async def api_sync(req: web.Request):
             t["top_bought_at"] = get_top_meta(t, "TOP_BOUGHT_AT")
             t["retention_days"] = get_retention_days(t)
             t["custom_review_mode"] = get_custom_review_mode(t)
-            # Extract vip_only flag BEFORE stripping meta tags
             t["vip_only"] = "VIP_ONLY: 1" in str(t.get("instructions") or "")
+            t["reputation_score"] = user_rep # Pass for UI
+            
             if int(t.get("owner_id") or 0) == uid:
                 t["custom_review_texts"] = get_review_texts(t)
             else:
@@ -238,23 +306,9 @@ async def api_sync(req: web.Request):
                 assigned_text = pick_review_text_for_task(t, slot_index)
                 t["custom_review_texts"] = [assigned_text] if assigned_text else []
                 t["assigned_review_text"] = assigned_text
-            # Strip internal meta tags from instructions before sending to frontend
+            
             if t.get("instructions"):
                 t["instructions"] = strip_meta_tags(t["instructions"])
-    if is_vip:
-        # VIP sorting: Top active first, then highest reward first
-        tasks.sort(key=lambda x: (
-            0 if is_top_active(x) else 1,
-            -float(x.get("reward_rub") or 0),
-            str(x.get("created_at") or "")
-        ), reverse=False)
-    else:
-        # Default sorting
-        tasks.sort(key=lambda x: (
-            0 if is_top_active(x) else 1,
-            -(top_bought_at(x).timestamp() if top_bought_at(x) else 0),
-            str(x.get("created_at") or "")
-        ), reverse=False)
 
     reopen_task_ids = []
     try:

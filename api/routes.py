@@ -110,6 +110,7 @@ def setup_routes(app: web.Application):
     app.router.add_post("/api/user/gender", api_user_gender_set)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
+    app.router.add_post("/api/task/cancel", api_task_cancel)
     app.router.add_post("/api/task/click", api_task_click)
     app.router.add_post("/api/task/submit", api_task_submit)
     app.router.add_post("/api/proof/upload", api_proof_upload)

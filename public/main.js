@@ -1658,6 +1658,11 @@ async function syncAll() {
             </div>
             <div class="xp-track" style="height:10px;border-radius:999px;overflow:hidden;"><div class="xp-fill" style="width:${clamp(prog,0,100)}%"></div></div>
           </div>
+          ${!finished ? `
+          <div style="margin-top:14px; display:flex; justify-content:flex-end;">
+            <button class="btn btn-secondary btn-sm" style="color:var(--accent-red); border-color:rgba(255,75,75,0.2); background:rgba(255,75,75,0.05); font-size:11px; padding:6px 12px; border-radius:12px; font-weight:700;" onclick="cancelTask('${t.id}')">Отменить задание</button>
+          </div>
+          ` : ''}
         `;
       } else {
         card.innerHTML = `
@@ -3023,6 +3028,28 @@ async function syncAll() {
     }
   }
   window.createTask = createTask;
+
+  async function cancelTask(taskId) {
+    if (!taskId) return;
+    const ok = await tgConfirm("Вы уверены, что хотите отменить задание?\n\n⚠️ Комиссия сервиса (20%) и плата за ТОП-закрепление не возвращаются. На баланс вернётся только оплата за невыполненные единицы.");
+    if (!ok) return;
+    
+    try {
+      tgHaptic("impact");
+      const res = await apiPost("/api/task/cancel", { task_id: String(taskId) });
+      if (res && res.ok) {
+        tgHaptic("success");
+        showToast("success", `Задание отменено. Возвращено: ${res.refunded_rub} ₽`);
+        await syncAll();
+      } else {
+        throw new Error(res.error || "Ошибка отмены");
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(String(e.message || e));
+    }
+  }
+  window.cancelTask = cancelTask;
 
   async function buyVip(currency) {
     try {
