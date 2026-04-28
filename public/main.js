@@ -374,8 +374,8 @@ function tgAlert(msg, kind = "info", title = "") {
   // --------------------
   // NOTE: keep only active Telegram task subtypes that are supported by the current UI flow.
   const TG_TASK_TYPES = [
-  { id: "sub_channel", title: "Подписка на канал", reward: 5, cost: 6, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
-  { id: "join_group", title: "Вступление в группу", reward: 5, cost: 6, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
+  { id: "sub_channel", title: "Подписка на канал", reward: 4, cost: 5, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из канала." },
+  { id: "join_group", title: "Вступление в группу", reward: 4, cost: 5, desc: "2 дня обязательного удержания. Бот проверяет, что исполнитель не вышел из группы." },
   { id: "sub_24h", title: "Тг подписка +24ч", reward: 6, cost: 8, desc: "2 дня обязательного удержания + ещё 1 день. Бот проверит участие по итогу срока." },
   { id: "sub_48h", title: "Тг подписка +48ч", reward: 8, cost: 10, desc: "2 дня обязательного удержания + ещё 2 дня. Бот проверит участие по итогу срока." },
   { id: "sub_72h", title: "Тг подписка +72ч", reward: 10, cost: 15, desc: "2 дня обязательного удержания + ещё 3 дня. Бот проверит участие по итогу срока." },
@@ -2597,7 +2597,7 @@ async function syncAll() {
       titleEl.textContent = "⚡ Автоматическая проверка:";
       const sidNow = currentTgSubtype();
       const totalDays = tgTotalRetentionDays(sidNow);
-      textEl.textContent = `Бот проверит подписку автоматически через ${totalDays} дн. В случае отписки раньше срока — оплата отменится и будет начислен штраф.`;
+      textEl.textContent = `Бот автоматически проверит подписку через ${totalDays} дн. Если исполнитель отпишется раньше — оплата вернется вам на баланс, а он получит штраф.`;
       try {
         wrap.style.background = "rgba(0,234,255,0.05)";
         wrap.style.borderColor = "var(--glass-border)";
@@ -4546,7 +4546,8 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
         `<div style="display:flex; justify-content:space-between; margin-bottom:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:4px;"><span>Сумма для исполнителей:</span> <b>${fmtRub(baseTotal)}</b></div>`,
         commissionEnabled ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Комиссия сервиса (20%):</span> <b>${fmtRub(commTotal)}</b></div>` : null,
         isVipOnly() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>VIP-наценка (10%):</span> <b>${fmtRub(vipTotal)}</b></div>` : null,
-        isTopWanted() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null
+        isTopWanted() ? `<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Закреп в ТОПе:</span> <b>${fmtRub(topPrice)}</b></div>` : null,
+        `<div style="display:flex; justify-content:space-between; margin-top:8px; border-top:1px solid rgba(0,234,255,0.3); padding-top:8px; font-weight:900; color:var(--accent-cyan); font-size:14px;"><span>ИТОГО К ОПЛАТЕ:</span> <b>${fmtRub(baseTotal + commTotal + vipTotal + topPrice)}</b></div>`
       ].filter(Boolean);
 
 
