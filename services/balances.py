@@ -136,43 +136,35 @@ async def add_xp(uid: int, amount: int):
     cur = int(bal.get("xp") or 0)
     return await set_xp_level(uid, cur + int(amount))
 
-async def change_balance(uid: int, amount: float):
+async def change_balance(uid: int, amount: float, currency: str = "rub") -> float | None:
+    """Atomically change balance using Supabase RPC."""
     try:
         res = await sb.rpc("update_balance_atomic", {
             "p_user_id": int(uid),
-            "p_amount_rub": float(amount)
+            "p_amount": float(amount),
+            "p_currency": str(currency).lower()
         }).execute()
         if not res.data or not res.data.get("ok"):
-            log.error(f"Ошибка баланса: {res.data}")
-            return False
-        return res.data["rub_balance"]
+            log.error(f"Ошибка баланса ({currency}): {res.data}")
+            return None
+        return float(res.data.get("new_balance") or 0)
     except Exception as e:
-        log.error(f"Критическая ошибка баланса {uid}: {e}")
-        return False
+        log.error(f"Критическая ошибка баланса {uid} ({currency}): {e}")
+        return None
 
 async def add_rub(uid: int, amount: float):
     return await change_balance(uid, amount)
 
 async def add_stars(uid: int, amount: int | float):
-    bal = await get_balance(uid)
-    cur = int(float(bal.get("stars_balance") or 0))
-    add = int(round(float(amount or 0)))
-    new_val = max(0, cur + add)
-    await balances_update(uid, {"stars_balance": new_val, "updated_at": _now().isoformat()})
-    return new_val
+    return await change_balance(uid, float(amount), currency="star")
 
 async def sub_rub(uid: int, amount: float) -> bool:
-    res = await change_balance(uid, -float(amount))
-    return res is not False
+    res = await change_balance(uid, -float(amount), currency="rub")
+    return res is not None
 
 async def sub_stars(uid: int, amount: int | float) -> bool:
-    bal = await get_balance(uid)
-    cur = int(float(bal.get("stars_balance") or 0))
-    sub = int(round(float(amount or 0)))
-    if cur < sub:
-        return False
-    await balances_update(uid, {"stars_balance": cur - sub, "updated_at": _now().isoformat()})
-    return True
+    res = await change_balance(uid, -float(amount), currency="star")
+    return res is not None
 
 def task_xp(task: dict) -> int:
     """Calculate base XP for a task based on its type and check method."""
