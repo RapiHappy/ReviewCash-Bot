@@ -205,3 +205,59 @@ BEGIN
     RETURN jsonb_build_object('ok', true, 'qty_left', v_qty_left);
 END;
 $$;
+
+--------------------------------------------------------------------------------
+-- 4. cancel_task_atomic
+--------------------------------------------------------------------------------
+-- Atomically cancels a task and refunds the owner for remaining slots.
+-- - Checks if task is active and belongs to owner
+-- - Changes status to 'cancelled'
+-- - Sets qty_left to 0
+-- - Refunds rub_balance based on qty_left * reward_per_unit
+
+CREATE OR REPLACE FUNCTION cancel_task_atomic(
+    p_owner_id BIGINT,
+    p_task_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_qty_left INT;
+    v_reward_rub NUMERIC;
+    v_status TEXT;
+    v_refund_amount NUMERIC;
+BEGIN
+    -- 1. Lock and check task status
+    SELECT status, qty_left, reward_rub 
+    INTO v_status, v_qty_left, v_reward_rub
+    FROM tasks 
+    WHERE id = p_task_id AND owner_id = p_owner_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Задание не найдено');
+    END IF;
+
+    IF v_status != 'active' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Задание уже неактивно');
+    END IF;
+
+    -- 2. Update task status
+    UPDATE tasks 
+    SET status = 'cancelled', qty_left = 0 
+    WHERE id = p_task_id;
+
+    -- 3. Calculate and apply refund
+    v_refund_amount := ROUND((v_qty_left * v_reward_rub)::NUMERIC, 2);
+    
+    IF v_refund_amount > 0 THEN
+        UPDATE balances 
+        SET rub_balance = rub_balance + v_refund_amount 
+        WHERE user_id = p_owner_id;
+    END IF;
+
+    RETURN jsonb_build_object('ok', true, 'refund_amount', v_refund_amount);
+END;
+$$;

@@ -80,7 +80,7 @@ async def broadcast_new_task(bot: Bot, task: dict):
                 await bot.send_message(uid, text_msg, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
             except Exception:
                 pass
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.04) # 25 msgs/sec
     except Exception as e:
         log.warning('broadcast_new_task failed: %s', e)
 

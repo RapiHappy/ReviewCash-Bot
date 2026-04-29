@@ -24,8 +24,7 @@
 (function () {
   "use strict";
 
-  const RC_BUILD = "rc_20260322_lowend_compat";
-  try { console.log("[ReviewCash] build", RC_BUILD); } catch(e) {}
+  const RC_BUILD = "rc_20260429_hardened";
 
 
   // --------------------
@@ -303,6 +302,24 @@ function tgAlert(msg, kind = "info", title = "") {
     const timeout = (kind === "error") ? 5500 : 3200;
     const tid = window.setTimeout(() => removeToast(el), timeout);
     el.dataset.tid = String(tid);
+  }
+
+  function renderSkeletons(containerId, count = 3) {
+    const container = $(containerId);
+    if (!container) return;
+    let html = "";
+    for (let i = 0; i < count; i++) {
+      html += `
+        <div class="sk-flex">
+          <div class="skeleton sk-circle"></div>
+          <div style="flex:1;">
+            <div class="skeleton sk-text" style="width:70%;"></div>
+            <div class="skeleton sk-text" style="width:40%;"></div>
+          </div>
+        </div>
+      `;
+    }
+    container.innerHTML = html;
   }
 
   function removeToast(el) {
@@ -1034,6 +1051,13 @@ function tgAlert(msg, kind = "info", title = "") {
     if (state._syncTasksInFlight) return;
     state._syncTasksInFlight = true;
     setTasksRefreshSpinning(true);
+
+    // Show skeletons if list is empty
+    const list = $("tasks-list");
+    if (list && !list.children.length) {
+      renderSkeletons("tasks-list", 4);
+    }
+
     try {
       const payload = { device_hash: state.deviceHash, device_id: state.deviceHash };
       const ref = state.startParam && /^\d+$/.test(state.startParam) ? Number(state.startParam) : null;

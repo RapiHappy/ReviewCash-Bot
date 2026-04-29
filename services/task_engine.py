@@ -4,6 +4,7 @@ import math
 import logging
 import asyncio
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse, urlunparse
 
 from config import T_COMP, T_LINK_LOG, T_USERS, T_TASKS
 from database import sb_select, sb_insert, sb_count, sb, sb_update
@@ -60,8 +61,19 @@ class TaskEngine:
 
     # ====================== LINK USAGE ======================
     @staticmethod
+    def normalize_url(url: str) -> str:
+        """Robust URL normalization: strips all query parameters and fragments."""
+        try:
+            parsed = urlparse(url)
+            # Reconstruct URL without query and fragment
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        except Exception:
+            return url
+
+    @staticmethod
     async def log_link_usage(user_id: int, task_id: int | str, url: str):
-        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        norm_url = TaskEngine.normalize_url(url)
+        url_hash = hashlib.sha256(norm_url.encode("utf-8")).hexdigest()
         try:
             await sb_insert(T_LINK_LOG, {
                 "url_hash": url_hash,
@@ -74,7 +86,8 @@ class TaskEngine:
 
     @staticmethod
     async def get_link_usage_last_24h(url: str) -> int:
-        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        norm_url = TaskEngine.normalize_url(url)
+        url_hash = hashlib.sha256(norm_url.encode("utf-8")).hexdigest()
         since = (_now() - timedelta(hours=24)).isoformat()
         try:
             return await sb_count(T_LINK_LOG, {"url_hash": url_hash}, gte={"used_at": since})
@@ -84,7 +97,8 @@ class TaskEngine:
     @staticmethod
     async def try_reserve_link_usage(user_id: int, task_id: int | str, url: str, daily_limit: int) -> tuple[bool, str | None]:
         """Атомарное резервирование слота по ссылке с защитой от гонок."""
-        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        norm_url = TaskEngine.normalize_url(url)
+        url_hash = hashlib.sha256(norm_url.encode("utf-8")).hexdigest()
 
         if url_hash not in _link_locks:
             _link_locks[url_hash] = asyncio.Lock()
@@ -102,7 +116,8 @@ class TaskEngine:
 
     @staticmethod
     async def user_did_link_ever(user_id: int, url: str) -> bool:
-        url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        norm_url = TaskEngine.normalize_url(url)
+        url_hash = hashlib.sha256(norm_url.encode("utf-8")).hexdigest()
         try:
             count = await sb_count(T_LINK_LOG, {"user_id": user_id, "url_hash": url_hash})
             return count > 0
@@ -262,29 +277,31 @@ class TaskEngine:
 
     @staticmethod
     async def cancel_task(owner_id: int, task_id: int) -> tuple[bool, str | None, float]:
-        """Отмена задания с возвратом средств рекламодателю."""
+        """Отмена задания с возвратом средств рекламодателю (RPC атомарно)."""
         try:
-            res = await sb_select(T_TASKS, {"id": task_id, "owner_id": owner_id}, limit=1)
-            if not res.data:
-                return False, "Задание не найдено", 0.0
+            # 1. Выполняем атомарную отмену через Supabase RPC
+            rpc_res = await sb.rpc("cancel_task_atomic", {
+                "p_owner_id": int(owner_id),
+                "p_task_id": str(task_id)
+            }).execute()
 
-            task = res.data[0]
-            if task.get("status") != "active":
-                return False, "Задание уже неактивно", 0.0
+            if not rpc_res.data or not rpc_res.data.get("ok"):
+                err = (rpc_res.data or {}).get("error") or "Не удалось отменить задание."
+                return False, err, 0.0
 
-            qty_left = int(task.get("qty_left") or 0)
-            reward_per_unit = float(task.get("reward_rub") or 0)
-            refund_amount = round(qty_left * reward_per_unit, 2)
+            refund_amount = float(rpc_res.data.get("refund_amount") or 0)
 
-            await sb_update(T_TASKS, {"id": task_id}, {"status": "cancelled", "qty_left": 0})
-
-            if refund_amount > 0:
-                await add_rub(owner_id, refund_amount)
+            # 2. Очистка контекста: удаляем статус 'clicked' для этого задания у всех пользователей
+            from services.limits import clear_task_click_globally
+            try:
+                await clear_task_click_globally(task_id)
+            except Exception:
+                pass
 
             return True, None, refund_amount
         except Exception as e:
             log.error(f"Cancel task error: {e}")
-            return False, str(e), 0.0
+            return False, "Внутренняя ошибка при отмене.", 0.0
 
     @staticmethod
     def calculate_task_rank(task: dict) -> float:

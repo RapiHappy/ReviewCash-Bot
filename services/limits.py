@@ -404,6 +404,14 @@ async def clear_task_click(uid: int, task_id: str):
     except Exception:
         pass
 
+async def clear_task_click_globally(task_id: int | str):
+    """Delete clicked_task:<task_id> limit records for all users."""
+    key = CLICK_PREFIX + str(task_id)
+    try:
+        await sb_delete(T_LIMITS, {"limit_key": key})
+    except Exception as e:
+        log.error(f"Failed to clear task clicks globally: {e}")
+
 
 # -------------------------
 # feature flags / notifications

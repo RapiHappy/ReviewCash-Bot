@@ -5,8 +5,10 @@ import json
 import base64
 import logging
 import asyncio
+import io
 from typing import Any
 from aiohttp import web
+from PIL import Image
 
 from config import *
 from database import *
@@ -199,8 +201,25 @@ async def api_proof_upload(req: web.Request):
         if len(buf) > limit:
             return web.json_response({"ok": False, "error": f"Файл слишком большой (>{MAX_PROOF_MB}MB)"}, status=413)
 
-    ts = int(_now().timestamp())
-    path = f"{uid}/{ts}_{filename}"
+    ts_dt = _now()
+    path = f"uploads/{ts_dt.year}/{ts_dt.month:02d}/{uid}/{ts_dt.strftime('%H%M%S')}_{filename}"
+
+    # MIME & Image validation
+    try:
+        img = Image.open(io.BytesIO(buf))
+        img.verify() # Basic verification
+        
+        # Check format
+        if img.format not in ["JPEG", "PNG"]:
+            return web.json_response({"ok": False, "error": "Разрешены только JPEG и PNG"}, status=400)
+            
+        # Optional: Re-check content_type based on actual format
+        if img.format == "JPEG":
+            content_type = "image/jpeg"
+        elif img.format == "PNG":
+            content_type = "image/png"
+    except Exception:
+        return web.json_response({"ok": False, "error": "Файл не является корректным изображением"}, status=400)
 
     try:
         await sb_storage_upload(PROOF_BUCKET, path, bytes(buf), content_type)
