@@ -149,13 +149,8 @@ async def api_sync(req: web.Request):
             continue
 
         # Единая проверка доступности
-        ok_take, _ = await TaskEngine.can_user_take_task(uid, t, user_rep=user_rep)
+        ok_take, _ = await TaskEngine.can_user_take_task(uid, t, user_rep=user_rep, is_vip=is_vip, user_gender=user_gender)
         if not ok_take:
-            continue
-
-        # Гендерный таргетинг
-        target_g = get_task_target_gender(t)
-        if target_g != TASK_GENDER_ANY and target_g != user_gender:
             continue
 
         filtered.append(t)

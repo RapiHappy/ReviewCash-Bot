@@ -2,6 +2,26 @@
 -- Run this in the Supabase SQL Editor.
 
 --------------------------------------------------------------------------------
+-- 0. Schema Updates (Run these once)
+--------------------------------------------------------------------------------
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pending_count INT DEFAULT 0;
+-- ALTER TABLE tasks ADD COLUMN IF NOT EXISTS release_at TIMESTAMPTZ;
+-- ALTER TABLE link_log ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'used'; -- 'reserved', 'used', 'cancelled'
+
+-- CREATE TABLE IF NOT EXISTS review_logs (
+--     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--     user_id BIGINT REFERENCES balances(user_id),
+--     task_id UUID REFERENCES tasks(id),
+--     ai_score INT,
+--     user_rep NUMERIC,
+--     task_reward NUMERIC,
+--     status TEXT, -- 'pass', 'review', 'reject'
+--     reason TEXT,
+--     latency_ms INT,
+--     created_at TIMESTAMPTZ DEFAULT NOW()
+-- );
+
+--------------------------------------------------------------------------------
 -- 1. update_balance_atomic
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION update_balance_atomic(
@@ -67,8 +87,8 @@ $$;
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION submit_task_atomic(
     p_user_id bigint,
-    p_task_id uuid, -- Changed to UUID for database compatibility
-    p_status text,
+    p_task_id uuid,
+    p_status text, -- 'paid', 'pending', 'pending_hold', 'review'
     p_proof_text text,
     p_proof_url text,
     p_reward_rub numeric DEFAULT 0,
@@ -86,21 +106,23 @@ BEGIN
     SELECT qty_left, status INTO v_qty_left, v_task_status
     FROM tasks 
     WHERE id = p_task_id 
-    FOR UPDATE;   -- важный lock
+    FOR UPDATE;
 
     IF v_task_status IS NULL OR v_task_status != 'active' OR v_qty_left <= 0 THEN
         RETURN json_build_object('ok', false, 'error', 'No slots available or task closed');
     END IF;
 
-    -- Резервируем слот
+    -- Резервируем слот (decrement qty_left)
+    -- Если статус НЕ 'paid', увеличиваем pending_count
     UPDATE tasks 
     SET qty_left = qty_left - 1,
+        pending_count = CASE WHEN p_status != 'paid' THEN pending_count + 1 ELSE pending_count END,
         updated_at = NOW()
     WHERE id = p_task_id;
 
     -- Создаём запись выполнения
-    INSERT INTO completions (task_id, user_id, status, proof_text, proof_url, reward_rub, xp_added, created_at)
-    VALUES (p_task_id, p_user_id, p_status, p_proof_text, p_proof_url, p_reward_rub, p_xp_added, NOW());
+    INSERT INTO completions (task_id, user_id, status, proof_text, proof_url, reward_rub, xp_added, ai_score, created_at)
+    VALUES (p_task_id, p_user_id, p_status, p_proof_text, p_proof_url, p_reward_rub, p_xp_added, p_ai_score, NOW());
 
     RETURN json_build_object('ok', true);
 EXCEPTION WHEN OTHERS THEN
@@ -113,7 +135,7 @@ $$;
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION approve_proof_atomic(
     p_admin_id bigint,
-    p_proof_id uuid, -- Changed to UUID
+    p_proof_id uuid,
     p_reward_rub numeric,
     p_xp_added integer
 )
@@ -125,17 +147,21 @@ DECLARE
 BEGIN
     SELECT * INTO v_comp 
     FROM completions 
-    WHERE id = p_proof_id AND status IN ('pending', 'pending_hold')
+    WHERE id = p_proof_id AND status IN ('pending', 'pending_hold', 'review', 'rework')
     FOR UPDATE;
 
     IF NOT FOUND THEN
         RETURN json_build_object('ok', false, 'error', 'Proof not found or already processed');
     END IF;
 
-    -- Начисляем награду и XP
+    -- Начисляем награду
     PERFORM update_balance_atomic(v_comp.user_id, p_reward_rub, 0);
     
-    -- Обновляем статус выполнения
+    -- Уменьшаем pending_count и ставим статус paid
+    UPDATE tasks 
+    SET pending_count = GREATEST(0, pending_count - 1)
+    WHERE id = v_comp.task_id;
+
     UPDATE completions 
     SET status = 'paid',
         moderated_by = p_admin_id,
@@ -170,28 +196,29 @@ BEGIN
     WHERE id = p_proof_id 
     FOR UPDATE;
 
-    IF NOT FOUND OR v_comp.status NOT IN ('pending', 'pending_hold', 'rework') THEN
+    IF NOT FOUND OR v_comp.status NOT IN ('pending', 'pending_hold', 'review', 'rework') THEN
         RETURN json_build_object('ok', false, 'error', 'Proof not found or already processed');
     END IF;
 
     v_task_id := v_comp.task_id;
+
+    -- Уменьшаем pending_count
+    UPDATE tasks 
+    SET pending_count = GREATEST(0, pending_count - 1),
+        qty_left = qty_left + 1,
+        updated_at = NOW()
+    WHERE id = v_task_id;
+
+    -- Если задание было закрыто, открываем
+    UPDATE tasks 
+    SET status = 'active'
+    WHERE id = v_task_id AND status = 'closed' AND qty_left > 0;
 
     UPDATE completions 
     SET status = p_status,
         moderated_by = p_admin_id,
         moderated_at = NOW()
     WHERE id = p_proof_id;
-
-    -- Возвращаем слот в задание
-    UPDATE tasks 
-    SET qty_left = qty_left + 1,
-        updated_at = NOW()
-    WHERE id = v_task_id AND qty_left >= 0;
-
-    -- If task was closed because qty_left became 0, reopen it
-    UPDATE tasks 
-    SET status = 'active'
-    WHERE id = v_task_id AND status = 'closed' AND qty_left > 0;
 
     RETURN json_build_object('ok', true);
 EXCEPTION WHEN OTHERS THEN
@@ -216,7 +243,6 @@ DECLARE
     v_status TEXT;
     v_refund_amount NUMERIC;
 BEGIN
-    -- 1. Lock and check task status
     SELECT status, qty_left, reward_rub 
     INTO v_status, v_qty_left, v_reward_rub
     FROM tasks 
@@ -231,12 +257,10 @@ BEGIN
         RETURN jsonb_build_object('ok', false, 'error', 'Задание уже неактивно');
     END IF;
 
-    -- 2. Update task status
     UPDATE tasks 
     SET status = 'cancelled', qty_left = 0 
     WHERE id = p_task_id;
 
-    -- 3. Calculate and apply refund
     v_refund_amount := ROUND((v_qty_left * v_reward_rub)::NUMERIC, 2);
     
     IF v_refund_amount > 0 THEN
