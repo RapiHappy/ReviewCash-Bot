@@ -654,13 +654,19 @@ async def api_admin_proof_decision(req: web.Request):
     if rework:
         if task_type not in ("ya", "gm"):
             return web.json_response({"ok": False, "error": "Доработка доступна только для Яндекс/Google отзывов"}, status=400)
-        moderated_at = _now()
-        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
-            "status": "rework",
-            "moderated_by": int(admin["id"]),
-            "moderated_at": moderated_at.isoformat(),
-        })
-        deadline = moderated_at + timedelta(days=REWORK_GRACE_DAYS)
+        
+        # Atomic rework: status=rework + slot recovery
+        rpc_res = await sb.rpc("reject_proof_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_proof_id": str(proof_id),
+            "p_status": "rework"
+        }).execute()
+        
+        if not rpc_res.data or not rpc_res.data.get("ok"):
+            err = (rpc_res.data or {}).get("error") or "Ошибка БД при отправке на доработку"
+            return web.json_response({"ok": False, "error": err}, status=400)
+
+        deadline = _now() + timedelta(days=REWORK_GRACE_DAYS)
         msg = "🛠 Отчёт отправлен на доработку."
         if comment:
             msg += f"\n\nКомментарий: {comment}"
@@ -719,11 +725,17 @@ async def api_admin_proof_decision(req: web.Request):
         await notify_user(user_id, success_msg, reply_markup=back_to_app_kb())
     else:
         new_status = "fake" if fake else "rejected"
-        await sb_update(T_COMP, {"id": cast_id(proof_id)}, {
-            "status": new_status,
-            "moderated_by": int(admin["id"]),
-            "moderated_at": _now().isoformat(),
-        })
+        
+        # Atomic rejection: status=fake/rejected + slot recovery
+        rpc_res = await sb.rpc("reject_proof_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_proof_id": str(proof_id),
+            "p_status": new_status
+        }).execute()
+        
+        if not rpc_res.data or not rpc_res.data.get("ok"):
+            err = (rpc_res.data or {}).get("error") or "Ошибка БД при отклонении"
+            return web.json_response({"ok": False, "error": err}, status=400)
 
         # Update User Reputation Stats
         try:

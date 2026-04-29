@@ -136,52 +136,49 @@ async def add_xp(uid: int, amount: int):
     cur = int(bal.get("xp") or 0)
     return await set_xp_level(uid, cur + int(amount))
 
-async def change_balance(uid: int, amount_rub: float = 0, amount_stars: float = 0):
+async def change_balance(uid: int, amount_rub: float = 0, amount_stars: float = 0) -> dict:
+    """
+    Atomic balance change.
+    Returns: {"ok": bool, "rub": float, "stars": float, "error": str}
+    """
     try:
         res = await sb.rpc("update_balance_atomic", {
             "p_user_id": int(uid),
             "p_amount_rub": float(amount_rub or 0),
             "p_amount_stars": float(amount_stars or 0)
         }).execute()
-        if not res.data or not res.data.get("ok"):
-            log.error(f"Balance RPC failed for {uid}: {res.data}")
-            return False
-        return float(res.data.get("rub_balance") or 0)
+        
+        data = res.data or {}
+        if not data.get("ok"):
+            err_msg = data.get("error") or "Unknown RPC error"
+            log.error(f"Balance RPC failed for {uid}: {err_msg}")
+            return {"ok": False, "rub": 0, "stars": 0, "error": err_msg}
+            
+        return {
+            "ok": True,
+            "rub": float(data.get("rub_balance") or 0),
+            "stars": float(data.get("stars_balance") or 0),
+            "error": None
+        }
     except Exception as e:
         log.error(f"Critical balance error {uid}: {e}")
-        return False
+        return {"ok": False, "rub": 0, "stars": 0, "error": str(e)}
 
 async def add_rub(uid: int, amount: float):
-    return await change_balance(uid, amount_rub=amount)
+    res = await change_balance(uid, amount_rub=amount)
+    return res.get("rub") if res.get("ok") else False
 
 async def add_stars(uid: int, amount: int | float):
-    try:
-        res = await sb.rpc("update_balance_atomic", {
-            "p_user_id": int(uid),
-            "p_amount_stars": float(amount or 0)
-        }).execute()
-        if not res.data or not res.data.get("ok"):
-            return False
-        return float(res.data.get("stars_balance") or 0)
-    except Exception:
-        return False
+    res = await change_balance(uid, amount_stars=amount)
+    return res.get("stars") if res.get("ok") else False
 
 async def sub_rub(uid: int, amount: float) -> bool:
     res = await change_balance(uid, amount_rub=-float(amount))
-    return res is not False
+    return bool(res.get("ok"))
 
 async def sub_stars(uid: int, amount: int | float) -> bool:
-    try:
-        bal = await get_balance(uid)
-        if float(bal.get("stars_balance") or 0) < float(amount):
-            return False
-        res = await sb.rpc("update_balance_atomic", {
-            "p_user_id": int(uid),
-            "p_amount_stars": -float(amount or 0)
-        }).execute()
-        return bool(res.data and res.data.get("ok"))
-    except Exception:
-        return False
+    res = await change_balance(uid, amount_stars=-float(amount))
+    return bool(res.get("ok"))
 
 def task_xp(task: dict) -> int:
     """Calculate base XP for a task based on its type and check method."""

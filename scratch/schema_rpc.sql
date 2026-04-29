@@ -1,143 +1,110 @@
--- SQL script to create necessary RPC functions in Supabase for atomic operations.
+-- SQL script to create hardened RPC functions in Supabase for atomic operations.
 -- Run this in the Supabase SQL Editor.
 
 --------------------------------------------------------------------------------
 -- 1. update_balance_atomic
 --------------------------------------------------------------------------------
--- Handles atomic updates for rub and stars balances.
--- Returns the new balances and success status.
-
 CREATE OR REPLACE FUNCTION update_balance_atomic(
-    p_user_id BIGINT,
-    p_amount_rub NUMERIC DEFAULT 0,
-    p_amount_stars NUMERIC DEFAULT 0
+    p_user_id bigint,
+    p_amount_rub numeric DEFAULT 0,
+    p_amount_stars numeric DEFAULT 0
 )
-RETURNS JSONB
+RETURNS json
 LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+SECURITY DEFINER AS $$
 DECLARE
-    v_new_rub NUMERIC;
-    v_new_stars NUMERIC;
+    new_rub numeric;
+    new_stars numeric;
 BEGIN
-    -- Ensure row exists
-    INSERT INTO balances (user_id, rub_balance, stars_balance, xp, level)
-    VALUES (p_user_id, 0, 0, 0, 1)
-    ON CONFLICT (user_id) DO NOTHING;
+    -- Защита от отрицательного баланса
+    IF p_amount_rub < 0 THEN
+        SELECT rub_balance INTO new_rub 
+        FROM balances 
+        WHERE user_id = p_user_id;
 
-    -- Update balances
-    UPDATE balances
-    SET 
-        rub_balance = GREATEST(0, rub_balance + p_amount_rub),
-        stars_balance = GREATEST(0, stars_balance + p_amount_stars),
-        updated_at = NOW()
-    WHERE user_id = p_user_id
-    RETURNING rub_balance, stars_balance INTO v_new_rub, v_new_stars;
-
-    -- Basic safety check
-    IF v_new_rub IS NULL THEN
-        RETURN jsonb_build_object('ok', false, 'error', 'User not found or update failed');
+        IF new_rub IS NULL OR (new_rub + p_amount_rub) < 0 THEN
+            RETURN json_build_object('ok', false, 'error', 'Insufficient RUB balance');
+        END IF;
     END IF;
 
-    RETURN jsonb_build_object(
+    IF p_amount_stars < 0 THEN
+        SELECT stars_balance INTO new_stars 
+        FROM balances 
+        WHERE user_id = p_user_id;
+
+        IF new_stars IS NULL OR (new_stars + p_amount_stars) < 0 THEN
+            RETURN json_build_object('ok', false, 'error', 'Insufficient Stars balance');
+        END IF;
+    END IF;
+
+    INSERT INTO balances (user_id, rub_balance, stars_balance, updated_at)
+    VALUES (
+        p_user_id, 
+        GREATEST(0, COALESCE(p_amount_rub, 0)),
+        GREATEST(0, COALESCE(p_amount_stars, 0)),
+        NOW()
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+        rub_balance = GREATEST(0, balances.rub_balance + EXCLUDED.rub_balance),
+        stars_balance = GREATEST(0, balances.stars_balance + EXCLUDED.stars_balance),
+        updated_at = NOW()
+    RETURNING rub_balance, stars_balance 
+    INTO new_rub, new_stars;
+
+    RETURN json_build_object(
         'ok', true,
-        'rub_balance', v_new_rub,
-        'stars_balance', v_new_stars
+        'rub_balance', new_rub,
+        'stars_balance', new_stars
     );
+
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object('ok', false, 'error', SQLERRM);
 END;
 $$;
 
 --------------------------------------------------------------------------------
 -- 2. submit_task_atomic
 --------------------------------------------------------------------------------
--- Atomically handles task completion:
--- - Checks if task is active and has slots left
--- - Decrements qty_left
--- - Closes task if qty_left becomes 0
--- - Records the completion in completions table
--- - Optionally handles auto-payment (reward + xp) if requested
-
 CREATE OR REPLACE FUNCTION submit_task_atomic(
-    p_user_id BIGINT,
-    p_task_id UUID,
-    p_proof_text TEXT DEFAULT NULL,
-    p_proof_url TEXT DEFAULT NULL,
-    p_status TEXT DEFAULT 'pending', -- 'pending' for manual, 'paid' for auto
-    p_reward_rub NUMERIC DEFAULT 0,
-    p_xp_added INT DEFAULT 0,
-    p_ai_score INT DEFAULT 0
+    p_user_id bigint,
+    p_task_id uuid, -- Changed to UUID for database compatibility
+    p_status text,
+    p_proof_text text,
+    p_proof_url text,
+    p_reward_rub numeric DEFAULT 0,
+    p_xp_added integer DEFAULT 0,
+    p_ai_score integer DEFAULT 0
 )
-RETURNS JSONB
+RETURNS json
 LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+SECURITY DEFINER AS $$
 DECLARE
-    v_qty_left INT;
-    v_task_status TEXT;
-    v_new_rub NUMERIC;
-    v_new_stars NUMERIC;
+    v_qty_left integer;
+    v_task_status text;
 BEGIN
-    -- 1. Check task status and qty_left with row locking
+    -- Проверяем задание
     SELECT qty_left, status INTO v_qty_left, v_task_status
-    FROM tasks
-    WHERE id = p_task_id
-    FOR UPDATE;
+    FROM tasks 
+    WHERE id = p_task_id 
+    FOR UPDATE;   -- важный lock
 
     IF v_task_status IS NULL OR v_task_status != 'active' OR v_qty_left <= 0 THEN
-        RETURN jsonb_build_object('ok', false, 'error', 'Task closed or not found');
+        RETURN json_build_object('ok', false, 'error', 'No slots available or task closed');
     END IF;
 
-    -- 2. Update task slots
-    v_qty_left := v_qty_left - 1;
-    UPDATE tasks
-    SET 
-        qty_left = v_qty_left,
-        status = CASE WHEN v_qty_left <= 0 THEN 'closed' ELSE 'active' END
+    -- Резервируем слот
+    UPDATE tasks 
+    SET qty_left = qty_left - 1,
+        updated_at = NOW()
     WHERE id = p_task_id;
 
-    -- 3. Record completion
-    INSERT INTO completions (
-        task_id, 
-        user_id, 
-        status, 
-        proof_text, 
-        proof_url, 
-        ai_score, 
-        moderated_at
-    )
-    VALUES (
-        p_task_id, 
-        p_user_id, 
-        p_status, 
-        p_proof_text, 
-        p_proof_url, 
-        p_ai_score,
-        CASE WHEN p_status = 'paid' THEN NOW() ELSE NULL END
-    );
+    -- Создаём запись выполнения
+    INSERT INTO completions (task_id, user_id, status, proof_text, proof_url, reward_rub, xp_added, created_at)
+    VALUES (p_task_id, p_user_id, p_status, p_proof_text, p_proof_url, p_reward_rub, p_xp_added, NOW());
 
-    -- 4. If auto-paid, update balance and XP
-    IF p_status = 'paid' THEN
-        -- Ensure row exists in balances
-        INSERT INTO balances (user_id, rub_balance, stars_balance, xp, level)
-        VALUES (p_user_id, 0, 0, 0, 1)
-        ON CONFLICT (user_id) DO NOTHING;
-
-        UPDATE balances
-        SET 
-            rub_balance = rub_balance + p_reward_rub,
-            xp = xp + p_xp_added,
-            updated_at = NOW()
-        WHERE user_id = p_user_id
-        RETURNING rub_balance, stars_balance INTO v_new_rub, v_new_stars;
-    END IF;
-
-    RETURN jsonb_build_object(
-        'ok', true,
-        'status', p_status,
-        'qty_left', v_qty_left,
-        'new_rub', v_new_rub,
-        'new_stars', v_new_stars
-    );
+    RETURN json_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object('ok', false, 'error', SQLERRM);
 END;
 $$;
 
@@ -145,76 +112,96 @@ $$;
 -- 3. approve_proof_atomic
 --------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION approve_proof_atomic(
-    p_admin_id BIGINT,
-    p_proof_id UUID,
-    p_reward_rub NUMERIC,
-    p_xp_added INT
+    p_admin_id bigint,
+    p_proof_id uuid, -- Changed to UUID
+    p_reward_rub numeric,
+    p_xp_added integer
 )
-RETURNS JSONB
+RETURNS json
 LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
+SECURITY DEFINER AS $$
 DECLARE
-    v_task_id UUID;
-    v_user_id BIGINT;
-    v_qty_left INT;
+    v_comp record;
 BEGIN
-    -- 1. Lock and check proof status
-    SELECT task_id, user_id INTO v_task_id, v_user_id
-    FROM completions
-    WHERE id = p_proof_id AND status = 'pending'
+    SELECT * INTO v_comp 
+    FROM completions 
+    WHERE id = p_proof_id AND status IN ('pending', 'pending_hold')
     FOR UPDATE;
 
-    IF v_task_id IS NULL THEN
-        RETURN jsonb_build_object('ok', false, 'error', 'Proof already moderated or not found');
+    IF NOT FOUND THEN
+        RETURN json_build_object('ok', false, 'error', 'Proof not found or already processed');
     END IF;
 
-    -- 2. Lock and update task slots
-    SELECT qty_left INTO v_qty_left
-    FROM tasks
-    WHERE id = v_task_id
-    FOR UPDATE;
-
-    v_qty_left := GREATEST(0, v_qty_left - 1);
-    UPDATE tasks
-    SET 
-        qty_left = v_qty_left,
-        status = CASE WHEN v_qty_left <= 0 THEN 'closed' ELSE 'active' END
-    WHERE id = v_task_id;
-
-    -- 3. Update completion
-    UPDATE completions
-    SET 
-        status = 'paid',
+    -- Начисляем награду и XP
+    PERFORM update_balance_atomic(v_comp.user_id, p_reward_rub, 0);
+    
+    -- Обновляем статус выполнения
+    UPDATE completions 
+    SET status = 'paid',
         moderated_by = p_admin_id,
-        moderated_at = NOW()
+        moderated_at = NOW(),
+        reward_rub = p_reward_rub,
+        xp_added = p_xp_added
     WHERE id = p_proof_id;
 
-    -- 4. Update balance and XP
-    INSERT INTO balances (user_id, rub_balance, stars_balance, xp, level)
-    VALUES (v_user_id, 0, 0, 0, 1)
-    ON CONFLICT (user_id) DO NOTHING;
-
-    UPDATE balances
-    SET 
-        rub_balance = rub_balance + p_reward_rub,
-        xp = xp + p_xp_added,
-        updated_at = NOW()
-    WHERE user_id = v_user_id;
-
-    RETURN jsonb_build_object('ok', true, 'qty_left', v_qty_left);
+    RETURN json_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object('ok', false, 'error', SQLERRM);
 END;
 $$;
 
 --------------------------------------------------------------------------------
--- 4. cancel_task_atomic
+-- 4. reject_proof_atomic
 --------------------------------------------------------------------------------
--- Atomically cancels a task and refunds the owner for remaining slots.
--- - Checks if task is active and belongs to owner
--- - Changes status to 'cancelled'
--- - Sets qty_left to 0
--- - Refunds rub_balance based on qty_left * reward_per_unit
+CREATE OR REPLACE FUNCTION reject_proof_atomic(
+    p_admin_id bigint,
+    p_proof_id uuid,
+    p_status text -- 'rejected', 'fake', or 'rework'
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_comp record;
+    v_task_id uuid;
+BEGIN
+    SELECT * INTO v_comp 
+    FROM completions 
+    WHERE id = p_proof_id 
+    FOR UPDATE;
 
+    IF NOT FOUND OR v_comp.status NOT IN ('pending', 'pending_hold', 'rework') THEN
+        RETURN json_build_object('ok', false, 'error', 'Proof not found or already processed');
+    END IF;
+
+    v_task_id := v_comp.task_id;
+
+    UPDATE completions 
+    SET status = p_status,
+        moderated_by = p_admin_id,
+        moderated_at = NOW()
+    WHERE id = p_proof_id;
+
+    -- Возвращаем слот в задание
+    UPDATE tasks 
+    SET qty_left = qty_left + 1,
+        updated_at = NOW()
+    WHERE id = v_task_id AND qty_left >= 0;
+
+    -- If task was closed because qty_left became 0, reopen it
+    UPDATE tasks 
+    SET status = 'active'
+    WHERE id = v_task_id AND status = 'closed' AND qty_left > 0;
+
+    RETURN json_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+--------------------------------------------------------------------------------
+-- 5. cancel_task_atomic
+--------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION cancel_task_atomic(
     p_owner_id BIGINT,
     p_task_id UUID

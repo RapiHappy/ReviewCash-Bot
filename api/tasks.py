@@ -459,11 +459,17 @@ async def api_task_submit(req: web.Request):
         }
 
         # 2. Execute atomic submission
-        rpc_res = await sb.rpc("submit_task_atomic", rpc_params).execute()
-        
-        if not rpc_res.data or not rpc_res.data.get("ok"):
-            err = (rpc_res.data or {}).get("error") or "К сожалению, места в этом задании только что закончились."
-            return web.json_response({"ok": False, "error": err}, status=400)
+        try:
+            rpc_res = await sb.rpc("submit_task_atomic", rpc_params).execute()
+            data = rpc_res.data or {}
+            
+            if not data.get("ok"):
+                err = data.get("error") or "К сожалению, места в этом задании только что закончились."
+                log.warning(f"Submission RPC failed for user {uid} on task {task_id}: {err}")
+                return web.json_response({"ok": False, "error": err}, status=400)
+        except Exception as e:
+            log.error(f"Critical error during submission RPC for user {uid}: {e}")
+            return web.json_response({"ok": False, "error": "Ошибка сервера при обработке отчёта"}, status=500)
 
         # 3. Handle side effects if successful
         await clear_task_click(uid, task_id)
