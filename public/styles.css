@@ -3199,7 +3199,7 @@ html.theme-light .faq-q{
 /* --- TASK WIZARD --- */
 .task-wizard { padding: 25px !important; }
 .wizard-header { margin-bottom: 25px; text-align: center; }
-.wizard-header h2 { font-size: 24px; font-weight: 900; margin-bottom: 15px; background: linear-gradient(135deg, #fff 0%, var(--accent-cyan) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.wizard-header h2 { font-size: 24px; font-weight: 900; margin-bottom: 15px; background: linear-gradient(135deg, #fff 0%, var(--accent-cyan) 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 
 .wizard-progress { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
 .wiz-step { width: 40px; height: 4px; background: var(--glass-border); border-radius: 2px; transition: 0.3s; }

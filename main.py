@@ -74,4 +74,4 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    web.run_app(app, host="0.0.0.0", port=PORT)й
+    web.run_app(app, host="0.0.0.0", port=PORT)

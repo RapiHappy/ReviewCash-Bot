@@ -23,6 +23,15 @@ from api.task_helpers import *
 def _now():
     return datetime.now(timezone.utc)
 
+def _task_created_at(task):
+    cat = task.get("created_at")
+    if not cat:
+        return _now()
+    try:
+        return datetime.fromisoformat(str(cat).replace("Z", "+00:00"))
+    except Exception:
+        return _now()
+
 def _dt_after_task(dt, task) -> bool:
     if not dt:
         return False
