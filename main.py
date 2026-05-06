@@ -4,11 +4,14 @@ import os
 from datetime import datetime, timezone
 from aiohttp import web
 
+from core.settings import settings
+
 from config import BOT_TOKEN, SERVER_BASE_URL, BASE_URL, WEBHOOK_PATH, USE_WEBHOOK, PORT, ADMIN_IDS, MAIN_ADMIN_ID
 from services.telegram_utils import bot, dp, setup_menu_button
 from api.middleware import MaintenanceMiddleware, cors_middleware, no_cache_mw, api_error_middleware
 from api.routes import setup_routes
 from services.background_workers import start_background_workers
+from database import ping
 
 # Handlers are included in on_startup
 
@@ -29,9 +32,10 @@ def make_app():
     app.on_cleanup.append(on_cleanup)
     return app
 
-
+polling_task = None
 
 async def on_startup(app: web.Application):
+    global polling_task
     # Include handlers
     from handlers.users import router as users_router
     from handlers.admin import router as admin_router
@@ -40,6 +44,12 @@ async def on_startup(app: web.Application):
 
     dp.update.outer_middleware(MaintenanceMiddleware())
     await setup_menu_button(bot)
+    
+    db_ok = await ping()
+    if not db_ok:
+        log.error("CRITICAL: Database ping failed on startup!")
+    else:
+        log.info("Database ping successful.")
     
     try:
         me = await bot.get_me()
@@ -55,17 +65,25 @@ async def on_startup(app: web.Application):
         await bot.set_webhook(wh_url)
         log.info("Webhook set to %s", wh_url)
     else:
-        asyncio.create_task(dp.start_polling(bot))
+        await bot.delete_webhook(drop_pending_updates=True)
+        polling_task = asyncio.create_task(dp.start_polling(bot))
         log.info("Polling started")
 
 async def on_cleanup(app: web.Application):
+    global polling_task
+    log.info("Starting graceful shutdown...")
     try:
         from crypto_service import crypto
         if crypto:
             await crypto.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f"Error closing crypto_service: {e}")
+        
+    if polling_task and not polling_task.done():
+        polling_task.cancel()
+        
     await bot.session.close()
+    log.info("Graceful shutdown completed.")
 
 app = make_app()
 

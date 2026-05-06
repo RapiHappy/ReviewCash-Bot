@@ -66,10 +66,10 @@ async def send_main_welcome(message: Message, uid: int):
     
     markup = await build_welcome_kb(uid)
     
-    if WELCOME_BANNER_PATH and os.path.exists(WELCOME_BANNER_PATH):
+    if WELCOME_BANNER_PATH and WELCOME_BANNER_PATH.exists():
         try:
             await message.answer_photo(
-                photo=FSInputFile(WELCOME_BANNER_PATH),
+                photo=FSInputFile(str(WELCOME_BANNER_PATH)),
                 caption=text,
                 reply_markup=markup,
                 parse_mode=ParseMode.MARKDOWN_V2

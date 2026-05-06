@@ -174,3 +174,11 @@ async def sb_storage_public_url(bucket: str, path: str) -> str:
     def _f():
         return sb.storage.from_(bucket).get_public_url(path)
     return await sb_exec(_f)
+
+async def ping() -> bool:
+    try:
+        await sb_select("users", limit=1)
+        return True
+    except Exception as e:
+        log.error(f"Database ping failed: {e}")
+        return False

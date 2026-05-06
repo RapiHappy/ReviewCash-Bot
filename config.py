@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 
 # Build/version string used for cache-busting in Telegram WebView
@@ -169,4 +170,4 @@ USER_GENDER_FEMALE_KEY = "gender_f"
 DAILY_BONUS_RUB = 0.5
 
 # Assets
-WELCOME_BANNER_PATH = "assets/welcome_banner.png"
+WELCOME_BANNER_PATH = Path("assets/welcome_banner.png")
