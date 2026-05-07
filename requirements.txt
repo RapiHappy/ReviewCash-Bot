@@ -7,3 +7,4 @@ google-generativeai==0.7.2
 Pillow==10.4.0
 pydantic-settings==2.2.1
 redis==5.0.4
+sentry-sdk==2.0.1

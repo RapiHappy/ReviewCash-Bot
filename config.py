@@ -63,6 +63,10 @@ STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
 # Debug bypass
 DISABLE_INITDATA = os.getenv("DISABLE_INITDATA", "0").strip() == "1"
 
+# Sentry
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip()
+
 # Gemini AI for reviews
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 PAYOUT_REVIEWS_CHANNEL = "@ReviewCashPayout"

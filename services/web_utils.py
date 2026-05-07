@@ -118,6 +118,14 @@ async def require_init(req: web.Request):
     if init_data:
         parsed = verify_init_data(init_data, BOT_TOKEN or "")
         if parsed and isinstance(parsed.get("user"), dict):
+            # Auth Hardening: Check auth_date
+            try:
+                auth_date = int(parsed.get("auth_date", 0))
+                if time.time() - auth_date > 86400: # 24h
+                    raise web.HTTPUnauthorized(text="initData expired")
+            except Exception:
+                raise web.HTTPUnauthorized(text="Invalid auth_date")
+
             tg_user = parsed["user"]
             user = await ensure_user(tg_user)
             merged = {**user}
