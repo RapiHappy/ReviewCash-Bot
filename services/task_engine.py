@@ -15,7 +15,7 @@ log = logging.getLogger("reviewcash.task_engine")
 
 STOP_WORDS = {"fake", "тест", "проверка", "test", "spam", "отзыв", "норм", "хорошо", "отлично"}
 
-_link_locks: dict[str, asyncio.Lock] = {}
+from services.redis_client import redis_client
 
 
 def _now():
@@ -236,8 +236,8 @@ class TaskEngine:
             # 5. ATOMIC RESERVATION
             if url:
                 limit = TaskEngine.get_daily_limit(task)
-                if url not in _link_locks: _link_locks[url] = asyncio.Lock()
-                async with _link_locks[url]:
+                url_hash = hashlib.sha256(TaskEngine.normalize_url(url).encode("utf-8")).hexdigest()
+                async with redis_client.lock(f"lock:link:{url_hash}", timeout=10):
                     usage = await TaskEngine.get_link_usage_count(url)
                     if usage >= limit:
                         return {"ok": False, "error": "Лимит на сегодня исчерпан."}

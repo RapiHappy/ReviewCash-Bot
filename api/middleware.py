@@ -11,13 +11,17 @@ async def api_error_middleware(request: web.Request, handler):
     try:
         return await handler(request)
     except web.HTTPException as ex:
-        # Re-raise standard aiohttp HTTP exceptions if they already have JSON body
         if ex.content_type == "application/json":
             raise ex
-        # Otherwise, wrap in JSON
         return web.json_response({"ok": False, "error": ex.reason}, status=ex.status)
     except Exception as e:
         log.exception("Unhandled API error: %s", e)
+        if request.path.startswith("/api/"):
+            return web.json_response({
+                "ok": False, 
+                "error": f"Ошибка сервера: {type(e).__name__}: {e}",
+                "detail": str(e)
+            }, status=500)
         return web.json_response({"ok": False, "error": "Internal Server Error"}, status=500)
 
 class MaintenanceMiddleware:

@@ -1,41 +1,24 @@
 import asyncio
 import logging
 import os
+import signal
 from datetime import datetime, timezone
 from aiohttp import web
 
-from core.settings import settings
-
-from config import BOT_TOKEN, SERVER_BASE_URL, BASE_URL, WEBHOOK_PATH, USE_WEBHOOK, PORT, ADMIN_IDS, MAIN_ADMIN_ID
+from config import (
+    BOT_TOKEN, SERVER_BASE_URL, BASE_URL, WEBHOOK_PATH, 
+    USE_WEBHOOK, PORT, ADMIN_IDS, MAIN_ADMIN_ID
+)
 from services.telegram_utils import bot, dp, setup_menu_button
 from api.middleware import MaintenanceMiddleware, cors_middleware, no_cache_mw, api_error_middleware
 from api.routes import setup_routes
 from services.background_workers import start_background_workers
 from database import ping
-
-# Handlers are included in on_startup
+from services.redis_client import redis_client, check_redis
 
 log = logging.getLogger("reviewcash.main")
 
-# Build/version string
-APP_BUILD = (
-    os.getenv("APP_BUILD")
-    or os.getenv("RENDER_GIT_COMMIT")
-    or os.getenv("GIT_COMMIT")
-    or datetime.now(timezone.utc).strftime("rc_%Y%m%d_%H%M%S")
-)
-
-def make_app():
-    app = web.Application(middlewares=[api_error_middleware, cors_middleware, no_cache_mw])
-    setup_routes(app)
-    app.on_startup.append(on_startup)
-    app.on_cleanup.append(on_cleanup)
-    return app
-
-polling_task = None
-
-async def on_startup(app: web.Application):
-    global polling_task
+async def on_startup():
     # Include handlers
     from handlers.users import router as users_router
     from handlers.admin import router as admin_router
@@ -50,6 +33,8 @@ async def on_startup(app: web.Application):
         log.error("CRITICAL: Database ping failed on startup!")
     else:
         log.info("Database ping successful.")
+
+    await check_redis()
     
     try:
         me = await bot.get_me()
@@ -66,12 +51,13 @@ async def on_startup(app: web.Application):
         log.info("Webhook set to %s", wh_url)
     else:
         await bot.delete_webhook(drop_pending_updates=True)
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        log.info("Polling started")
+        log.info("Polling mode active")
 
-async def on_cleanup(app: web.Application):
-    global polling_task
+async def on_shutdown():
     log.info("Starting graceful shutdown...")
+    
+    # Close background tasks if any
+    
     try:
         from crypto_service import crypto
         if crypto:
@@ -79,17 +65,52 @@ async def on_cleanup(app: web.Application):
     except Exception as e:
         log.error(f"Error closing crypto_service: {e}")
         
-    if polling_task and not polling_task.done():
-        polling_task.cancel()
-        
+    await dp.stop_polling()
     await bot.session.close()
+    await redis_client.close()
+    
     log.info("Graceful shutdown completed.")
 
-app = make_app()
-
-if __name__ == "__main__":
+async def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    
+    await on_startup()
+
+    app = web.Application(middlewares=[api_error_middleware, cors_middleware, no_cache_mw])
+    setup_routes(app)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    log.info(f"API server started on port {PORT}")
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+
+    if not USE_WEBHOOK:
+        polling_task = asyncio.create_task(dp.start_polling(bot))
+        
+    await stop_event.wait()
+    
+    if not USE_WEBHOOK:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+
+    await on_shutdown()
+    await runner.cleanup()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass

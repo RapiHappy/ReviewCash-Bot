@@ -64,27 +64,4 @@ async def api_tg_check_chat(req: web.Request):
         "title": title,
     })
 
-@web.middleware
-async def api_error_middleware(req: web.Request, handler):
-    try:
-        return await handler(req)
-    except web.HTTPException:
-        raise
-    except Exception as e:
-        _log = logging.getLogger("reviewcash")
-        try:
-            _log.exception("API ERROR %s %s: %s", req.method, req.path, e)
-        except Exception:
-            print(f"[CRITICAL] FAILED TO LOG: {req.path} -> {e}")
-
-        if req.path.startswith("/api/"):
-            # ALWAYS return real error to user — this is a Telegram Mini App, not a public website
-            err_msg = f"Ошибка сервера: {type(e).__name__}: {e}"
-            return web.json_response({
-                "ok": False,
-                "error": err_msg,
-                "detail": str(e),
-                "error_type": type(e).__name__,
-            }, status=500)
-        raise
 
