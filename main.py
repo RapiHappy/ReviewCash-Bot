@@ -18,7 +18,10 @@ from services.redis_client import redis_client, check_redis
 
 log = logging.getLogger("reviewcash.main")
 
+_bg_tasks = []
+
 async def on_startup():
+    global _bg_tasks
     # Include handlers
     from handlers.users import router as users_router
     from handlers.admin import router as admin_router
@@ -34,7 +37,9 @@ async def on_startup():
     else:
         log.info("Database ping successful.")
 
-    await check_redis()
+    if not await check_redis():
+        log.critical("CRITICAL: Redis check failed! Bot requires Redis for locking and rate limiting.")
+        raise RuntimeError("Redis is unavailable. Check your configuration and ensure Redis is running.")
     
     try:
         me = await bot.get_me()
@@ -42,7 +47,7 @@ async def on_startup():
     except Exception as e:
         log.error(f"Bot identity check failed: {e}")
         
-    start_background_workers(bot)
+    _bg_tasks = start_background_workers(bot)
     
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
@@ -54,19 +59,32 @@ async def on_startup():
         log.info("Polling mode active")
 
 async def on_shutdown():
+    global _bg_tasks
     log.info("Starting graceful shutdown...")
     
-    # Close background tasks if any
+    # 1. Cancel background workers
+    if _bg_tasks:
+        log.info(f"Cancelling {_bg_tasks} background tasks...")
+        for task in _bg_tasks:
+            task.cancel()
+        await asyncio.gather(*_bg_tasks, return_exceptions=True)
+        _bg_tasks.clear()
     
+    # 2. Close crypto service
     try:
         from crypto_service import crypto
         if crypto:
             await crypto.close()
     except Exception as e:
         log.error(f"Error closing crypto_service: {e}")
-        
+    
+    # 3. Stop polling if active
     await dp.stop_polling()
+    
+    # 4. Close bot session
     await bot.session.close()
+    
+    # 5. Close Redis connection
     await redis_client.close()
     
     log.info("Graceful shutdown completed.")
@@ -77,7 +95,11 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     
-    await on_startup()
+    try:
+        await on_startup()
+    except Exception as e:
+        log.critical(f"Startup failed: {e}")
+        return
 
     app = web.Application(middlewares=[api_error_middleware, cors_middleware, no_cache_mw])
     setup_routes(app)
@@ -94,12 +116,13 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
 
+    polling_task = None
     if not USE_WEBHOOK:
         polling_task = asyncio.create_task(dp.start_polling(bot))
         
     await stop_event.wait()
     
-    if not USE_WEBHOOK:
+    if polling_task:
         polling_task.cancel()
         try:
             await polling_task

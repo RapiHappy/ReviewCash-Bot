@@ -233,7 +233,10 @@ async def vip_expiry_worker(bot: Bot):
             log.warning("VIP worker tick failed: %s", e)
         await asyncio.sleep(3600)
 
-def start_background_workers(bot: Bot):
-    asyncio.create_task(tg_hold_worker(bot))
-    asyncio.create_task(vip_expiry_worker(bot))
+def start_background_workers(bot: Bot) -> list[asyncio.Task]:
+    tasks = [
+        asyncio.create_task(tg_hold_worker(bot)),
+        asyncio.create_task(vip_expiry_worker(bot)),
+    ]
     log.info("Background workers started.")
+    return tasks
