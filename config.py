@@ -60,9 +60,6 @@ MIN_STARS_TOPUP_RUB = float(os.getenv("MIN_STARS_TOPUP_RUB", "100").strip())
 # Stars rate
 STARS_RUB_RATE = float(os.getenv("STARS_RUB_RATE", "1.0").strip())
 
-# Debug bypass
-DISABLE_INITDATA = os.getenv("DISABLE_INITDATA", "0").strip() == "1"
-
 # Sentry
 SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production").strip()

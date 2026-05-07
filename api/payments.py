@@ -34,13 +34,15 @@ def parse_amount_rub(v) -> float | None:
         s = "".join(c for c in s if c.isdigit() or c == ".")
         if not s: return None
         return float(s)
-    except Exception:
+    except Exception as e:
+        log.warning(f"parse_amount_rub failed for {v}: {e}")
         return None
 
 # CryptoBot client (optional — None if CRYPTO_PAY_TOKEN not set)
 try:
     from crypto_service import crypto as _crypto_client
-except Exception:
+except Exception as e:
+    log.warning(f"CryptoBot service not loaded: {e}")
     _crypto_client = None
 crypto = _crypto_client
 
@@ -112,8 +114,8 @@ async def api_stars_link(req: web.Request):
         log.exception("create_invoice_link/send_invoice(XTR) failed: %s", e)
         try:
             await sb_update(T_PAY, {"provider": "stars", "provider_ref": payload_ref}, {"status": "failed"})
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Failed to update payment status for {payload_ref}: {e}")
         return web.json_response({"ok": False, "error": f"Stars ошибка: {type(e).__name__}: {e}"}, status=500)
 
 # -------------------------
@@ -218,7 +220,8 @@ async def api_proof_upload(req: web.Request):
             content_type = "image/jpeg"
         elif img.format == "PNG":
             content_type = "image/png"
-    except Exception:
+    except Exception as e:
+        log.warning(f"Image verification failed for proof upload: {e}")
         return web.json_response({"ok": False, "error": "Файл не является корректным изображением"}, status=400)
 
     try:

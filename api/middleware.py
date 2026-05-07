@@ -34,12 +34,14 @@ class MaintenanceMiddleware:
                     if getattr(event, "callback_query", None):
                         try:
                             await event.callback_query.answer("Бот на техобслуживании. Приходите позже.", show_alert=True)
-                        except Exception: pass
+                        except Exception as e:
+                            log.warning(f"Maintenance answer failed: {e}")
                         return
                     if getattr(event, "message", None):
                         try:
                             await event.message.answer("⚠️ Бот временно отключен на техническое обслуживание. Пожалуйста, попробуйте зайти позже.")
-                        except Exception: pass
+                        except Exception as e:
+                            log.warning(f"Maintenance message failed: {e}")
                         return
                     return
         return await handler(event, data)
@@ -81,8 +83,8 @@ async def no_cache_mw(request: web.Request, handler):
             resp.headers["Cache-Control"] = "no-store, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"no_cache_mw failed: {e}")
     return resp
 
 @web.middleware

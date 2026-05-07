@@ -43,7 +43,8 @@ class TaskEngine:
         try:
             parsed = urlparse(url)
             return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
-        except Exception:
+        except Exception as e:
+            log.warning(f"normalize_url failed for {url}: {e}")
             return url
 
     @staticmethod
@@ -101,7 +102,8 @@ class TaskEngine:
                 gte={"used_at": since}
             )
             return count > 0
-        except Exception:
+        except Exception as e:
+            log.warning(f"user_did_link_recently check failed for uid={user_id} url={url}: {e}")
             return False
 
     @staticmethod
@@ -115,7 +117,8 @@ class TaskEngine:
                 in_={"status": ["used", "reserved"]},
                 gte={"used_at": since}
             )
-        except Exception:
+        except Exception as e:
+            log.warning(f"get_link_usage_count failed for url={url}: {e}")
             return 0
 
     # ====================== REPUTATION (Weighted) ======================
@@ -144,7 +147,8 @@ class TaskEngine:
             total = w_success + w_fail
             if total <= 0: return 0.5
             return round(max(0.1, min(1.0, w_success / total)), 2)
-        except Exception:
+        except Exception as e:
+            log.warning(f"calculate_user_rep failed for uid={user_id}: {e}")
             return 0.5
 
     # ====================== QUALITY & FILTERS ======================
@@ -181,8 +185,8 @@ class TaskEngine:
             sim = await sb_exec(_f)
             if sim.data:
                  return False, "Похожий текст отзыва уже отправлялся ранее."
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Similarity check failed: {e}")
 
         return True, None
 
@@ -292,7 +296,8 @@ class TaskEngine:
                     "user_rep": rep, "task_reward": reward,
                     "status": ai_status, "reason": ai_res.get("reason")
                 })
-            except: pass
+            except Exception as e:
+                log.warning(f"Failed to insert review_log: {e}")
 
             return {"ok": True, "status": final_status, "reward": reward if final_status == "paid" else 0}
 

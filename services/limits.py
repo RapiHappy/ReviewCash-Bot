@@ -42,8 +42,8 @@ def _parse_dt(v):
             return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
         if isinstance(v, str) and v.strip():
             return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"_parse_dt failed for value {v}: {e}")
     return None
 
 def sha256_hex(s: str) -> str:
@@ -198,7 +198,8 @@ async def check_limit(uid: int, key: str, cooldown_sec: int):
         return True, 0
     try:
         dt = datetime.fromisoformat(str(last_at).replace("Z", "+00:00"))
-    except Exception:
+    except Exception as e:
+        log.warning(f"check_limit date parse failed for uid={uid} key={key}: {e}")
         return True, 0
     diff = (_now() - dt).total_seconds()
     if diff < cooldown_sec:

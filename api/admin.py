@@ -101,8 +101,8 @@ async def api_admin_user_punish(req: web.Request):
             return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
         try:
             await sb_update(T_USERS, {"user_id": uid}, {"is_banned": True})
-        except Exception:
-            # row might not exist yet
+        except Exception as e:
+            log.warning(f"sb_update failed for permaban user {uid}: {e}")
             await sb_upsert(T_USERS, {"user_id": uid, "is_banned": True}, on_conflict="user_id")
         await notify_user(uid, f"🚫 Аккаунт заблокирован администратором.\n{('Причина: ' + reason) if reason else ''}".strip())
         return web.json_response({"ok": True, "action": "permaban", "user_id": uid})
@@ -112,7 +112,8 @@ async def api_admin_user_punish(req: web.Request):
             return web.json_response({"ok": False, "error": "Только главный админ"}, status=403)
         try:
             await sb_update(T_USERS, {"user_id": uid}, {"is_banned": False})
-        except Exception:
+        except Exception as e:
+            log.warning(f"sb_update failed for unpermaban user {uid}: {e}")
             await sb_upsert(T_USERS, {"user_id": uid, "is_banned": False}, on_conflict="user_id")
         await notify_user(uid, "✅ Блокировка аккаунта снята администратором.")
         return web.json_response({"ok": True, "action": "unpermaban", "user_id": uid})
@@ -126,15 +127,18 @@ async def api_admin_user_punish(req: web.Request):
 
         try:
             days = int(days or 0)
-        except Exception:
+        except Exception as e:
+            log.warning(f"Failed to parse days in punish: {e}")
             days = 0
         try:
             hours = int(hours or 0)
-        except Exception:
+        except Exception as e:
+            log.warning(f"Failed to parse hours in punish: {e}")
             hours = 0
         try:
             seconds = int(seconds or 0)
-        except Exception:
+        except Exception as e:
+            log.warning(f"Failed to parse seconds in punish: {e}")
             seconds = 0
 
         total_sec = max(0, seconds + hours * 3600 + days * 86400)

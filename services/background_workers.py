@@ -45,7 +45,8 @@ async def _iter_user_ids(batch: int = 1000):
         for row in rows:
             try:
                 yield int(row.get('user_id'))
-            except Exception:
+            except Exception as e:
+                log.warning(f"Failed to process row in _iter_user_ids: {e}")
                 continue
         if len(rows) < batch:
             break
@@ -78,8 +79,8 @@ async def broadcast_new_task(bot: Bot, task: dict):
                 continue
             try:
                 await bot.send_message(uid, text_msg, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Notification failed for {uid}: {e}")
             await asyncio.sleep(0.04) # 25 msgs/sec
     except Exception as e:
         log.warning('broadcast_new_task failed: %s', e)
@@ -106,8 +107,8 @@ async def notify_vips_about_fat_task(bot: Bot, task: dict):
                 continue
             try:
                 await bot.send_message(uid, text_msg, parse_mode='HTML', reply_markup=markup, disable_web_page_preview=True)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Notification failed for {uid}: {e}")
             await asyncio.sleep(0.05)
     except Exception as e:
         log.warning('notify_vips_about_fat_task failed: %s', e)
@@ -142,8 +143,8 @@ async def process_tg_holds_once(bot: Bot):
                         if int(upd["qty_left"]) <= 0:
                             upd["status"] = "closed"
                         await sb_update(T_TASKS, {"id": task_id_db}, upd)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning(f"Failed to update task slots in hold worker: {e}")
 
                 c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
                 if c.data:
@@ -173,7 +174,8 @@ async def process_tg_holds_once(bot: Bot):
                 try:
                     until = await set_task_ban(user_id, days=3)
                     until_txt = until.strftime('%d.%m %H:%M') if until else 'на 3 дня'
-                except Exception:
+                except Exception as e:
+                    log.warning(f"Failed to set task ban in hold worker for {user_id}: {e}")
                     until_txt = 'на 3 дня'
                 await notify_user(user_id, f"❌ Проверка срока удержания не пройдена: пользователь вышел из канала/группы раньше срока. Выплата отменена, применён штраф: доступ к заданиям ограничен {until_txt}.")
         except Exception as e:

@@ -43,7 +43,13 @@ BEGIN
 
     -- 2. Deduct balance
     v_new_balance := v_current_balance - p_amount;
-    UPDATE balances SET rub_balance = v_new_balance, updated_at = NOW() WHERE user_id = p_user_id;
+    UPDATE balances 
+    SET rub_balance = v_new_balance, updated_at = NOW() 
+    WHERE user_id = p_user_id AND rub_balance >= p_amount;
+    
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Balance changed during transaction or insufficient funds');
+    END IF;
 
     -- 3. Create withdrawal record
     INSERT INTO withdrawals (user_id, tg_user_id, username, amount_rub, details, status, created_at)

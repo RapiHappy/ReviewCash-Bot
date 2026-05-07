@@ -159,7 +159,8 @@ async def ensure_bot_in_chat(chat_username: str, bot_instance: Bot | None = None
             return TG_CHAT_CACHE[key][1], TG_CHAT_CACHE[key][2]
         TG_CHAT_CACHE[key] = (now, True, "")
         return True, ""
-    except Exception:
+    except Exception as e:
+        log.warning(f"ensure_bot_in_chat failed for {chat_username}: {e}")
         TG_CHAT_CACHE[key] = (now, False, "Не удалось проверить чат. Добавь бота в группу/канал (и для канала — админом), затем попробуй снова.")
         return False, TG_CHAT_CACHE[key][2]
 
@@ -169,15 +170,16 @@ async def notify_admin(text: str):
     for aid in ADMIN_IDS:
         try:
             aid_int = int(aid)
-        except Exception:
+        except Exception as e:
+            log.warning(f"Failed to parse admin ID {aid}: {e}")
             continue
         if aid_int in seen:
             continue
         seen.add(aid_int)
         try:
             await bot.send_message(aid_int, text)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Operation failed in telegram_utils: {e}")
 
 async def notify_user(uid: int, text: str, force: bool = False, reply_markup=None):
     from services.limits import is_notify_muted
@@ -185,12 +187,12 @@ async def notify_user(uid: int, text: str, force: bool = False, reply_markup=Non
         try:
             if await is_notify_muted(uid):
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Operation failed in telegram_utils: {e}")
     try:
         await bot.send_message(uid, text, parse_mode="HTML", reply_markup=reply_markup)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"Failed to notify user {uid}: {e}")
 
 async def tg_bot_api_call(method: str, data: dict | None = None) -> dict:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
@@ -201,8 +203,9 @@ async def tg_bot_api_call(method: str, data: dict | None = None) -> dict:
         async with session.post(url, json=payload) as resp:
             try:
                 res = await resp.json(content_type=None)
-            except Exception:
+            except Exception as e:
                 body = await resp.text()
+                log.warning(f"Telegram API {method} JSON parse failed: {e}")
                 raise RuntimeError(f"Telegram API {method} bad response: HTTP {resp.status} {body[:300]}")
             if not isinstance(res, dict) or not res.get("ok"):
                 desc = (res or {}).get("description") if isinstance(res, dict) else None
@@ -223,7 +226,8 @@ def _format_unix_ts(ts) -> str:
     try:
         dt = datetime.fromtimestamp(int(ts), tz=timezone.utc) + timedelta(hours=3)
         return dt.strftime("%d.%m %H:%M")
-    except Exception:
+    except Exception as e:
+        log.warning(f"_format_unix_ts failed for {ts}: {e}")
         return "?"
 
 def _star_partner_text(partner: dict | None) -> str:
@@ -279,7 +283,8 @@ async def tg_get_chat_kind(chat_username: str, bot_instance: Bot | None = None) 
     try:
         chat = await b.get_chat(chat_username)
         return str(getattr(chat, 'type', '') or '').strip().lower()
-    except Exception:
+    except Exception as e:
+        log.warning(f"tg_get_chat_kind failed for {chat_username}: {e}")
         return ""
 
 def _normalize_chat_raw(chat: str) -> str:

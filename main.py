@@ -120,7 +120,8 @@ async def on_shutdown():
     try:
         from crypto_service import crypto
         if crypto: await crypto.close()
-    except: pass
+    except Exception as e:
+        logging.warning(f"Failed to close crypto client: {e}")
     
     await dp.stop_polling()
     await bot.session.close()

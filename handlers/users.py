@@ -154,8 +154,8 @@ async def cb_check_required_sub(cq: CallbackQuery):
                 reply_markup=required_subscribe_kb(),
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Failed to resend sub reminder: {e}")
         return
     await cq.answer("Подписка подтверждена ✅")
     try:
@@ -372,8 +372,8 @@ async def check_review_ai(text: str) -> tuple[bool, str]:
                 reply = ""
                 try:
                     reply = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning(f"Failed to parse Gemini response candidates: {e}")
                     
                 if reply.startswith("REJECT:"):
                     reason = reply.replace("REJECT:", "").strip()
@@ -501,8 +501,8 @@ async def fallback_handler(m: Message):
                     f"User: {uid}\n"
                     f"ID: {wd.get('id')}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"Failed to notify admin about review withdrawal: {e}")
 
             await m.answer(
                 "✨ <b>Отзыв принят и проверен ИИ!</b>\n\n"

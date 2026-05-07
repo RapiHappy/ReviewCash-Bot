@@ -18,13 +18,20 @@ class ThrottlingMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         uid = user.id
-        # Use Redis for distributed throttling
-        key = f"spam:{uid}"
+        
+        # Distributed throttling using Redis
+        # Different keys for messages vs callbacks to allow faster interaction in MiniApp
+        is_callback = isinstance(event, CallbackQuery)
+        limit = self.limit if not is_callback else 0.3
+        key = f"spam:{'cb' if is_callback else 'msg'}:{uid}"
         
         if await redis_client.get(key):
-            if isinstance(event, CallbackQuery):
-                await event.answer("Слишком часто!", show_alert=False)
+            if is_callback:
+                try:
+                    await event.answer("⚡ Слишком часто!", show_alert=False)
+                except Exception as e:
+                    log.warning(f"Failed to answer throttling callback: {e}")
             return
 
-        await redis_client.set(key, "1", px=int(self.limit * 1000))
+        await redis_client.set(key, "1", px=int(limit * 1000))
         return await handler(event, data)

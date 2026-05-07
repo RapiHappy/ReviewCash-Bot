@@ -53,16 +53,17 @@ async def cb_starspay_toggle(cq: CallbackQuery):
 
     try:
         await cq.message.edit_text(text, reply_markup=_stars_pay_toggle_kb(enabled))
-    except Exception:
+    except Exception as e:
+        log.warning(f"Failed to edit starspay msg: {e}")
         try:
             await cq.message.edit_reply_markup(reply_markup=_stars_pay_toggle_kb(enabled))
-        except Exception:
-            pass
+        except Exception as e2:
+            log.warning(f"Failed to edit starspay markup: {e2}")
 
     try:
         await cq.answer(f"Stars {'включены' if enabled else 'выключены'}")
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"Failed to answer starspay cq: {e}")
 
 @router.message(Command("adminstats"))
 async def cmd_adminstats(message: Message):
@@ -80,10 +81,11 @@ async def cb_adminstats_refresh(cq: CallbackQuery):
     text = await build_main_admin_stats_text()
     try:
         await cq.message.edit_text(text, reply_markup=_admin_stats_kb())
-    except Exception:
+    except Exception as e:
+        log.warning(f"Failed to refresh adminstats msg: {e}")
         try:
             await cq.message.answer(text, reply_markup=_admin_stats_kb())
-        except Exception:
-            pass
+        except Exception as e2:
+            log.warning(f"Failed to send adminstats answer: {e2}")
     await cq.answer("Статистика обновлена")
 

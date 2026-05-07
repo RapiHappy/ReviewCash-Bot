@@ -60,7 +60,8 @@ def _verify_session_token(token: str) -> int | None:
         if WEBAPP_SESSION_TTL_SEC > 0 and int(time.time()) - ts > WEBAPP_SESSION_TTL_SEC:
             return None
         return uid
-    except Exception:
+    except Exception as e:
+        log.warning(f"Session token verification failed: {e}")
         return None
 
 def _extract_session_token(req: web.Request) -> str | None:
@@ -123,7 +124,8 @@ async def require_init(req: web.Request):
                 auth_date = int(parsed.get("auth_date", 0))
                 if time.time() - auth_date > 86400: # 24h
                     raise web.HTTPUnauthorized(text="initData expired")
-            except Exception:
+            except Exception as e:
+                log.warning(f"Failed to parse auth_date in initData: {e}")
                 raise web.HTTPUnauthorized(text="Invalid auth_date")
 
             tg_user = parsed["user"]
@@ -192,8 +194,8 @@ async def require_init(req: web.Request):
 
         try:
             await tg_evt_touch(uid, "miniapp_open")
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"tg_evt_touch failed (session): {e}")
         return None, user
 
     raise web.HTTPUnauthorized(text="No initData/session")
@@ -221,7 +223,8 @@ async def require_main_admin(req: web.Request) -> dict:
 async def safe_json(req: web.Request) -> dict:
     try:
         return await req.json()
-    except Exception:
+    except Exception as e:
+        log.warning(f"safe_json failed: {e}")
         return {}
 
 def get_ip(req: web.Request) -> str:

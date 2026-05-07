@@ -24,7 +24,8 @@ def get_top_meta(task: dict | None, key: str) -> str | None:
 def get_retention_days(task: dict | None) -> int:
     try:
         return int(get_meta(task, "RETENTION_DAYS") or 0)
-    except Exception:
+    except Exception as e:
+        log.warning(f"get_retention_days failed for {task}: {e}")
         return 0
 
 def get_custom_review_mode(task: dict | None) -> str:
@@ -35,7 +36,8 @@ def get_review_texts(task: dict | None) -> list[str]:
     if not v: return []
     try:
         return json.loads(base64.b64decode(v).decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        log.warning(f"get_review_texts failed for {task}: {e}")
         return []
 
 def pick_review_text_for_task(task: dict | None, slot_index: int) -> str | None:
@@ -58,7 +60,8 @@ def _parse_dt(v):
     try:
         if not v: return None
         return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
+    except Exception as e:
+        log.warning(f"_parse_dt failed for {v}: {e}")
         return None
 
 def _task_created_at(task: dict) -> datetime:
@@ -137,7 +140,8 @@ def validate_target_url(ttype: str, raw: str) -> tuple[bool, str, str]:
             if not _host_allowed(host, DG_ALLOWED_HOST):
                 return False, "", "Разрешены только ссылки 2GIS"
         return True, url, ""
-    except Exception:
+    except Exception as e:
+        log.warning(f"validate_target_url hard error: {e}")
         return False, "", "Некорректная ссылка"
 
 def cast_id(v):
@@ -145,7 +149,8 @@ def cast_id(v):
     if s.isdigit():
         try:
             return int(s)
-        except Exception:
+        except Exception as e:
+            log.warning(f"cast_id failed for {s}: {e}")
             return s
     return s
 
@@ -165,12 +170,14 @@ async def check_url_alive(url: str) -> tuple[bool, str]:
                     if _ok_status(r.status):
                         return True, ""
                     return False, f"HTTP {r.status}"
-            except Exception:
+            except Exception as e:
+                log.warning(f"HEAD check failed for {url}, trying GET: {e}")
                 async with session.get(url, allow_redirects=True) as r:
                     if _ok_status(r.status):
                         return True, ""
                     return False, f"HTTP {r.status}"
-    except Exception:
+    except Exception as e:
+        log.warning(f"check_url_alive critical failure for {url}: {e}")
         return False, "не удалось открыть ссылку"
 
 def is_rework_active(comp: dict | None) -> bool:
@@ -190,6 +197,6 @@ async def expire_rework_if_needed(comp: dict) -> dict:
         from database import sb_update
         try:
             await sb_update(T_COMP, {"id": comp.get("id")}, {"status": "pending", "rework_until": None})
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Failed to reset rework status for {comp.get('id')}: {e}")
     return comp

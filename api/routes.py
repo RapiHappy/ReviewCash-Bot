@@ -20,7 +20,33 @@ from api.misc import *
 log = logging.getLogger("reviewcash.routes")
 
 async def health(req: web.Request):
-    return web.json_response({'ok': True, 'app_build': APP_BUILD})
+    from database import ping
+    from services.redis_client import check_redis
+    
+    db_ok = await ping()
+    redis_ok = await check_redis()
+    
+    status = "ok"
+    if not db_ok or not redis_ok:
+        status = "degraded"
+    
+    # Check bot connection
+    bot_ok = False
+    try:
+        await bot.get_me()
+        bot_ok = True
+    except Exception:
+        status = "degraded"
+        
+    return web.json_response({
+        'status': status,
+        'app_build': APP_BUILD,
+        'services': {
+            'database': db_ok,
+            'redis': redis_ok,
+            'bot': bot_ok
+        }
+    })
 
 async def tg_webhook(req: web.Request):
     update = await safe_json(req)

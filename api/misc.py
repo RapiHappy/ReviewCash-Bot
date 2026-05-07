@@ -53,8 +53,8 @@ async def api_tg_check_chat(req: web.Request):
         ch = await bot.get_chat(chat)
         ctype = getattr(ch, "type", "") or ""
         title = getattr(ch, "title", "") or getattr(ch, "username", "") or chat
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"bot.get_chat failed for {chat}: {e}")
 
     return web.json_response({
         "ok": True,

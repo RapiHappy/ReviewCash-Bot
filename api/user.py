@@ -27,14 +27,15 @@ def _parse_dt(v):
             return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
         if isinstance(v, str) and v.strip():
             return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"_parse_dt failed for {v}: {e}")
     return None
 
 def _dt_key(v: str):
     try:
         return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
-    except Exception:
+    except Exception as e:
+        log.warning(f"_dt_key failed for {v}: {e}")
         return 0.0
 
 def _make_session_token(user_id: int) -> str | None:
@@ -48,7 +49,8 @@ def _make_session_token(user_id: int) -> str | None:
         sig = hmac.new(WEBAPP_SESSION_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()
         token = base64.b64encode(f"{data}:{sig}".encode()).decode()
         return token
-    except Exception:
+    except Exception as e:
+        log.warning(f"_make_session_token failed for {user_id}: {e}")
         return None
 
 async def api_user_gender_set(req: web.Request):
@@ -89,7 +91,8 @@ async def api_sync(req: web.Request):
     try:
         if body.get("referrer_id") is not None:
             ref = int(body.get("referrer_id"))
-    except Exception:
+    except Exception as e:
+        log.warning(f"Failed to parse referrer_id in sync: {e}")
         ref = None
 
     urow = await ensure_user(user, referrer_id=ref)
@@ -137,7 +140,8 @@ async def api_sync(req: web.Request):
                 if st in {"pending", "pending_hold", "paid", "fake", "rework"}:
                     tid = str(c.get("task_id") or "")
                     task_slot_map[tid] = task_slot_map.get(tid, 0) + 1
-        except Exception: pass
+        except Exception as e:
+            log.warning(f"Failed to fetch task slots in sync: {e}")
 
     filtered = []
     for t in raw_tasks:
@@ -188,7 +192,8 @@ async def api_sync(req: web.Request):
             if str(x.get('status') or '').lower() in {"rework", "rejected"} 
             and str(x.get('task_id')) in active_filtered_ids
         ]))
-    except Exception: pass
+    except Exception as e:
+        log.warning(f"Failed to fetch reopen tasks in sync: {e}")
 
     session_token = _make_session_token(uid)
 
