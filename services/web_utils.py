@@ -129,6 +129,9 @@ async def require_init(req: web.Request):
                 raise web.HTTPUnauthorized(text="Invalid auth_date")
 
             tg_user = parsed["user"]
+            from main import ctx_user_id
+            uid = int(tg_user.get("id"))
+            ctx_user_id.set(uid)
             user = await ensure_user(tg_user)
             merged = {**user}
             merged.setdefault("id", int(tg_user.get("id")))
@@ -167,6 +170,8 @@ async def require_init(req: web.Request):
     token = _extract_session_token(req)
     uid = _verify_session_token(token) if token else None
     if uid:
+        from main import ctx_user_id
+        ctx_user_id.set(uid)
         await sb_upsert(T_USERS, {"user_id": uid}, on_conflict="user_id")
         await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
         rows = await sb_select(T_USERS, {"user_id": uid}, limit=1)

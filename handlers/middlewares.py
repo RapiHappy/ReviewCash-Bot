@@ -30,7 +30,8 @@ class ThrottlingMiddleware(BaseMiddleware):
         if await redis_client.get(block_key):
             if is_callback:
                 try: await event.answer("🚫 Доступ временно ограничен за флуд", show_alert=True)
-                except Exception: pass
+                except Exception as e:
+                    log.debug(f"Failed to answer throttling callback: {e}")
             return
 
         key = f"spam:{'cb' if is_callback else 'msg'}:{uid}"
@@ -48,7 +49,8 @@ class ThrottlingMiddleware(BaseMiddleware):
                     log.warning(f"User {uid} blocked for 10m due to flooding ({strikes} strikes)")
                     if is_callback:
                         try: await event.answer("🚫 Слишком много запросов! Блок 10 минут.", show_alert=True)
-                        except Exception: pass
+                        except Exception as e:
+                            log.debug(f"Failed to answer throttling callback: {e}")
                     return
 
                 if is_callback:

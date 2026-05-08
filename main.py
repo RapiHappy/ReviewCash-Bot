@@ -28,11 +28,16 @@ def mask_sensitive(text: str) -> str:
         return text
     # Mask bot token: 123456:ABC-DEF...
     text = re.sub(r"(\d+:[A-Za-z0-9_-]{35})", r"\1***", text)
-    # Mask initData: user=...&hash=...
+    # Mask initData: query_id=...&user=...&hash=...
     text = re.sub(r"(hash=[a-f0-9]{64})", r"hash=***", text)
+    text = re.sub(r"(query_id=[A-Za-z0-9_-]+)", r"query_id=***", text)
     # Mask crypto addresses (USDT/TON): roughly 30-50 chars
     text = re.sub(r"(T[A-Za-z0-9]{33})", r"\1***", text)
     text = re.sub(r"(0x[a-fA-F0-9]{40})", r"\1***", text)
+    # Mask Supabase Keys
+    text = re.sub(r"(eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9._-]+)", r"SUPABASE_KEY_MASKED", text)
+    # Mask Sentry DSN
+    text = re.sub(r"(https://[a-f0-9]+@[a-z0-9.]+/ \d+)", r"SENTRY_DSN_MASKED", text)
     return text
 
 import contextvars
@@ -199,6 +204,16 @@ async def request_id_mw(request, handler):
 @web.middleware
 async def access_log_mw(request, handler):
     start = time.time()
+    request_id = ctx_request_id.get()
+    
+    # Enrich Sentry context
+    with sentry_sdk.configure_scope() as scope:
+        scope.set_tag("request_id", request_id)
+        # user_id might be set later in require_init, but we can set it if available
+        uid = ctx_user_id.get()
+        if uid:
+            scope.set_user({"id": str(uid)})
+
     resp = await handler(request)
     duration = time.time() - start
     log.info(f"ACCESS: {request.method} {request.path} -> {resp.status} ({duration:.3f}s)")

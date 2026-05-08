@@ -240,7 +240,7 @@ async def payout_reconciliation_worker(bot: Bot):
     """Periodically check pending payouts that might have missed webhooks or timed out."""
     while True:
         try:
-            # Find payouts pending for more than 30 minutes
+            # 1. Reconcile Payouts
             threshold = _now() - timedelta(minutes=30)
             def _f():
                 return sb.table(T_WD).select("*").eq("status", "pending").lte("created_at", threshold.isoformat()).execute()
@@ -255,11 +255,15 @@ async def payout_reconciliation_worker(bot: Bot):
                 if status == "completed":
                     await sb_update(T_WD, {"id": wd_id}, {"status": "paid"})
                     await notify_user(uid, f"✅ Выплата №{wd_id} подтверждена (reconciliation).")
+                elif status in ("failed", "rejected"):
+                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed"})
+                    await notify_user(uid, f"❌ Выплата №{wd_id} отклонена платёжной системой. Обратитесь в поддержку.")
                 elif status == "not_found":
-                    # If not found after 30 mins, something probably failed during creation
-                    # We might want to reset it to awaiting_review or fail it
-                    log.warning(f"Payout {wd_id} not found in CryptoBot after 30m. Marking as failed for manual review.")
-                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed_reconcile"})
+                    log.warning(f"Payout {wd_id} not found in CryptoBot after 30m. Marking as failed_orphan.")
+                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed_orphan"})
+            
+            # 2. Cleanup Orphan Redis Locks in DB (if any)
+            # handled in orphan_cleanup_worker
                     
         except Exception as e:
             log.warning(f"Reconciliation worker tick failed: {e}")

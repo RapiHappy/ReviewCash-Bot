@@ -123,3 +123,15 @@ EXCEPTION WHEN OTHERS THEN
     RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
 END;
 $$;
+
+-- 7. Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_user_devices_hash ON user_devices (device_hash);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals (status);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_user ON withdrawals (user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_user_id ON balance_audit_log (user_id);
+CREATE INDEX IF NOT EXISTS idx_completions_user_task ON task_completions (user_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_completions_status ON task_completions (status);
+
+-- 8. Final Safety Constraints
+ALTER TABLE balances ADD CONSTRAINT check_rub_non_negative CHECK (rub_balance >= 0);
+ALTER TABLE balances ADD CONSTRAINT check_stars_non_negative CHECK (stars_balance >= 0);
