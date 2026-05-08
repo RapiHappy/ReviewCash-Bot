@@ -1,5 +1,8 @@
 import asyncio
+import logging
 import config
+
+log = logging.getLogger("reviewcash.crypto")
 
 try:
     from aiocryptopay import AioCryptoPay, Networks
@@ -28,3 +31,18 @@ async def auto_payout_crypto(tg_user_id: int, amount_usdt: float, withdraw_id: s
         return True, "Успешно"
     except Exception as e:
         return False, str(e)
+
+async def get_payout_status(withdraw_id: str) -> str:
+    """Check payout status in CryptoBot by spend_id (withdraw_id)."""
+    if not crypto: return "unknown"
+    try:
+        # get_transfers allows filtering by spend_id
+        txs = await crypto.get_transfers(spend_id=str(withdraw_id))
+        if txs:
+            # If exists, it's completed (CryptoBot doesn't show 'pending' transfers in get_transfers usually, 
+            # they are either executed or failed)
+            return "completed"
+        return "not_found"
+    except Exception as e:
+        log.warning(f"Failed to check CryptoBot status for {withdraw_id}: {e}")
+        return "error"

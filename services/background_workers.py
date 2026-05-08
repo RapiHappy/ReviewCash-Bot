@@ -13,6 +13,7 @@ from services.balances import add_rub, add_xp, task_xp
 from services.limits import *
 from services.telegram_utils import tg_is_member, get_miniapp_url, notify_user
 from services.user_service import maybe_pay_referral_bonus, cast_id, stats_add
+from crypto_service import get_payout_status
 
 log = logging.getLogger("reviewcash.workers")
 
@@ -235,10 +236,58 @@ async def vip_expiry_worker(bot: Bot):
             log.warning("VIP worker tick failed: %s", e)
         await asyncio.sleep(3600)
 
+async def payout_reconciliation_worker(bot: Bot):
+    """Periodically check pending payouts that might have missed webhooks or timed out."""
+    while True:
+        try:
+            # Find payouts pending for more than 30 minutes
+            threshold = _now() - timedelta(minutes=30)
+            def _f():
+                return sb.table(T_WD).select("*").eq("status", "pending").lte("created_at", threshold.isoformat()).execute()
+            r = await sb_exec(_f)
+            
+            for wd in (r.data or []):
+                wd_id = wd["id"]
+                uid = wd["user_id"]
+                log.info(f"Reconciling pending payout {wd_id} for user {uid}")
+                
+                status = await get_payout_status(wd_id)
+                if status == "completed":
+                    await sb_update(T_WD, {"id": wd_id}, {"status": "paid"})
+                    await notify_user(uid, f"✅ Выплата №{wd_id} подтверждена (reconciliation).")
+                elif status == "not_found":
+                    # If not found after 30 mins, something probably failed during creation
+                    # We might want to reset it to awaiting_review or fail it
+                    log.warning(f"Payout {wd_id} not found in CryptoBot after 30m. Marking as failed for manual review.")
+                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed_reconcile"})
+                    
+        except Exception as e:
+            log.warning(f"Reconciliation worker tick failed: {e}")
+        await asyncio.sleep(600) # every 10 mins
+
+async def orphan_cleanup_worker():
+    """Cleanup stale states and zombie records."""
+    while True:
+        try:
+            # 1. Cleanup expired Redis locks (fallback if TTL failed)
+            # This is complex without scanning all keys, usually TTL is enough.
+            # But we can cleanup old limits in DB
+            threshold = _now() - timedelta(days=7)
+            def _f():
+                return sb.table(T_LIMITS).delete().lte("last_at", threshold.isoformat()).execute()
+            await sb_exec(_f)
+            log.info("Old limits cleanup completed.")
+            
+        except Exception as e:
+            log.warning(f"Cleanup worker tick failed: {e}")
+        await asyncio.sleep(86400) # once a day
+
 def start_background_workers(bot: Bot) -> list[asyncio.Task]:
     tasks = [
         asyncio.create_task(tg_hold_worker(bot)),
         asyncio.create_task(vip_expiry_worker(bot)),
+        asyncio.create_task(payout_reconciliation_worker(bot)),
+        asyncio.create_task(orphan_cleanup_worker()),
     ]
-    log.info("Background workers started.")
+    log.info("Background workers started (including Reconciliation and Cleanup).")
     return tasks

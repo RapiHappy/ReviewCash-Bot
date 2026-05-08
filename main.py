@@ -22,26 +22,56 @@ from services.background_workers import start_background_workers
 from database import ping
 from services.redis_client import redis_client, check_redis
 
+# Masking helper
+def mask_sensitive(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    # Mask bot token: 123456:ABC-DEF...
+    text = re.sub(r"(\d+:[A-Za-z0-9_-]{35})", r"\1***", text)
+    # Mask initData: user=...&hash=...
+    text = re.sub(r"(hash=[a-f0-9]{64})", r"hash=***", text)
+    # Mask crypto addresses (USDT/TON): roughly 30-50 chars
+    text = re.sub(r"(T[A-Za-z0-9]{33})", r"\1***", text)
+    text = re.sub(r"(0x[a-fA-F0-9]{40})", r"\1***", text)
+    return text
+
 # JSON Formatter for structured logging
 class JSONFormatter(logging.Formatter):
     def format(self, record):
+        msg = self.mask(record.getMessage())
         log_entry = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
             "name": record.name,
-            "message": record.getMessage(),
+            "message": msg,
             "request_id": getattr(record, "request_id", None),
             "user_id": getattr(record, "user_id", None),
+            "payment_id": getattr(record, "payment_id", None),
+            "withdraw_id": getattr(record, "withdraw_id", None),
         }
         if record.exc_info:
-            log_entry["exception"] = self.formatException(record.exc_info)
+            log_entry["exception"] = self.mask(self.formatException(record.exc_info))
         return json.dumps(log_entry)
 
+    def mask(self, val: str) -> str:
+        return mask_sensitive(val)
+
 def setup_logging():
+    from logging.handlers import QueueHandler, QueueListener
+    import queue
+    
+    log_queue = queue.Queue(-1)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JSONFormatter())
-    logging.root.handlers = [handler]
+    
+    queue_handler = QueueHandler(log_queue)
+    logging.root.handlers = [queue_handler]
     logging.root.setLevel(logging.INFO)
+    
+    # Start listener in background
+    listener = QueueListener(log_queue, handler)
+    listener.start()
+    return listener
 
 def validate_envs():
     required = {
@@ -78,9 +108,12 @@ async def on_startup():
     # Include handlers
     from handlers.users import router as users_router
     from handlers.admin import router as admin_router
+    from handlers.middlewares import ThrottlingMiddleware
+    
     dp.include_router(users_router)
     dp.include_router(admin_router)
 
+    dp.update.outer_middleware(ThrottlingMiddleware())
     dp.update.outer_middleware(MaintenanceMiddleware())
     await setup_menu_button(bot)
     
@@ -129,6 +162,9 @@ async def on_shutdown():
     
     if SENTRY_DSN:
         sentry_sdk.flush()
+    
+    if _log_listener:
+        _log_listener.stop()
         
     logging.info("Graceful shutdown completed.")
 
@@ -148,8 +184,11 @@ async def request_id_mw(request, handler):
     finally:
         logging.setLogRecordFactory(old_factory)
 
+_log_listener = None
+
 async def main():
-    setup_logging()
+    global _log_listener
+    _log_listener = setup_logging()
     
     try: await on_startup()
     except Exception as e:

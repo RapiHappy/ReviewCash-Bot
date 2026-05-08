@@ -2,7 +2,10 @@ import re
 import logging
 from datetime import datetime, timezone
 from aiogram.enums import ParseMode
+import random
+import asyncio
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, MenuButtonWebApp, WebAppInfo
 import html
@@ -14,6 +17,29 @@ log = logging.getLogger("reviewcash")
 # create a shared bot and dispatcher instance
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 dp = Dispatcher(storage=MemoryStorage())
+
+async def tg_retry(coro, retries=3, backoff=1.0):
+    """Wrapper for Telegram API calls with FloodWait and transient error handling."""
+    for i in range(retries):
+        try:
+            return await coro
+        except TelegramRetryAfter as e:
+            log.warning(f"Telegram FloodWait: sleeping {e.retry_after}s")
+            await asyncio.sleep(e.retry_after)
+            # Retry once more after FloodWait
+            if i < retries - 1:
+                continue
+            raise
+        except (TelegramForbiddenError, TelegramBadRequest):
+            # Non-retryable
+            raise
+        except Exception as e:
+            if i < retries - 1:
+                sleep_time = (backoff * (2 ** i)) + random.uniform(0, 1)
+                log.warning(f"Telegram API transient error (retry {i+1}/{retries}): {e}")
+                await asyncio.sleep(sleep_time)
+                continue
+            raise
 
 TG_CHAT_CACHE: dict[str, tuple[float, bool, str]] = {}
 TG_SUB_CACHE: dict[int, tuple[float, bool, str | None, str]] = {}
@@ -190,7 +216,7 @@ async def notify_user(uid: int, text: str, force: bool = False, reply_markup=Non
         except Exception as e:
             log.warning(f"Operation failed in telegram_utils: {e}")
     try:
-        await bot.send_message(uid, text, parse_mode="HTML", reply_markup=reply_markup)
+        await tg_retry(bot.send_message(uid, text, parse_mode="HTML", reply_markup=reply_markup))
     except Exception as e:
         log.warning(f"Failed to notify user {uid}: {e}")
 

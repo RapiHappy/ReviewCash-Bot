@@ -10,11 +10,15 @@ log = logging.getLogger("reviewcash.db")
 sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
 
 async def sb_retry(fn, retries=3, delay=1.0, backoff=2.0):
-    """Retry logic for Supabase operations with exponential backoff."""
+    """Retry logic for Supabase operations with exponential backoff and jitter."""
+    import random
+    from services.metrics import track_success, track_failure
     last_err = None
     for i in range(retries):
         try:
-            return await fn()
+            res = await fn()
+            await track_success("database")
+            return res
         except Exception as e:
             last_err = e
             err_str = str(e).lower()
@@ -23,13 +27,17 @@ async def sb_retry(fn, retries=3, delay=1.0, backoff=2.0):
             
             if not is_transient:
                 log.error(f"Permanent DB error: {e}")
+                await track_failure("database_permanent")
                 raise e
                 
             if i < retries - 1:
+                sleep_time = (delay * (backoff ** i)) + random.uniform(0, 1)
                 log.warning(f"Transient DB error (retry {i+1}/{retries}): {e}")
-                await asyncio.sleep(delay * (backoff ** i))
+                await track_failure("database_transient")
+                await asyncio.sleep(sleep_time)
             else:
                 log.error(f"DB operation failed after {retries} retries: {e}")
+                await track_failure("database_final")
                 raise e
     raise last_err
 
