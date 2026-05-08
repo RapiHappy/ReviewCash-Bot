@@ -19,8 +19,8 @@ def _is_pgrst_missing_column(err: Exception, col: str) -> bool:
         if "Could not find" in s and f"'{col}'" in s:
             return True
     except Exception:
-        pass
-    return False
+        log.debug("Error in _is_pgrst_missing_column")
+        return False
 
 async def balances_update(uid: int, updates: dict) -> bool:
     """Update balances row. If some columns don't exist (level/updated_at), retry without them."""
@@ -38,24 +38,24 @@ async def balances_update(uid: int, updates: dict) -> bool:
             try:
                 await sb_update(T_BAL, {"user_id": int(uid)}, updates)
                 return True
-            except Exception:
-                pass
+            except Exception as ex:
+                log.debug(f"balances_update level-retry failed: {ex}")
         # drop updated_at if missing
         if "updated_at" in updates and _is_pgrst_missing_column(e, "updated_at"):
             updates.pop("updated_at", None)
             try:
                 await sb_update(T_BAL, {"user_id": int(uid)}, updates)
                 return True
-            except Exception:
-                pass
+            except Exception as ex:
+                log.debug(f"balances_update updated_at-retry failed: {ex}")
         # last resort: try only numeric balances/xp keys
         slim = {k: v for k, v in updates.items() if k in ("rub_balance", "stars_balance", "xp")}
         if slim and slim != updates:
             try:
                 await sb_update(T_BAL, {"user_id": int(uid)}, slim)
                 return True
-            except Exception:
-                pass
+            except Exception as ex:
+                log.debug(f"balances_update slim-retry failed: {ex}")
         return False
 
 def xp_needed_for_levelup(level: int) -> int:
@@ -136,44 +136,40 @@ async def add_xp(uid: int, amount: int):
     cur = int(bal.get("xp") or 0)
     return await set_xp_level(uid, cur + int(amount))
 
-async def change_balance(uid: int, amount_rub: float = 0, amount_stars: float = 0) -> dict:
+async def change_balance(uid: int, amount: float, action_type: str, reference_id: str | None = None) -> dict:
     """
     Atomic balance change.
-    Returns: {"ok": bool, "rub": float, "stars": float, "error": str}
+    Returns: {"ok": bool, "new_balance": float, "error": str}
     """
     try:
         res = await sb.rpc("update_balance_atomic", {
             "p_user_id": int(uid),
-            "p_amount_rub": float(amount_rub or 0),
-            "p_amount_stars": float(amount_stars or 0)
+            "p_amount": float(amount or 0),
+            "p_action_type": str(action_type),
+            "p_reference_id": reference_id
         }).execute()
         
         data = res.data or {}
         if not data.get("ok"):
             err_msg = data.get("error") or "Unknown RPC error"
             log.error(f"Balance RPC failed for {uid}: {err_msg}")
-            return {"ok": False, "rub": 0, "stars": 0, "error": err_msg}
+            return {"ok": False, "new_balance": 0, "error": err_msg}
             
         return {
             "ok": True,
-            "rub": float(data.get("rub_balance") or 0),
-            "stars": float(data.get("stars_balance") or 0),
+            "new_balance": float(data.get("new_balance") or 0),
             "error": None
         }
     except Exception as e:
         log.error(f"Critical balance error {uid}: {e}")
-        return {"ok": False, "rub": 0, "stars": 0, "error": str(e)}
+        return {"ok": False, "new_balance": 0, "error": str(e)}
 
-async def add_rub(uid: int, amount: float):
-    res = await change_balance(uid, amount_rub=amount)
-    return res.get("rub") if res.get("ok") else False
+async def add_rub(uid: int, amount: float, action_type: str = "bonus", reference_id: str | None = None):
+    res = await change_balance(uid, amount=amount, action_type=action_type, reference_id=reference_id)
+    return res.get("new_balance") if res.get("ok") else False
 
-async def add_stars(uid: int, amount: int | float):
-    res = await change_balance(uid, amount_stars=amount)
-    return res.get("stars") if res.get("ok") else False
-
-async def sub_rub(uid: int, amount: float) -> bool:
-    res = await change_balance(uid, amount_rub=-float(amount))
+async def sub_rub(uid: int, amount: float, action_type: str = "withdraw", reference_id: str | None = None) -> bool:
+    res = await change_balance(uid, amount=-float(amount), action_type=action_type, reference_id=reference_id)
     return bool(res.get("ok"))
 
 async def sub_stars(uid: int, amount: int | float) -> bool:

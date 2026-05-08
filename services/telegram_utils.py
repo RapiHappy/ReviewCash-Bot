@@ -89,7 +89,7 @@ async def tg_check_required_subscription(user_id: int, bot_instance: Bot | None 
     try:
         # If numeric ID, convert to int
         c_id = int(chat) if (chat.startswith("-") or chat.isdigit()) else chat
-        member = await b.get_chat_member(chat_id=c_id, user_id=uid)
+        member = await tg_retry(b.get_chat_member(chat_id=c_id, user_id=uid))
         
         # In aiogram 3, status is an enum member that behaves like a string
         raw_status = getattr(member, "status", "")
@@ -172,9 +172,9 @@ async def ensure_bot_in_chat(chat_username: str, bot_instance: Bot | None = None
         return False, "Бот не инициализирован"
 
     try:
-        me = await b.get_me()
-        chat = await b.get_chat(chat_username)
-        member = await b.get_chat_member(chat_username, me.id)
+        me = await tg_retry(b.get_me())
+        chat = await tg_retry(b.get_chat(chat_username))
+        member = await tg_retry(b.get_chat_member(chat_username, me.id))
         status = getattr(member, "status", None)
         ctype = getattr(chat, "type", "")
         if status in ("left", "kicked"):
@@ -203,7 +203,7 @@ async def notify_admin(text: str):
             continue
         seen.add(aid_int)
         try:
-            await bot.send_message(aid_int, text)
+            await tg_retry(bot.send_message(aid_int, text))
         except Exception as e:
             log.warning(f"Operation failed in telegram_utils: {e}")
 
@@ -221,12 +221,13 @@ async def notify_user(uid: int, text: str, force: bool = False, reply_markup=Non
         log.warning(f"Failed to notify user {uid}: {e}")
 
 async def tg_bot_api_call(method: str, data: dict | None = None) -> dict:
+    if not bot: return {}
+    
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     payload = data or {}
-    import aiohttp
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, json=payload) as resp:
+    
+    async def _do():
+        async with bot.session.post(url, json=payload) as resp:
             try:
                 res = await resp.json(content_type=None)
             except Exception as e:
@@ -237,6 +238,8 @@ async def tg_bot_api_call(method: str, data: dict | None = None) -> dict:
                 desc = (res or {}).get("description") if isinstance(res, dict) else None
                 raise RuntimeError(f"Telegram API {method} failed: {desc or ('HTTP ' + str(resp.status))}")
             return res.get("result") or {}
+
+    return await tg_retry(_do())
 
 def _format_star_amount_obj(obj: dict | None) -> str:
     obj = obj or {}
@@ -307,7 +310,7 @@ async def tg_get_chat_kind(chat_username: str, bot_instance: Bot | None = None) 
     if not b:
         return ""
     try:
-        chat = await b.get_chat(chat_username)
+        chat = await tg_retry(b.get_chat(chat_username))
         return str(getattr(chat, 'type', '') or '').strip().lower()
     except Exception as e:
         log.warning(f"tg_get_chat_kind failed for {chat_username}: {e}")
@@ -328,7 +331,7 @@ async def tg_is_member(chat: str, user_id: int, bot_instance: Bot | None = None)
         return False
     try:
         chat = _normalize_chat_raw(chat)
-        cm = await b.get_chat_member(chat_id=chat, user_id=user_id)
+        cm = await tg_retry(b.get_chat_member(chat_id=chat, user_id=user_id))
         status = str(getattr(cm, "status", "")).lower()
         return status in ("member","administrator","creator","restricted")
     except Exception as e:
@@ -348,8 +351,8 @@ async def setup_menu_button(bot: Bot):
     if not bot: return
     try:
         url = get_miniapp_url()
-        await bot.set_chat_menu_button(
+        await tg_retry(bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(text="Открыть MiniApp", web_app=WebAppInfo(url=url))
-        )
+        ))
     except Exception as e:
         log.warning(f"setup_menu_button failed: {e}")

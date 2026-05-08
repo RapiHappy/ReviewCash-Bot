@@ -49,6 +49,16 @@ async def health(req: web.Request):
     })
 
 async def tg_webhook(req: web.Request):
+    # Telegram Webhook Secret Token Verification
+    from config import BOT_TOKEN
+    import hashlib
+    expected_token = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()[:32]
+    secret_token = (req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
+    
+    if secret_token != expected_token:
+        log.warning(f"Invalid Telegram webhook secret token from {req.remote}")
+        return web.Response(text="Unauthorized", status=401)
+    
     update = await safe_json(req)
     try:
         asyncio.create_task(dp.feed_webhook_update(bot, update))
@@ -65,7 +75,23 @@ async def cryptobot_webhook(req: web.Request):
     if not crypto:
         return web.Response(text="no cryptobot", status=200)
 
-    data = await safe_json(req)
+    # SECURE: Verify CryptoBot Signature
+    body = await req.read()
+    signature = req.headers.get("Crypto-Pay-Api-Signature")
+    if not signature:
+        log.warning("CryptoBot webhook missing signature")
+        return web.Response(text="missing signature", status=401)
+    
+    # check_signature is available in aiocryptopay
+    try:
+        if not crypto.check_signature(body.decode('utf-8'), signature):
+            log.warning("CryptoBot webhook invalid signature")
+            return web.Response(text="invalid signature", status=401)
+    except Exception as e:
+        log.error(f"CryptoBot signature check error: {e}")
+        return web.Response(text="error", status=400)
+
+    data = json.loads(body)
     try:
         update = data.get("update", {})
         inv = update.get("payload", {}) or update.get("invoice", {}) or update
@@ -95,7 +121,7 @@ async def cryptobot_webhook(req: web.Request):
             if xp_add > 0:
                 await add_xp(uid, xp_add)
 
-            await notify_user(bot, uid, f"✅ Пополнение успешно: +{amount:.2f}₽")
+            await notify_user(uid, f"✅ Пополнение успешно: +{amount:.2f}₽")
 
         return web.Response(text="ok", status=200)
     except Exception as e:

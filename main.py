@@ -35,6 +35,14 @@ def mask_sensitive(text: str) -> str:
     text = re.sub(r"(0x[a-fA-F0-9]{40})", r"\1***", text)
     return text
 
+import contextvars
+
+# Context variables for logging
+ctx_request_id = contextvars.ContextVar("request_id", default=None)
+ctx_user_id = contextvars.ContextVar("user_id", default=None)
+ctx_payment_id = contextvars.ContextVar("payment_id", default=None)
+ctx_withdraw_id = contextvars.ContextVar("withdraw_id", default=None)
+
 # JSON Formatter for structured logging
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -44,10 +52,10 @@ class JSONFormatter(logging.Formatter):
             "level": record.levelname,
             "name": record.name,
             "message": msg,
-            "request_id": getattr(record, "request_id", None),
-            "user_id": getattr(record, "user_id", None),
-            "payment_id": getattr(record, "payment_id", None),
-            "withdraw_id": getattr(record, "withdraw_id", None),
+            "request_id": ctx_request_id.get() or getattr(record, "request_id", None),
+            "user_id": ctx_user_id.get() or getattr(record, "user_id", None),
+            "payment_id": ctx_payment_id.get() or getattr(record, "payment_id", None),
+            "withdraw_id": ctx_withdraw_id.get() or getattr(record, "withdraw_id", None),
         }
         if record.exc_info:
             log_entry["exception"] = self.mask(self.formatException(record.exc_info))
@@ -134,10 +142,15 @@ async def on_startup():
         
     _bg_tasks = start_background_workers(bot)
     
+    # 4. Webhook setup with secret token
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
-        await bot.set_webhook(wh_url)
+        # Use BOT_TOKEN as base for secret token if no separate secret provided
+        # In a real enterprise app, this should be a unique random string
+        secret_token = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()[:32]
+        await bot.set_webhook(wh_url, secret_token=secret_token)
+        logging.info(f"Webhook set to {wh_url} (with secret token)")
     else:
         await bot.delete_webhook(drop_pending_updates=True)
 
@@ -172,17 +185,24 @@ async def on_shutdown():
 async def request_id_mw(request, handler):
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request["request_id"] = request_id
-    # Add to log record
-    old_factory = logging.getLogRecordFactory()
-    def record_factory(*args, **kwargs):
-        record = old_factory(*args, **kwargs)
-        record.request_id = request_id
-        return record
-    logging.setLogRecordFactory(record_factory)
+    
+    # Set context variables for the duration of the request
+    token_req = ctx_request_id.set(request_id)
     try:
         return await handler(request)
     finally:
-        logging.setLogRecordFactory(old_factory)
+        ctx_request_id.reset(token_req)
+        ctx_user_id.set(None)
+        ctx_payment_id.set(None)
+        ctx_withdraw_id.set(None)
+
+@web.middleware
+async def access_log_mw(request, handler):
+    start = time.time()
+    resp = await handler(request)
+    duration = time.time() - start
+    log.info(f"ACCESS: {request.method} {request.path} -> {resp.status} ({duration:.3f}s)")
+    return resp
 
 _log_listener = None
 
@@ -195,7 +215,7 @@ async def main():
         logging.critical(f"Startup failed: {e}")
         sys.exit(1)
 
-    app = web.Application(middlewares=[request_id_mw, api_error_middleware, cors_middleware, no_cache_mw, security_headers_mw])
+    app = web.Application(middlewares=[request_id_mw, access_log_mw, api_error_middleware, cors_middleware, no_cache_mw, security_headers_mw])
     setup_routes(app)
     
     runner = web.AppRunner(app)
