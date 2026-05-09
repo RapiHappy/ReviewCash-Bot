@@ -244,34 +244,38 @@ async def api_vip_buy(req: web.Request):
 
     currency = str(body.get("currency") or "rub").strip().lower()
 
-    # Prevent double purchase if already VIP
-    v_dt = await get_vip_until(uid)
-    if v_dt and v_dt > _now():
-        return web.json_response({"ok": False, "error": "У вас уже есть активный VIP-статус"}, status=400)
+    # SECURE: Use Redis lock to prevent double purchase race condition
+    async with redis_client.lock(f"lock:vip:{uid}", timeout=15):
+        # 1. Re-check VIP status inside lock
+        v_dt = await get_vip_until(uid)
+        if v_dt and v_dt > _now():
+            return web.json_response({"ok": False, "error": "У вас уже есть активный VIP-статус"}, status=400)
 
-    if currency in ["star", "stars"]:
-        price = int(VIP_PRICE_STARS)
-        ok = await sub_stars(uid, price)
-        if not ok:
-            return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {price} ⭐"}, status=400)
-        rev = price * STARS_RUB_RATE
-    else:
-        price = float(VIP_PRICE_RUB)
-        ok = await sub_rub(uid, price)
-        if not ok:
-            return web.json_response({"ok": False, "error": f"Недостаточно средств. Нужно {price} ₽"}, status=400)
-        rev = price
+        # 2. Process payment
+        if currency in ["star", "stars"]:
+            price = int(VIP_PRICE_STARS)
+            ok = await sub_stars(uid, price)
+            if not ok:
+                return web.json_response({"ok": False, "error": f"Недостаточно Stars. Нужно {price} ⭐"}, status=400)
+            rev = price * STARS_RUB_RATE
+        else:
+            price = float(VIP_PRICE_RUB)
+            ok = await sub_rub(uid, price)
+            if not ok:
+                return web.json_response({"ok": False, "error": f"Недостаточно средств. Нужно {price} ₽"}, status=400)
+            rev = price
 
-    until = await set_vip_until(uid, 30)
-    await stats_add("revenue_rub", rev)
-    
-    msg = (f"👑 <b>Поздравляем! Ваш VIP-статус активирован до {until.strftime('%d.%m %H:%M UTC')}.</b>\n\n"
-           f"Ваши привилегии:\n"
-           f"✅ <b>+10%</b> к доходу за задания\n"
-           f"✅ <b>+50%</b> к получаемому опыту\n"
-           f"✅ Доступ к эксклюзивным VIP-заданиям\n"
-           f"✅ Приоритет: самые дорогие задания всегда сверху!")
-    await notify_user(uid, msg)
+        # 3. Set VIP status
+        until = await set_vip_until(uid, 30)
+        await stats_add("revenue_rub", rev)
+        
+        msg = (f"👑 <b>Поздравляем! Ваш VIP-статус активирован до {until.strftime('%d.%m %H:%M UTC')}.</b>\n\n"
+               f"Ваши привилегии:\n"
+               f"✅ <b>+10%</b> к доходу за задания\n"
+               f"✅ <b>+50%</b> к получаемому опыту\n"
+               f"✅ Доступ к эксклюзивным VIP-заданиям\n"
+               f"✅ Приоритет: самые дорогие задания всегда сверху!")
+        await notify_user(uid, msg)
 
     return web.json_response({"ok": True, "vip_until": until.isoformat()})
 

@@ -264,14 +264,15 @@ class TaskEngine:
                 if url: await TaskEngine.rollback_link_usage(uid, tid, url)
                 return {"ok": False, "error": f"AI отклонил отзыв: {ai_res.get('reason')}"}
 
-            # 7. ATOMIC DB COMMIT
+            # 7. ATOMIC DB COMMIT (Hardened V4)
             is_auto_tg = (task.get("check_type") == "auto") and (task.get("type") == "tg")
             final_status = "paid" if (is_auto_tg or ai_status == "pass") else "review"
             
             from services.balances import task_xp
             xp = task_xp(task)
 
-            rpc_params = {
+            # Use the hardened submit_task_atomic RPC
+            rpc_res = await sb.rpc("submit_task_atomic", {
                 "p_user_id": uid,
                 "p_task_id": tid,
                 "p_status": final_status,
@@ -280,9 +281,8 @@ class TaskEngine:
                 "p_reward_rub": reward if final_status == "paid" else 0,
                 "p_xp_added": xp if final_status == "paid" else 0,
                 "p_ai_score": ai_score
-            }
-            
-            rpc_res = await sb.rpc("submit_task_atomic", rpc_params).execute()
+            }).execute()
+
             if not rpc_res.data or not rpc_res.data.get("ok"):
                 if url: await TaskEngine.rollback_link_usage(uid, tid, url)
                 return {"ok": False, "error": rpc_res.data.get("error") or "Ошибка БД."}
@@ -291,13 +291,17 @@ class TaskEngine:
             if url: await TaskEngine.finalize_link_usage(uid, tid, url)
             
             try:
+                # Stats update (Atomic)
+                if final_status == "paid":
+                    await stats_add("revenue_rub", reward)
+                
                 await sb_insert("review_logs", {
                     "user_id": uid, "task_id": tid, "ai_score": ai_score,
                     "user_rep": rep, "task_reward": reward,
                     "status": ai_status, "reason": ai_res.get("reason")
                 })
             except Exception as e:
-                log.warning(f"Failed to insert review_log: {e}")
+                log.warning(f"Failed to log metrics/stats: {e}")
 
             return {"ok": True, "status": final_status, "reward": reward if final_status == "paid" else 0}
 

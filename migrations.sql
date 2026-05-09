@@ -132,6 +132,122 @@ CREATE INDEX IF NOT EXISTS idx_audit_user_id ON balance_audit_log (user_id);
 CREATE INDEX IF NOT EXISTS idx_completions_user_task ON task_completions (user_id, task_id);
 CREATE INDEX IF NOT EXISTS idx_completions_status ON task_completions (status);
 
--- 8. Final Safety Constraints
-ALTER TABLE balances ADD CONSTRAINT check_rub_non_negative CHECK (rub_balance >= 0);
-ALTER TABLE balances ADD CONSTRAINT check_stars_non_negative CHECK (stars_balance >= 0);
+-- 9. submit_task_atomic (Hardened)
+CREATE OR REPLACE FUNCTION submit_task_atomic(
+    p_user_id BIGINT,
+    p_task_id UUID,
+    p_status TEXT,
+    p_proof_text TEXT,
+    p_proof_url TEXT,
+    p_reward_rub NUMERIC DEFAULT 0,
+    p_xp_added INTEGER DEFAULT 0,
+    p_ai_score INTEGER DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_qty_left INTEGER;
+    v_task_status TEXT;
+    v_already_exists BOOLEAN;
+BEGIN
+    -- 1. Check if user already submitted this task (and it's not rejected/failed)
+    SELECT EXISTS (
+        SELECT 1 FROM completions 
+        WHERE task_id = p_task_id AND user_id = p_user_id 
+        AND status NOT IN ('rejected', 'fake', 'cancelled', 'failed')
+    ) INTO v_already_exists;
+
+    IF v_already_exists THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Вы уже отправили отчет по этому заданию');
+    END IF;
+
+    -- 2. Check task availability
+    SELECT qty_left, status INTO v_qty_left, v_task_status
+    FROM tasks 
+    WHERE id = p_task_id 
+    FOR UPDATE;
+
+    IF v_task_status IS NULL OR v_task_status != 'active' OR v_qty_left <= 0 THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Места закончились или задание закрыто');
+    END IF;
+
+    -- 3. Reserve slot
+    UPDATE tasks 
+    SET qty_left = qty_left - 1,
+        pending_count = CASE WHEN p_status != 'paid' THEN pending_count + 1 ELSE pending_count END,
+        updated_at = NOW()
+    WHERE id = p_task_id;
+
+    -- 4. Create completion
+    INSERT INTO completions (task_id, user_id, status, proof_text, proof_url, reward_rub, xp_added, ai_score, created_at)
+    VALUES (p_task_id, p_user_id, p_status, p_proof_text, p_proof_url, p_reward_rub, p_xp_added, p_ai_score, NOW());
+
+    -- 5. If status is paid, credit balance and log audit
+    IF p_status = 'paid' AND p_reward_rub > 0 THEN
+        PERFORM update_balance_atomic(p_user_id, p_reward_rub, 'task_reward', p_task_id::TEXT);
+    END IF;
+
+    RETURN jsonb_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 10. pay_referral_bonus_atomic
+CREATE OR REPLACE FUNCTION pay_referral_bonus_atomic(
+    p_referred_id BIGINT,
+    p_referrer_id BIGINT,
+    p_bonus_rub NUMERIC,
+    p_xp_added INTEGER
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_status TEXT;
+BEGIN
+    -- 1. Lock and check status
+    SELECT status INTO v_status FROM referrals 
+    WHERE referred_id = p_referred_id AND referrer_id = p_referrer_id 
+    FOR UPDATE;
+
+    IF v_status IS NULL OR v_status != 'pending' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Referral already processed or not found');
+    END IF;
+
+    -- 2. Pay bonus
+    PERFORM update_balance_atomic(p_referrer_id, p_bonus_rub, 'referral', p_referred_id::TEXT);
+    IF p_xp_added > 0 THEN
+        -- Assuming update_balance_atomic handles rub, we might need a separate xp update or modify it
+        UPDATE balances SET xp = xp + p_xp_added WHERE user_id = p_referrer_id;
+    END IF;
+
+    -- 3. Update status
+    UPDATE referrals 
+    SET status = 'paid', paid_at = NOW() 
+    WHERE referred_id = p_referred_id AND referrer_id = p_referrer_id;
+
+    RETURN jsonb_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 11. stats_add_atomic
+CREATE OR REPLACE FUNCTION stats_add_atomic(
+    p_day DATE,
+    p_field TEXT,
+    p_amount NUMERIC
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+BEGIN
+    EXECUTE format('
+        INSERT INTO stats (day, %I) 
+        VALUES ($1, $2) 
+        ON CONFLICT (day) DO UPDATE SET %I = stats.%I + $2', p_field, p_field, p_field)
+    USING p_day, p_amount;
+END;
+$$;

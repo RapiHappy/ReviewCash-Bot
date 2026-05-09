@@ -26,17 +26,20 @@ async def health(req: web.Request):
     db_ok = await ping()
     redis_ok = await check_redis()
     
+    status_code = 200
     status = "ok"
     if not db_ok or not redis_ok:
-        status = "degraded"
+        status = "unhealthy"
+        status_code = 503
     
-    # Check bot connection
+    # Check bot connection (degraded but not unhealthy)
     bot_ok = False
     try:
         await bot.get_me()
         bot_ok = True
     except Exception:
-        status = "degraded"
+        if status == "ok":
+            status = "degraded"
         
     return web.json_response({
         'status': status,
@@ -46,7 +49,7 @@ async def health(req: web.Request):
             'redis': redis_ok,
             'bot': bot_ok
         }
-    })
+    }, status=status_code)
 
 async def tg_webhook(req: web.Request):
     # Telegram Webhook Secret Token Verification
@@ -101,27 +104,33 @@ async def cryptobot_webhook(req: web.Request):
         if not invoice_id:
             return web.Response(text="ok", status=200)
 
-        pay = await sb_select(T_PAY, {"provider": "cryptobot", "provider_ref": invoice_id}, limit=1)
-        if not pay.data:
-            return web.Response(text="ok", status=200)
+        # SECURE: Use Redis lock per invoice_id to prevent double-crediting race
+        from services.redis_client import redis_client
+        async with redis_client.lock(f"lock:pay:{invoice_id}", timeout=20):
+            pay = await sb_select(T_PAY, {"provider": "cryptobot", "provider_ref": invoice_id}, limit=1)
+            if not pay.data:
+                return web.Response(text="ok", status=200)
 
-        prow = pay.data[0]
-        if prow.get("status") == "paid":
-            return web.Response(text="ok", status=200)
+            prow = pay.data[0]
+            if prow.get("status") == "paid":
+                return web.Response(text="ok", status=200)
 
-        if status in ("paid", "completed"):
-            uid = int(prow["user_id"])
-            amount = float(prow.get("amount_rub") or 0)
-            await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
-            await add_rub(uid, amount)
-            await stats_add("topups_rub", amount)
+            if status in ("paid", "completed"):
+                uid = int(prow["user_id"])
+                amount = float(prow.get("amount_rub") or 0)
+                
+                # Update status first to reduce race window even further
+                await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
+                
+                await add_rub(uid, amount)
+                await stats_add("topups_rub", amount)
 
-            # XP for topup
-            xp_add = int((amount // 100) * XP_PER_TOPUP_100)
-            if xp_add > 0:
-                await add_xp(uid, xp_add)
+                # XP for topup
+                xp_add = int((amount // 100) * XP_PER_TOPUP_100)
+                if xp_add > 0:
+                    await add_xp(uid, xp_add)
 
-            await notify_user(uid, f"✅ Пополнение успешно: +{amount:.2f}₽")
+                await notify_user(uid, f"✅ Пополнение успешно: +{amount:.2f}₽")
 
         return web.Response(text="ok", status=200)
     except Exception as e:

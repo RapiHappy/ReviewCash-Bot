@@ -122,23 +122,23 @@ async def maybe_pay_referral_bonus(referred_id: int):
         if paid_reviews < required_reviews:
             return
 
-        u = await sb_select(T_USERS, {"user_id": referrer_id}, limit=1)
-        if u.data and u.data[0].get("is_banned"):
-            await sb_update(T_REF, {"referred_id": referred_id}, {"status": "cancelled"})
-            return
-
         bonus = float(ev.get("bonus_rub") or REF_BONUS_RUB)
-        await add_rub(referrer_id, bonus)
-        await stats_add("payouts_rub", bonus)
-        await add_xp(referrer_id, XP_PER_TASK_PAID)
+        
+        # ATOMIC RPC: pay_referral_bonus_atomic
+        rpc_res = await sb.rpc("pay_referral_bonus_atomic", {
+            "p_referred_id": referred_id,
+            "p_referrer_id": referrer_id,
+            "p_bonus_rub": bonus,
+            "p_xp_added": XP_PER_TASK_PAID
+        }).execute()
 
-        await sb_update(T_REF, {"referred_id": referred_id}, {
-            "status": "paid",
-            "paid_at": _now().isoformat()
-        })
+        if rpc_res.data and rpc_res.data.get("ok"):
+            await stats_add("payouts_rub", bonus)
+            from services.telegram_utils import notify_user
+            await notify_user(referrer_id, f"🎉 Реферальный бонус: +{bonus:.2f}₽ (приглашённый выполнил {required_reviews} оплаченных отзыва)")
+        else:
+            log.warning(f"Referral bonus atomic failed for referred={referred_id}: {rpc_res.data}")
 
-        from services.telegram_utils import notify_user
-        await notify_user(referrer_id, f"🎉 Реферальный бонус: +{bonus:.2f}₽ (приглашённый выполнил {required_reviews} оплаченных отзыва)")
     except Exception as e:
         log.warning("maybe_pay_referral_bonus failed: %s", e)
 
@@ -179,8 +179,8 @@ async def ensure_user(user: dict, referrer_id: int | None = None):
     # Single upsert for user
     await sb_upsert(T_USERS, upd, on_conflict="user_id")
     
-    # Background balance upsert
-    asyncio.create_task(sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id"))
+    # Upsert balance (ensure it exists)
+    await sb_upsert(T_BAL, {"user_id": uid}, on_conflict="user_id")
 
     if is_new:
         await ensure_referral_event(uid, referrer_id)

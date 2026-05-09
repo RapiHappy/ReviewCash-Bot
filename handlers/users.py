@@ -566,49 +566,54 @@ async def on_successful_payment(message: Message):
     if not payload.startswith("stars_topup:"):
         return
 
-    try:
-        pay = await sb_select(T_PAY, {"provider": "stars", "provider_ref": payload}, limit=1)
-        if not pay.data:
-            await message.answer("✅ Платеж получен, но запись не найдена. Напишите в поддержку.")
-            return
-
-        prow = pay.data[0]
-        if prow.get("status") == "paid":
-            return
-
-        amount_rub = float(prow.get("amount_rub") or 0)
-        meta = prow.get("meta") or {}
-        if not isinstance(meta, dict):
-            meta = {}
-
-        stars_amount = meta.get("stars")
+    # SECURE: Use Redis lock per payload to prevent any potential double-crediting race
+    from services.redis_client import redis_client
+    async with redis_client.lock(f"lock:pay:stars:{payload}", timeout=30):
         try:
-            stars_amount = int(round(float(stars_amount))) if stars_amount is not None else None
-        except Exception:
-            stars_amount = None
+            pay = await sb_select(T_PAY, {"provider": "stars", "provider_ref": payload}, limit=1)
+            if not pay.data:
+                await message.answer("✅ Платеж получен, но запись не найдена. Напишите в поддержку.")
+                return
 
-        if not stars_amount or stars_amount <= 0:
+            prow = pay.data[0]
+            if prow.get("status") == "paid":
+                return
+
+            amount_rub = float(prow.get("amount_rub") or 0)
+            meta = prow.get("meta") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+
+            stars_amount = meta.get("stars")
             try:
-                stars_amount = int(round(float(getattr(sp, "total_amount", 0) or 0)))
+                stars_amount = int(round(float(stars_amount))) if stars_amount is not None else None
             except Exception:
-                stars_amount = 0
-        if stars_amount <= 0:
-            stars_amount = max(1, int(round(amount_rub / max(STARS_RUB_RATE, 0.000001))))
+                stars_amount = None
 
-        await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
-        await add_stars(uid, stars_amount)
-        await stats_add("topups_rub", amount_rub)
+            if not stars_amount or stars_amount <= 0:
+                try:
+                    stars_amount = int(round(float(getattr(sp, "total_amount", 0) or 0)))
+                except Exception:
+                    stars_amount = 0
+            if stars_amount <= 0:
+                stars_amount = max(1, int(round(amount_rub / max(STARS_RUB_RATE, 0.000001))))
 
-        xp_add = int((amount_rub // 100) * XP_PER_TOPUP_100)
-        if xp_add > 0:
-            await add_xp(uid, xp_add)
+            # Update status first
+            await sb_update(T_PAY, {"id": prow["id"]}, {"status": "paid"})
+            
+            await add_stars(uid, stars_amount)
+            await stats_add("topups_rub", amount_rub)
 
-        await message.answer(
-            f"✅ Пополнение Stars успешно: +{stars_amount}⭐"
-            + (f"\nЭквивалент: {amount_rub:.2f}₽" if amount_rub > 0 else "")
-        )
-    except Exception as e:
-        log.exception("successful_payment handle error: %s", e)
+            xp_add = int((amount_rub // 100) * XP_PER_TOPUP_100)
+            if xp_add > 0:
+                await add_xp(uid, xp_add)
+
+            await message.answer(
+                f"✅ Пополнение Stars успешно: +{stars_amount}⭐"
+                + (f"\nЭквивалент: {amount_rub:.2f}₽" if amount_rub > 0 else "")
+            )
+        except Exception as e:
+            log.exception("successful_payment handle error: %s", e)
 
 # -------------------------
 # CORS middleware
