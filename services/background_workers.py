@@ -129,49 +129,32 @@ async def process_tg_holds_once(bot: Bot):
                 continue
 
             reward = float(task.get("reward_rub") or 0)
+            xp_added = task_xp(task)
             ok_member = await tg_is_member(chat, user_id)
+            
             if ok_member:
-                await add_rub(user_id, reward)
+                # ATOMIC FINALIZE
+                await sb.rpc("finalize_tg_hold_atomic", {
+                    "p_user_id": user_id,
+                    "p_task_id": str(task_id_db),
+                    "p_status": "paid",
+                    "p_reward_rub": reward,
+                    "p_xp_added": xp_added
+                }).execute()
+                
                 await stats_add("payouts_rub", reward)
-                xp_added = task_xp(task)
-                await add_xp(user_id, xp_added)
                 await maybe_pay_referral_bonus(user_id)
-
-                try:
-                    left = int(task.get("qty_left") or 0)
-                    if left > 0:
-                        upd = {"qty_left": max(0, left - 1)}
-                        if int(upd["qty_left"]) <= 0:
-                            upd["status"] = "closed"
-                        await sb_update(T_TASKS, {"id": task_id_db}, upd)
-                except Exception as e:
-                    log.warning(f"Failed to update task slots in hold worker: {e}")
-
-                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
-                if c.data:
-                    await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
-                        "status": "paid",
-                        "proof_text": "AUTO_TG_HOLD_OK",
-                        "moderated_at": _now().isoformat(),
-                    })
-                else:
-                    await sb_insert(T_COMP, {
-                        "task_id": task_id_db,
-                        "user_id": int(user_id),
-                        "status": "paid",
-                        "proof_text": "AUTO_TG_HOLD_OK",
-                        "proof_url": None,
-                        "moderated_at": _now().isoformat(),
-                    })
                 await notify_user(user_id, f"✅ Проверка срока удержания пройдена. Начислено +{reward:.2f}₽")
             else:
-                c = await sb_select(T_COMP, {"task_id": task_id_db, "user_id": int(user_id), "status": "pending_hold"}, order="created_at", desc=True, limit=1)
-                if c.data:
-                    await sb_update(T_COMP, {"id": cast_id(c.data[0].get("id"))}, {
-                        "status": "fake",
-                        "proof_text": "AUTO_TG_HOLD_FAIL",
-                        "moderated_at": _now().isoformat(),
-                    })
+                # ATOMIC REJECT
+                await sb.rpc("finalize_tg_hold_atomic", {
+                    "p_user_id": user_id,
+                    "p_task_id": str(task_id_db),
+                    "p_status": "fake",
+                    "p_reward_rub": 0,
+                    "p_xp_added": 0
+                }).execute()
+                
                 try:
                     until = await set_task_ban(user_id, days=3)
                     until_txt = until.strftime('%d.%m %H:%M') if until else 'на 3 дня'
@@ -253,14 +236,29 @@ async def payout_reconciliation_worker(bot: Bot):
                 
                 status = await get_payout_status(wd_id)
                 if status == "completed":
-                    await sb_update(T_WD, {"id": wd_id}, {"status": "paid"})
+                    # ATOMIC: Use RPC to finalize
+                    await sb.rpc("withdraw_decision_atomic", {
+                        "p_admin_id": int(MAIN_ADMIN_ID or 0),
+                        "p_withdraw_id": int(wd_id),
+                        "p_approved": True,
+                        "p_new_status": "paid"
+                    }).execute()
                     await notify_user(uid, f"✅ Выплата №{wd_id} подтверждена (reconciliation).")
                 elif status in ("failed", "rejected"):
-                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed"})
-                    await notify_user(uid, f"❌ Выплата №{wd_id} отклонена платёжной системой. Обратитесь в поддержку.")
+                    # ATOMIC: Use RPC to return balance
+                    await sb.rpc("withdraw_decision_atomic", {
+                        "p_admin_id": int(MAIN_ADMIN_ID or 0),
+                        "p_withdraw_id": int(wd_id),
+                        "p_approved": False
+                    }).execute()
+                    await notify_user(uid, f"❌ Выплата №{wd_id} отклонена платёжной системой (reconciliation). Средства возвращены.")
                 elif status == "not_found":
-                    log.warning(f"Payout {wd_id} not found in CryptoBot after 30m. Marking as failed_orphan.")
-                    await sb_update(T_WD, {"id": wd_id}, {"status": "failed_orphan"})
+                    log.warning(f"Payout {wd_id} not found in CryptoBot after 30m. Marking as failed.")
+                    await sb.rpc("withdraw_decision_atomic", {
+                        "p_admin_id": int(MAIN_ADMIN_ID or 0),
+                        "p_withdraw_id": int(wd_id),
+                        "p_approved": False
+                    }).execute()
             
             # 2. Cleanup Orphan Redis Locks in DB (if any)
             # handled in orphan_cleanup_worker

@@ -316,7 +316,7 @@ async def api_report_list(req: web.Request):
     return web.json_response({"ok": True, "reports": reports})
 
 async def api_report_clear(req: web.Request):
-    _, user = await require_init(req)
+    _, user = await require_admin(req) # SECURE: Only admin can clear reports
     uid = int(user["id"])
     await sb_delete(T_COMP, {"user_id": uid})
     return web.json_response({"ok": True})
@@ -324,13 +324,19 @@ async def api_report_clear(req: web.Request):
 async def api_bonus_claim(req: web.Request):
     _, user = await require_init(req)
     uid = int(user["id"])
-    ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
-    if not ok:
-        hours = wait_sec // 3600
-        mins = (wait_sec % 3600) // 60
-        return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
-    await add_rub(uid, DAILY_BONUS_RUB)
-    await touch_limit(uid, "daily_bonus")
+    
+    # SECURE: Use Redis lock to prevent double-claim race condition
+    from services.redis_client import redis_client
+    async with redis_client.lock(f"lock:bonus:{uid}", timeout=10):
+        ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
+        if not ok:
+            hours = wait_sec // 3600
+            mins = (wait_sec % 3600) // 60
+            return web.json_response({"ok": False, "error": f"Бонус уже получен. Приходи через {hours}ч {mins}м"})
+        
+        await add_rub(uid, DAILY_BONUS_RUB)
+        await touch_limit(uid, "daily_bonus")
+        
     return web.json_response({"ok": True, "bonus_rub": DAILY_BONUS_RUB})
 
 async def api_leaderboard_top(req: web.Request):

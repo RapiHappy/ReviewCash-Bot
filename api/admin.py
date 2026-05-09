@@ -236,25 +236,43 @@ async def api_admin_withdraw_decision(req: web.Request):
     if approved:
         if payout_method == "cryptobot":
             # Автоматическая выплата через CryptoBot (USDT)
-            # Округляем до 2 знаков для API
             amount_usdt = round(amount / max(CRYPTO_RUB_PER_USDT, 0.01), 2)
-            
             is_success, msg = await auto_payout_crypto(uid, amount_usdt, withdraw_id)
             if not is_success:
                 return web.json_response({"ok": False, "error": f"Ошибка перевода крипты: {msg}"})
 
-            await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
+            # SECURE ATOMIC: Use RPC to set status = paid
+            await sb.rpc("withdraw_decision_atomic", {
+                "p_admin_id": int(admin["id"]),
+                "p_withdraw_id": int(withdraw_id),
+                "p_approved": True,
+                "p_new_status": "paid"
+            }).execute()
+            
             await stats_add("payouts_rub", amount)
-            await notify_user(uid, f"✅ Заявка на вывод подтверждена. Переведено {amount_usdt} USDT через CryptoBot. Ожидай зачисление.")
+            await notify_user(uid, f"✅ Заявка на вывод подтверждена. Переведено {amount_usdt} USDT через CryptoBot.")
         else:
-            # Ручная выплата (карта/телефон) - админ уже перевел средства сам
-            await sb_update(T_WD, {"id": withdraw_id}, {"status": "paid"})
-            await stats_add("payouts_rub", amount)
-            await notify_user(uid, f"✅ Ваша заявка на вывод ({amount}₽) успешно обработана и выплачена.")
+            # Ручная выплата
+            rpc_res = await sb.rpc("withdraw_decision_atomic", {
+                "p_admin_id": int(admin["id"]),
+                "p_withdraw_id": int(withdraw_id),
+                "p_approved": True,
+                "p_new_status": "paid"
+            }).execute()
+            
+            if rpc_res.data and rpc_res.data.get("ok"):
+                await stats_add("payouts_rub", amount)
+                await notify_user(uid, f"✅ Ваша заявка на вывод ({amount}₽) успешно обработана и выплачена.")
     else:
-        await add_rub(uid, amount)
-        await sb_update(T_WD, {"id": withdraw_id}, {"status": "rejected"})
-        await notify_user(uid, "❌ Заявка на вывод отклонена. Средства возвращены на баланс.")
+        # SECURE ATOMIC: Return balance and set rejected in ONE TRANSACTION
+        rpc_res = await sb.rpc("withdraw_decision_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_withdraw_id": int(withdraw_id),
+            "p_approved": False
+        }).execute()
+        
+        if rpc_res.data and rpc_res.data.get("ok"):
+            await notify_user(uid, "❌ Заявка на вывод отклонена. Средства возвращены на баланс.")
 
     return web.json_response({"ok": True})
 
@@ -368,23 +386,29 @@ async def api_admin_tbank_decision(req: web.Request):
     amount = float(pay.get("amount_rub") or 0)
 
     if approved:
-        await sb_update(T_PAY, {"id": payment_id}, {"status": "paid"})
-        await add_rub(uid, amount)
-        await stats_add("topups_rub", amount)
-
         xp_add = int((amount // 100) * XP_PER_TOPUP_100)
-        if xp_add > 0:
-            await add_xp(uid, xp_add)
+        
+        rpc_res = await sb.rpc("tbank_decision_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_payment_id": int(payment_id),
+            "p_approved": True,
+            "p_xp_added": xp_add
+        }).execute()
 
-        await notify_user(uid, f"<b>💎 Пополнение подтверждено!</b>\n\nБаланс пополнен на <b>{amount:.2f} ₽</b>. Теперь вы можете запускать новые задания и продвигать свои проекты. Удачного продвижения! 🚀", reply_markup=back_to_app_kb())
-        try:
-            until = await set_tbank_cooldown(uid)
-            # optional notify about cooldown
-            await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
-        except Exception:
-            pass
+        if rpc_res.data and rpc_res.data.get("ok"):
+            await stats_add("topups_rub", amount)
+            await notify_user(uid, f"<b>💎 Пополнение подтверждено!</b>\n\nБаланс пополнен на <b>{amount:.2f} ₽</b>.", reply_markup=back_to_app_kb())
+            try:
+                await set_tbank_cooldown(uid)
+                await notify_user(uid, "⏳ Следующее пополнение через Т-Банк будет доступно через 24 часа.")
+            except Exception:
+                pass
     else:
-        await sb_update(T_PAY, {"id": payment_id}, {"status": "rejected"})
+        await sb.rpc("tbank_decision_atomic", {
+            "p_admin_id": int(admin["id"]),
+            "p_payment_id": int(payment_id),
+            "p_approved": False
+        }).execute()
         await notify_user(uid, "❌ T-Bank пополнение отклонено администратором.")
 
     return web.json_response({"ok": True})

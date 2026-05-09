@@ -16,13 +16,11 @@ async def api_error_middleware(request: web.Request, handler):
         return web.json_response({"ok": False, "error": ex.reason}, status=ex.status)
     except Exception as e:
         log.exception("Unhandled API error: %s", e)
-        if request.path.startswith("/api/"):
-            return web.json_response({
-                "ok": False, 
-                "error": f"Ошибка сервера: {type(e).__name__}: {e}",
-                "detail": str(e)
-            }, status=500)
-        return web.json_response({"ok": False, "error": "Internal Server Error"}, status=500)
+        # SECURE: Don't leak raw exception details in production responses
+        return web.json_response({
+            "ok": False, 
+            "error": "Внутренняя ошибка сервера. Обратитесь в поддержку."
+        }, status=500)
 
 class MaintenanceMiddleware:
     async def __call__(self, handler, event, data):
@@ -92,7 +90,8 @@ async def security_headers_mw(request: web.Request, handler):
     resp = await handler(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "ALLOW-FROM https://t.me/" # Legacy
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["Content-Security-Policy"] = "default-src 'self' https:; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors https://t.me https://web.telegram.org;"
     if request.scheme == "https":
-        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     return resp

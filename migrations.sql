@@ -251,3 +251,244 @@ BEGIN
     USING p_day, p_amount;
 END;
 $$;
+
+-- 12. approve_proof_atomic
+CREATE OR REPLACE FUNCTION approve_proof_atomic(
+    p_admin_id BIGINT,
+    p_proof_id UUID,
+    p_reward_rub NUMERIC,
+    p_xp_added INTEGER
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_comp RECORD;
+BEGIN
+    -- 1. Lock and check completion
+    SELECT * INTO v_comp FROM completions 
+    WHERE id = p_proof_id AND status IN ('pending', 'pending_hold', 'review', 'rework') 
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Proof not found or already processed');
+    END IF;
+
+    -- 2. Pay reward
+    PERFORM update_balance_atomic(v_comp.user_id, p_reward_rub, 'task_reward', v_comp.task_id::TEXT);
+    IF p_xp_added > 0 THEN
+        UPDATE balances SET xp = xp + p_xp_added WHERE user_id = v_comp.user_id;
+    END IF;
+
+    -- 3. Update task (reduce pending_count)
+    UPDATE tasks 
+    SET pending_count = GREATEST(0, pending_count - 1),
+        updated_at = NOW()
+    WHERE id = v_comp.task_id;
+
+    -- 4. Update completion
+    UPDATE completions 
+    SET status = 'paid', 
+        moderated_by = p_admin_id, 
+        moderated_at = NOW(),
+        reward_rub = p_reward_rub,
+        xp_added = p_xp_added
+    WHERE id = p_proof_id;
+
+    RETURN jsonb_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 13. reject_proof_atomic
+CREATE OR REPLACE FUNCTION reject_proof_atomic(
+    p_admin_id BIGINT,
+    p_proof_id UUID,
+    p_status TEXT -- 'rejected', 'fake', 'cancelled'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_comp RECORD;
+BEGIN
+    -- 1. Lock and check completion
+    SELECT * INTO v_comp FROM completions 
+    WHERE id = p_proof_id AND status IN ('pending', 'pending_hold', 'review', 'rework') 
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Proof not found or already processed');
+    END IF;
+
+    -- 2. Return slot to task
+    UPDATE tasks 
+    SET pending_count = GREATEST(0, pending_count - 1),
+        qty_left = qty_left + 1,
+        status = CASE WHEN status = 'closed' THEN 'active' ELSE status END,
+        updated_at = NOW()
+    WHERE id = v_comp.task_id;
+
+    -- 3. Update completion
+    UPDATE completions 
+    SET status = p_status, 
+        moderated_by = p_admin_id, 
+        moderated_at = NOW()
+    WHERE id = p_proof_id;
+
+    RETURN jsonb_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 16. finalize_tg_hold_atomic
+CREATE OR REPLACE FUNCTION finalize_tg_hold_atomic(
+    p_user_id BIGINT,
+    p_task_id UUID,
+    p_status TEXT, -- 'paid' or 'fake'
+    p_reward_rub NUMERIC,
+    p_xp_added INTEGER
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_comp_id UUID;
+BEGIN
+    -- 1. Find the completion
+    SELECT id INTO v_comp_id FROM completions 
+    WHERE user_id = p_user_id AND task_id = p_task_id AND status = 'pending_hold'
+    ORDER BY created_at DESC LIMIT 1
+    FOR UPDATE;
+
+    IF p_status = 'paid' THEN
+        -- Pay reward
+        PERFORM update_balance_atomic(p_user_id, p_reward_rub, 'task_reward_hold', p_task_id::TEXT);
+        IF p_xp_added > 0 THEN
+            UPDATE balances SET xp = xp + p_xp_added WHERE user_id = p_user_id;
+        END IF;
+
+        -- Update task slots
+        UPDATE tasks 
+        SET qty_left = GREATEST(0, qty_left - 1),
+            status = CASE WHEN qty_left - 1 <= 0 THEN 'closed' ELSE status END,
+            updated_at = NOW()
+        WHERE id = p_task_id;
+
+        -- Update completion
+        IF v_comp_id IS NOT NULL THEN
+            UPDATE completions SET status = 'paid', moderated_at = NOW() WHERE id = v_comp_id;
+        ELSE
+            INSERT INTO completions (task_id, user_id, status, proof_text, moderated_at, created_at)
+            VALUES (p_task_id, p_user_id, 'paid', 'AUTO_TG_HOLD_OK', NOW(), NOW());
+        END IF;
+    ELSE
+        -- Mark as fake
+        IF v_comp_id IS NOT NULL THEN
+            UPDATE completions SET status = 'fake', moderated_at = NOW() WHERE id = v_comp_id;
+        END IF;
+    END IF;
+
+    RETURN jsonb_build_object('ok', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 14. withdraw_decision_atomic
+CREATE OR REPLACE FUNCTION withdraw_decision_atomic(
+    p_admin_id BIGINT,
+    p_withdraw_id BIGINT,
+    p_approved BOOLEAN,
+    p_new_status TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_wd RECORD;
+BEGIN
+    -- 1. Lock and check status
+    SELECT * INTO v_wd FROM withdrawals WHERE id = p_withdraw_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Withdrawal not found');
+    END IF;
+
+    IF v_wd.status != 'awaiting_review' AND v_wd.status != 'pending' THEN
+        RETURN jsonb_build_object('ok', true, 'status', v_wd.status, 'already_processed', true);
+    END IF;
+
+    IF p_approved THEN
+        -- Approve: just update status
+        UPDATE withdrawals 
+        SET status = COALESCE(p_new_status, 'paid'), 
+            updated_at = NOW() 
+        WHERE id = p_withdraw_id;
+        
+        RETURN jsonb_build_object('ok', true, 'status', COALESCE(p_new_status, 'paid'));
+    ELSE
+        -- Reject: return balance to user
+        PERFORM update_balance_atomic(v_wd.user_id, v_wd.amount_rub, 'withdraw_reject', p_withdraw_id::TEXT);
+        
+        UPDATE withdrawals 
+        SET status = 'rejected', 
+            updated_at = NOW() 
+        WHERE id = p_withdraw_id;
+        
+        RETURN jsonb_build_object('ok', true, 'status', 'rejected');
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
+
+-- 15. tbank_decision_atomic
+CREATE OR REPLACE FUNCTION tbank_decision_atomic(
+    p_admin_id BIGINT,
+    p_payment_id BIGINT,
+    p_approved BOOLEAN,
+    p_xp_added INTEGER DEFAULT 0
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_pay RECORD;
+BEGIN
+    -- 1. Lock and check
+    SELECT * INTO v_pay FROM payments WHERE id = p_payment_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Payment not found');
+    END IF;
+
+    IF v_pay.status != 'pending' THEN
+        RETURN jsonb_build_object('ok', true, 'status', v_pay.status, 'already_processed', true);
+    END IF;
+
+    IF p_approved THEN
+        -- Credit balance
+        PERFORM update_balance_atomic(v_pay.user_id, v_pay.amount_rub, 'tbank_deposit', p_payment_id::TEXT);
+        
+        -- Credit XP
+        IF p_xp_added > 0 THEN
+            UPDATE balances SET xp = xp + p_xp_added WHERE user_id = v_pay.user_id;
+        END IF;
+
+        UPDATE payments 
+        SET status = 'paid', updated_at = NOW() 
+        WHERE id = p_payment_id;
+        
+        RETURN jsonb_build_object('ok', true, 'status', 'paid');
+    ELSE
+        UPDATE payments 
+        SET status = 'rejected', updated_at = NOW() 
+        WHERE id = p_payment_id;
+        
+        RETURN jsonb_build_object('ok', true, 'status', 'rejected');
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('ok', false, 'error', SQLERRM);
+END;
+$$;
