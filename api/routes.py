@@ -23,8 +23,8 @@ async def health(req: web.Request):
     from database import ping
     from services.redis_client import check_redis
     
-    db_ok = await ping()
-    redis_ok = await check_redis()
+    db_ok, db_lat = await ping()
+    redis_ok, redis_lat = await check_redis()
     
     status_code = 200
     status = "ok"
@@ -44,6 +44,10 @@ async def health(req: web.Request):
     return web.json_response({
         'status': status,
         'app_build': APP_BUILD,
+        'metrics': {
+            'db_latency_ms': db_lat,
+            'redis_latency_ms': redis_lat
+        },
         'services': {
             'database': db_ok,
             'redis': redis_ok,

@@ -5,6 +5,9 @@ import signal
 import json
 import uuid
 import sys
+import re
+import hashlib
+import time
 from datetime import datetime, timezone
 from aiohttp import web
 import sentry_sdk
@@ -27,17 +30,18 @@ def mask_sensitive(text: str) -> str:
     if not text or not isinstance(text, str):
         return text
     # Mask bot token: 123456:ABC-DEF...
-    text = re.sub(r"(\d+:[A-Za-z0-9_-]{35})", r"\1***", text)
+    text = re.sub(r"(\d+:[A-Za-z0-9_-]{35})", r"BOT_TOKEN_MASKED", text)
     # Mask initData: query_id=...&user=...&hash=...
     text = re.sub(r"(hash=[a-f0-9]{64})", r"hash=***", text)
     text = re.sub(r"(query_id=[A-Za-z0-9_-]+)", r"query_id=***", text)
     # Mask crypto addresses (USDT/TON): roughly 30-50 chars
-    text = re.sub(r"(T[A-Za-z0-9]{33})", r"\1***", text)
-    text = re.sub(r"(0x[a-fA-F0-9]{40})", r"\1***", text)
+    text = re.sub(r"(T[A-Za-z0-9]{33})", r"CRYPTO_ADDR_MASKED", text)
+    text = re.sub(r"(0x[a-fA-F0-9]{40})", r"CRYPTO_ADDR_MASKED", text)
     # Mask Supabase Keys
     text = re.sub(r"(eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9._-]+)", r"SUPABASE_KEY_MASKED", text)
-    # Mask Sentry DSN
+    # Mask Sentry DSN (fixed space)
     text = re.sub(r"(https://[a-f0-9]+@[a-z0-9.]+/ \d+)", r"SENTRY_DSN_MASKED", text)
+    text = re.sub(r"(https://[a-f0-9]+@[a-z0-9.]+\/\d+)", r"SENTRY_DSN_MASKED", text)
     return text
 
 import contextvars
@@ -182,7 +186,10 @@ async def on_shutdown():
         sentry_sdk.flush()
     
     if _log_listener:
-        _log_listener.stop()
+        try:
+            _log_listener.stop()
+        except:
+            pass
         
     logging.info("Graceful shutdown completed.")
 

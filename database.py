@@ -115,10 +115,29 @@ async def sb_count(
         log.exception(f"sb_count failed table={table}: {e}")
         return 0
 
-async def ping() -> bool:
+async def sb_rpc(fn_name: str, params: dict):
+    def _f():
+        return sb.rpc(fn_name, params).execute()
+    return await sb_exec(_f)
+
+async def sb_rpc_safe(fn_name: str, params: dict, timeout: float = 12.0) -> any:
+    """Hardened RPC call with timeout and built-in retries (via sb_exec)."""
+    try:
+        return await asyncio.wait_for(sb_rpc(fn_name, params), timeout=timeout)
+    except asyncio.TimeoutError:
+        log.error(f"RPC TIMEOUT: {fn_name} after {timeout}s", extra={"rpc_name": fn_name})
+        raise
+    except Exception as e:
+        log.error(f"RPC ERROR: {fn_name}: {e}", extra={"rpc_name": fn_name})
+        raise
+
+async def ping() -> tuple[bool, float]:
+    import time
+    start = time.time()
     try:
         await sb_select("users", limit=1)
-        return True
+        latency = (time.time() - start) * 1000
+        return True, round(latency, 2)
     except Exception as e:
         log.error(f"Database ping failed: {e}")
-        return False
+        return False, 0.0
