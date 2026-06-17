@@ -3134,10 +3134,7 @@ async function syncAll() {
       showSection("top");
       if (typeof window.loadLeaderboard === 'function') window.loadLeaderboard('refs');
     }
-    else if (tab === "menu") {
-      showSection("menu");
-      renderMenuUserInfo();
-    }
+
     else if (tab === "games") {
       showSection("games");
       closeGame();

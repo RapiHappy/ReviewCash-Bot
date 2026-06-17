@@ -8,7 +8,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup, 
     KeyboardButton, 
     ReplyKeyboardRemove,
-    FSInputFile
+    FSInputFile,
+    WebAppInfo
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.enums import ParseMode
@@ -48,22 +49,36 @@ async def build_welcome_kb(uid: int):
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
+    
+    # Main call to action
+    builder.row(
+        KeyboardButton(text="🚀 Открыть ReviewCash", web_app=WebAppInfo(url=get_miniapp_url()))
+    )
+    
+    # Core functionality
     builder.row(
         KeyboardButton(text="🗂 Кабинет"),
         KeyboardButton(text="🛠 Задания")
     )
+    
+    # Finance and Rewards
     builder.row(
-        KeyboardButton(text="🎁 Бонус 24ч"),
-        KeyboardButton(text="👥 Рефералы")
+        KeyboardButton(text="💳 Пополнить"),
+        KeyboardButton(text="🎁 Бонус 24ч")
     )
+    
+    # Social and Extras
     builder.row(
-        KeyboardButton(text="📊 Статистика"),
+        KeyboardButton(text="👥 Рефералы"),
         KeyboardButton(text="🎮 Игры")
     )
+    
+    # Utility
     builder.row(
-        KeyboardButton(text="💳 Пополнить")
+        KeyboardButton(text="📊 Статистика")
     )
-    return builder.as_markup(resize_keyboard=True)
+    
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
 async def send_main_welcome(message: Message, uid: int):
     news_line = ""

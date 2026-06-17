@@ -118,64 +118,7 @@
 
   <div class="app-container">
 
-    <!-- MAIN MENU (HOME) -->
-    <section id="view-menu" class="anim-entry">
-      <!-- Title Header -->
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <img id="menu-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:36px; height:36px; border-radius:50%; background:#333; object-fit:contain;" alt="Avatar">
-          <div>
-            <div style="font-size:11px; color:var(--text-dim);">Добро пожаловать,</div>
-            <div id="menu-username" style="font-weight:800; font-size:14px;">...</div>
-          </div>
-        </div>
-        <div class="level-badge" id="menu-level-badge" style="position:static; padding:4px 10px; font-size:11px;">LVL 1</div>
-      </div>
 
-      <!-- Description Banner -->
-      <button class="banner-desc-red" onclick="openModal('m-description')">
-        <span class="banner-desc-icon">🎗</span>
-        <span class="banner-desc-text">ReviewCash описание</span>
-      </button>
-
-      <!-- Grid Menu Buttons -->
-      <div class="home-grid-menu">
-        <button class="grid-btn btn-cabinet" onclick="showTab('profile')">
-          <span class="grid-btn-icon">💳</span>
-          <span class="grid-btn-title">Кабинет</span>
-        </button>
-        <button class="grid-btn btn-tasks" onclick="showTab('tasks')">
-          <span class="grid-btn-icon">🔨</span>
-          <span class="grid-btn-title">Задания</span>
-          <span class="grid-btn-badge">NEW</span>
-        </button>
-        <button class="grid-btn btn-bonus" onclick="claimDailyBonus()">
-          <span class="grid-btn-icon">🎁</span>
-          <span class="grid-btn-title">Бонус 24ч</span>
-        </button>
-        <button class="grid-btn btn-referral" onclick="showTab('friends')">
-          <span class="grid-btn-icon">🔗</span>
-          <span class="grid-btn-title">Ваша реф ссылка</span>
-        </button>
-        <button class="grid-btn btn-stats" onclick="showTab('statistics')">
-          <span class="grid-btn-icon">📊</span>
-          <span class="grid-btn-title">Статистика</span>
-        </button>
-        <button class="grid-btn btn-games" onclick="showTab('games')">
-          <span class="grid-btn-icon">🎮</span>
-          <span class="grid-btn-title">Игры</span>
-        </button>
-      </div>
-
-      <!-- Fast Info Banner -->
-      <div class="card" style="margin-top:20px; display:flex; justify-content:space-between; align-items:center; padding:15px; border-left:4px solid var(--accent-cyan);">
-        <div>
-          <div style="font-size:12px; color:var(--text-dim);">Ваш баланс:</div>
-          <div id="menu-balance" style="font-size:24px; font-weight:900; color:var(--text); margin-top:4px;">0.00 ₽</div>
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="openModal('m-topup')" style="padding:10px 18px; font-size:12px; border-radius:12px;">Пополнить</button>
-      </div>
-    </section>
 
     <!-- TASKS VIEW -->
     <section id="view-tasks" class="hidden anim-entry">
