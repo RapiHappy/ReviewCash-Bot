@@ -195,7 +195,10 @@ async def on_cleanup(app: web.Application):
     except Exception as e:
         logging.warning(f"Failed to close crypto client: {e}")
     
-    await dp.stop_polling()
+    try:
+        await dp.stop_polling()
+    except RuntimeError:
+        pass
     await bot.session.close()
     await redis_client.close()
     
