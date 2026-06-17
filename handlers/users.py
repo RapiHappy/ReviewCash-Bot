@@ -22,7 +22,7 @@ from services.telegram_utils import (
 )
 from services.telegram_utils import *
 from services.user_service import ensure_user, referrals_summary, stats_add
-from services.ui_handlers import send_main_welcome, build_welcome_kb
+from services.ui_handlers import send_main_welcome, build_welcome_kb, main_menu_keyboard
 import html
 import logging
 import io
@@ -134,8 +134,102 @@ async def handle_gender_pick(message: Message):
     else:
         await tg_set_gender(uid, TASK_GENDER_FEMALE)
 
-    await message.answer(r"✅ Отлично, пол сохранён\! Теперь всё готово 🎉", reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN_V2)
+    await message.answer("✅ Отлично, пол сохранён! Теперь всё готово 🎉", reply_markup=main_menu_keyboard())
     await send_main_welcome(message, uid)
+
+@router.message(F.text == "🗂 Кабинет")
+async def bot_cabinet_handler(message: Message):
+    uid = message.from_user.id
+    bal = await get_balance(uid)
+    ref = await referrals_summary(uid)
+    
+    await message.answer(
+        "👤 <b>Профиль</b>\n\n"
+        f"💰 <b>Баланс:</b> {float(bal.get('rub_balance') or 0):.2f} ₽\n"
+        f"⭐ <b>Stars:</b> {int(float(bal.get('stars_balance') or 0))} ⭐\n"
+        f"💎 <b>XP:</b> {int(bal.get('xp') or 0)} | <b>LVL:</b> {int(bal.get('level') or 1)}\n"
+        f"📈 <b>До следующего уровня:</b> {int(bal.get('xp_remaining') or 0)} XP\n\n"
+        "👥 <b>Рефералы</b>\n"
+        f"• Друзей: {ref['count']}\n"
+        f"• Заработано: {ref['earned_rub']:.2f} ₽\n"
+        f"• Ожидают бонуса: {ref.get('pending', 0)}",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text == "🛠 Задания")
+async def bot_tasks_handler(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🛠 Открыть задания", web_app=WebAppInfo(url=get_miniapp_url()))
+    ]])
+    await message.answer("Перейдите в раздел заданий по кнопке ниже:", reply_markup=kb)
+
+@router.message(F.text == "🎁 Бонус 24ч")
+async def bot_bonus_handler(message: Message):
+    uid = message.from_user.id
+    from services.redis_client import redis_client
+    async with redis_client.lock(f"lock:bonus:{uid}", timeout=10):
+        ok, wait_sec = await check_limit(uid, "daily_bonus", 24 * 3600)
+        if not ok:
+            hours = wait_sec // 3600
+            mins = (wait_sec % 3600) // 60
+            await message.answer(f"❌ Бонус уже получен. Приходи через {hours}ч {mins}м.")
+            return
+        
+        await add_rub(uid, DAILY_BONUS_RUB)
+        await touch_limit(uid, "daily_bonus")
+        await message.answer(f"🎁 <b>Ежедневный бонус получен!</b>\n\nБаланс пополнен на: <b>+{DAILY_BONUS_RUB} ₽</b>", parse_mode="HTML")
+
+@router.message(F.text == "👥 Рефералы")
+async def bot_referrals_handler(message: Message):
+    uid = message.from_user.id
+    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
+    await message.answer(
+        "👥 <b>Ваша реферальная ссылка</b>\n\n"
+        "Приглашайте друзей и получайте бонус!\n"
+        f"🎁 За каждого друга: <b>{REF_BONUS_RUB:.0f} ₽</b> (после выполнения 2 заданий)\n\n"
+        f"🔗 <code>{ref_link}</code> (нажмите, чтобы скопировать)",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text == "📊 Статистика")
+async def bot_stats_handler(message: Message):
+    uid = message.from_user.id
+    comps_res = await sb_select(T_COMP, {"user_id": uid}, columns="status")
+    comps = comps_res.data or []
+    paid_count = sum(1 for c in comps if str(c.get("status") or "").lower() == "paid")
+    pending_count = sum(1 for c in comps if str(c.get("status") or "").lower() in ("pending", "checking", "pending_hold"))
+    rejected_count = sum(1 for c in comps if str(c.get("status") or "").lower() in ("rejected", "fake", "rework_expired"))
+    
+    await message.answer(
+        "📊 <b>Ваша статистика выполнений:</b>\n\n"
+        f"✅ Выполнено и оплачено: <b>{paid_count}</b>\n"
+        f"⏳ На проверке: <b>{pending_count}</b>\n"
+        f"❌ Отклонено: <b>{rejected_count}</b>",
+        parse_mode="HTML"
+    )
+
+@router.message(F.text == "🎮 Игры")
+async def bot_games_handler(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎮 Играть в игры", web_app=WebAppInfo(url=get_miniapp_url()))
+    ]])
+    await message.answer("Перейдите в раздел игр по кнопке ниже:", reply_markup=kb)
+
+@router.message(F.text == "💳 Пополнить")
+async def bot_topup_handler(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💳 Пополнить через Mini App", web_app=WebAppInfo(url=get_miniapp_url()))
+    ]])
+    await message.answer(
+        "💳 <b>Пополнение баланса</b>\n\n"
+        "Вы можете пополнить баланс следующими способами:\n"
+        "• <b>Telegram Stars</b> (быстрая оплата)\n"
+        "• <b>CryptoBot</b> (USDT)\n"
+        "• <b>Т-Банк</b> (прямой перевод)\n\n"
+        "Нажмите кнопку ниже, чтобы открыть раздел пополнения:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
 
 @router.callback_query(F.data == "check_required_sub")
 async def cb_check_required_sub(cq: CallbackQuery):

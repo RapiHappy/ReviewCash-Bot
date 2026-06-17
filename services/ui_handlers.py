@@ -10,7 +10,7 @@ from aiogram.types import (
     ReplyKeyboardRemove,
     FSInputFile
 )
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiogram.enums import ParseMode
 
 from config import (
@@ -46,6 +46,25 @@ async def build_welcome_kb(uid: int):
     kb.adjust(1)
     return kb.as_markup()
 
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="🗂 Кабинет"),
+        KeyboardButton(text="🛠 Задания")
+    )
+    builder.row(
+        KeyboardButton(text="🎁 Бонус 24ч"),
+        KeyboardButton(text="👥 Рефералы")
+    )
+    builder.row(
+        KeyboardButton(text="📊 Статистика"),
+        KeyboardButton(text="🎮 Игры")
+    )
+    builder.row(
+        KeyboardButton(text="💳 Пополнить")
+    )
+    return builder.as_markup(resize_keyboard=True)
+
 async def send_main_welcome(message: Message, uid: int):
     news_line = ""
     news = get_required_sub_channel() or NEWS_CHANNEL
@@ -74,11 +93,13 @@ async def send_main_welcome(message: Message, uid: int):
                 reply_markup=markup,
                 parse_mode=ParseMode.MARKDOWN_V2
             )
+            await message.answer("Клавиатура меню активирована 📱", reply_markup=main_menu_keyboard())
             return
         except Exception as e:
             log.warning(f"Failed to send welcome banner photo: {e}")
 
     await message.answer(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN_V2)
+    await message.answer("Клавиатура меню активирована 📱", reply_markup=main_menu_keyboard())
 
 def _stars_pay_toggle_kb(enabled: bool):
     kb = InlineKeyboardBuilder()
