@@ -16,6 +16,7 @@ APP_BUILD = (
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE", "").strip()
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").strip()
 
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 

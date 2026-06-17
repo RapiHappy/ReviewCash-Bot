@@ -90,6 +90,24 @@ async def sb_select(
         return q.execute()
     return await sb_exec(_f)
 
+async def sb_select_in(
+    table: str,
+    column: str,
+    values: list,
+    match: dict | None = None,
+    columns: str = "*",
+    limit: int | None = None
+):
+    def _f():
+        q = sb.table(table).select(columns).in_(column, values)
+        if match:
+            for k, v in match.items():
+                q = q.eq(k, v)
+        if limit:
+            q = q.limit(limit)
+        return q.execute()
+    return await sb_exec(_f)
+
 async def sb_count(
     table: str,
     match: dict | None = None,

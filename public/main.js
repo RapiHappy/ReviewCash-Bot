@@ -1311,6 +1311,7 @@ async function syncAll() {
       const oldExp = $("u-vip-expiry");
       if (oldExp) oldExp.remove();
     }
+    try { renderMenuUserInfo(); } catch (e) {}
   }
   function renderInvite() {
     // Simple link with your bot username (can be replaced if you want)
@@ -3117,6 +3118,18 @@ async function syncAll() {
       showSection("top");
       if (typeof window.loadLeaderboard === 'function') window.loadLeaderboard('refs');
     }
+    else if (tab === "menu") {
+      showSection("menu");
+      renderMenuUserInfo();
+    }
+    else if (tab === "games") {
+      showSection("games");
+      closeGame();
+    }
+    else if (tab === "statistics") {
+      showSection("statistics");
+      loadUserStats();
+    }
     else showSection("tasks");
     // when user opens tasks tab — refresh immediately
     if (state.currentSection === "tasks") {
@@ -4259,7 +4272,7 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     if (loader) loader.style.display = "flex";
 
     // initial tab
-    showTab("tasks");
+    showTab("menu");
     setFilter("all");
     setPlatformFilter(state.platformFilter);
     recalc();
@@ -4569,6 +4582,519 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     input.value = val;
     recalc();
   }
+
+  // ==========================================
+  // HOME MENU & PROFILE INFO
+  // ==========================================
+  function renderMenuUserInfo() {
+    const u = state.user || {};
+    const b = state.balance || {};
+    const name = [u.first_name, u.last_name].filter(Boolean).join(" ") || u.username || "Пользователь";
+
+    const pic = u.photo_url || "";
+    const menuAvatar = $("menu-avatar");
+    if (menuAvatar) {
+      loadAvatarFast(menuAvatar, pic, name);
+    }
+
+    const menuUsername = $("menu-username");
+    if (menuUsername) {
+      menuUsername.textContent = name;
+    }
+
+    const menuLevelBadge = $("menu-level-badge");
+    if (menuLevelBadge) {
+      menuLevelBadge.textContent = "LVL " + (b.level || 1);
+    }
+
+    const menuBalance = $("menu-balance");
+    if (menuBalance) {
+      menuBalance.textContent = fmtRub(b.rub_balance || 0);
+    }
+  }
+  window.renderMenuUserInfo = renderMenuUserInfo;
+
+  // ==========================================
+  // PERSONAL STATISTICS
+  // ==========================================
+  async function loadUserStats() {
+    try {
+      const res = await apiPost("/api/user/stats", {});
+      if (!res || !res.ok) {
+        throw new Error(res ? res.error : "Ошибка загрузки статистики");
+      }
+      
+      const stats = res.stats || {};
+      
+      if ($("stat-completed-count")) $("stat-completed-count").textContent = stats.completions?.paid || 0;
+      if ($("stat-earned-rub")) $("stat-earned-rub").textContent = `Заработано: ${fmtRub(stats.completions?.earned_rub || 0)}`;
+      if ($("stat-pending-count")) $("stat-pending-count").textContent = stats.completions?.pending || 0;
+      if ($("stat-rework-count")) $("stat-rework-count").textContent = `На доработке: ${stats.completions?.rework || 0}`;
+      
+      if ($("stat-ref-count")) $("stat-ref-count").textContent = stats.referrals?.count || 0;
+      if ($("stat-ref-earned")) $("stat-ref-earned").textContent = `Бонус: ${fmtRub(stats.referrals?.earned_rub || 0)}`;
+      
+      if ($("stat-withdrawn-sum")) $("stat-withdrawn-sum").textContent = fmtRub(stats.withdrawals?.paid_sum || 0);
+      if ($("stat-withdrawn-count")) $("stat-withdrawn-count").textContent = `Выплат: ${stats.withdrawals?.paid_count || 0}`;
+      
+      if ($("stat-created-count")) $("stat-created-count").textContent = `${stats.advertiser?.created_count || 0} шт.`;
+      if ($("stat-created-spent")) $("stat-created-spent").textContent = fmtRub(stats.advertiser?.spent_rub || 0);
+      
+      // Update XP & Level in stats
+      const b = state.balance || {};
+      const xpInfo = levelFromXp(b.xp || 0);
+      const currentLevel = Number(b.level || xpInfo.lvl || 1);
+      const remainingXp = Number(b.xp_remaining != null ? b.xp_remaining : xpInfo.remaining || 0);
+      const nextNeedXp = Number(b.xp_next_level != null ? b.xp_next_level : xpInfo.next || 0);
+      const currentProgressXp = Number(b.xp_current_level != null ? b.xp_current_level : xpInfo.cur || 0);
+      
+      if ($("stat-level-badge")) $("stat-level-badge").textContent = "LVL " + currentLevel;
+      if ($("stat-xp-text-cur")) $("stat-xp-text-cur").textContent = `${currentProgressXp} / ${nextNeedXp} XP`;
+      if ($("stat-xp-text-left")) $("stat-xp-text-left").textContent = `До следующего: ${remainingXp} XP`;
+      const fill = $("stat-xp-fill");
+      if (fill) fill.style.width = clamp((currentProgressXp / Math.max(1, nextNeedXp)) * 100, 0, 100) + "%";
+
+    } catch (e) {
+      showToast("error", e.message || "Не удалось загрузить статистику");
+    }
+  }
+  window.loadUserStats = loadUserStats;
+
+  // ==========================================
+  // GAMES HUB & GAME CONTROLLERS
+  // ==========================================
+  
+  function openGame(gameId) {
+    document.getElementById("games-hub").classList.add("hidden");
+    document.getElementById("game-wheel-sec").classList.add("hidden");
+    document.getElementById("game-coinflip-sec").classList.add("hidden");
+    document.getElementById("game-mines-sec").classList.add("hidden");
+
+    if (gameId === "wheel") {
+      document.getElementById("game-wheel-sec").classList.remove("hidden");
+    } else if (gameId === "coinflip") {
+      document.getElementById("game-coinflip-sec").classList.remove("hidden");
+    } else if (gameId === "mines") {
+      document.getElementById("game-mines-sec").classList.remove("hidden");
+      checkAndResumeMines();
+    }
+  }
+  window.openGame = openGame;
+
+  function closeGame() {
+    document.getElementById("games-hub").classList.remove("hidden");
+    document.getElementById("game-wheel-sec").classList.add("hidden");
+    document.getElementById("game-coinflip-sec").classList.add("hidden");
+    document.getElementById("game-mines-sec").classList.add("hidden");
+  }
+  window.closeGame = closeGame;
+
+  function setGameBet(gameType, value) {
+    if (gameType === 'coin') {
+      const el = document.getElementById("coin-bet-input");
+      if (el) el.value = value;
+    } else if (gameType === 'mines') {
+      const el = document.getElementById("mines-bet-input");
+      if (el) el.value = value;
+    }
+  }
+  window.setGameBet = setGameBet;
+
+  // 1. WHEEL OF FORTUNE
+  let isWheelSpinning = false;
+  async function spinWheel() {
+    if (isWheelSpinning) return;
+    const btn = document.getElementById("wheel-spin-btn");
+    if (btn) btn.disabled = true;
+    
+    isWheelSpinning = true;
+    try {
+      const res = await apiPost("/api/games/wheel", {});
+      if (!res || !res.ok) {
+        throw new Error(res ? res.error : "Ошибка сервера");
+      }
+      
+      tgHaptic("light");
+      
+      const wheelRewards = [
+        { type: "rub", value: 0.5, index: 0 },
+        { type: "xp", value: 10, index: 1 },
+        { type: "rub", value: 1.0, index: 2 },
+        { type: "xp", value: 30, index: 3 },
+        { type: "rub", value: 2.0, index: 4 },
+        { type: "xp", value: 100, index: 5 },
+        { type: "rub", value: 5.0, index: 6 },
+        { type: "rub", value: 10.0, index: 7 }
+      ];
+      
+      const matched = wheelRewards.find(r => r.type === res.reward.type && Math.abs(r.value - res.reward.value) < 0.01);
+      const index = matched ? matched.index : 0;
+      
+      const disc = document.getElementById("wheel-disc");
+      if (disc) {
+        const extraTurns = 5;
+        const deg = extraTurns * 360 + (360 - index * 45);
+        disc.style.transition = "transform 4s cubic-bezier(0.1, 0.8, 0.1, 1)";
+        disc.style.transform = `rotate(${deg}deg)`;
+        
+        setTimeout(() => {
+          tgHaptic("success");
+          showToast("success", `🎡 Вы выиграли: ${res.reward.label}!`);
+          
+          disc.style.transition = "none";
+          disc.style.transform = `rotate(${deg % 360}deg)`;
+          
+          if (res.balance) {
+            state.balance = state.balance || {};
+            state.balance.rub_balance = res.balance.rub_balance;
+            state.balance.xp = res.balance.xp;
+            state.balance.level = res.balance.level;
+            renderProfile();
+          }
+          isWheelSpinning = false;
+          if (btn) btn.disabled = false;
+        }, 4000);
+      } else {
+        isWheelSpinning = false;
+        if (btn) btn.disabled = false;
+      }
+    } catch (e) {
+      isWheelSpinning = false;
+      if (btn) btn.disabled = false;
+      tgHaptic("error");
+      tgAlert(e.message || "Не удалось совершить прокрут колеса", "error");
+    }
+  }
+  window.spinWheel = spinWheel;
+
+  // 2. COIN FLIP
+  let isCoinFlipping = false;
+  let currentCoinRotation = 0;
+  async function playCoinflip(side) {
+    if (isCoinFlipping) return;
+    const betInput = document.getElementById("coin-bet-input");
+    const betVal = parseFloat(betInput ? betInput.value : 0);
+    
+    if (isNaN(betVal) || betVal < 1.0 || betVal > 200.0) {
+      return showToast("error", "Ставка должна быть от 1 до 200 ₽");
+    }
+    
+    const curBalance = parseFloat(state.balance?.rub_balance || 0);
+    if (curBalance < betVal) {
+      return showToast("error", "Недостаточно средств на балансе");
+    }
+    
+    isCoinFlipping = true;
+    tgHaptic("light");
+    
+    const btnHeads = document.getElementById("btn-flip-heads");
+    const btnTails = document.getElementById("btn-flip-tails");
+    if (btnHeads) btnHeads.disabled = true;
+    if (btnTails) btnTails.disabled = true;
+    
+    try {
+      const res = await apiPost("/api/games/coinflip", { bet: betVal, side: side });
+      if (!res || !res.ok) {
+        throw new Error(res ? res.error : "Ошибка игры");
+      }
+      
+      const coin = document.getElementById("coin-element");
+      if (coin) {
+        const base = Math.ceil(currentCoinRotation / 360) * 360 + 1440;
+        const targetDeg = (res.flipped === "heads") ? base : (base + 180);
+        currentCoinRotation = targetDeg;
+        
+        coin.style.transition = "transform 2s cubic-bezier(0.1, 0.9, 0.2, 1)";
+        coin.style.transform = `rotateY(${targetDeg}deg)`;
+        
+        setTimeout(() => {
+          if (res.won) {
+            tgHaptic("success");
+            showToast("success", `🎉 Победа! Вы выиграли ${res.win_amount} ₽!`);
+          } else {
+            tgHaptic("error");
+            showToast("warning", `😢 Поражение. Выпал(а) ${res.flipped === "heads" ? "Орел" : "Решка"}.`);
+          }
+          
+          if (res.rub_balance !== undefined) {
+            state.balance = state.balance || {};
+            state.balance.rub_balance = res.rub_balance;
+            renderProfile();
+          }
+          
+          isCoinFlipping = false;
+          if (btnHeads) btnHeads.disabled = false;
+          if (btnTails) btnTails.disabled = false;
+        }, 2000);
+      } else {
+        isCoinFlipping = false;
+        if (btnHeads) btnHeads.disabled = false;
+        if (btnTails) btnTails.disabled = false;
+      }
+    } catch (e) {
+      isCoinFlipping = false;
+      if (btnHeads) btnHeads.disabled = false;
+      if (btnTails) btnTails.disabled = false;
+      tgHaptic("error");
+      tgAlert(e.message || "Не удалось сделать ставку", "error");
+    }
+  }
+  window.playCoinflip = playCoinflip;
+
+  // 3. MINES GAME
+  let minesGameState = {
+    active: false,
+    bet: 10,
+    minesCount: 3,
+    uncovered: [],
+    multiplier: 1.0,
+    nextMultiplier: 1.0
+  };
+
+  async function checkAndResumeMines() {
+    try {
+      const res = await apiPost("/api/games/mines/state", {});
+      if (res && res.ok && res.active) {
+        minesGameState = {
+          active: true,
+          bet: res.bet,
+          minesCount: res.mines_count,
+          uncovered: res.uncovered || [],
+          multiplier: res.multiplier || 1.0,
+          nextMultiplier: res.next_multiplier || 1.0
+        };
+        
+        renderMinesBoard(true);
+        updateMinesUI();
+      } else {
+        minesGameState.active = false;
+        document.getElementById("mines-config-area").classList.remove("hidden");
+        document.getElementById("mines-play-area").classList.add("hidden");
+        renderMinesBoard(false);
+      }
+    } catch (e) {
+      minesGameState.active = false;
+      document.getElementById("mines-config-area").classList.remove("hidden");
+      document.getElementById("mines-play-area").classList.add("hidden");
+      renderMinesBoard(false);
+    }
+  }
+  window.checkAndResumeMines = checkAndResumeMines;
+
+  async function startMinesGame() {
+    if (minesGameState.active) return;
+    
+    const betInput = document.getElementById("mines-bet-input");
+    const minesInput = document.getElementById("mines-count-input");
+    const betVal = parseFloat(betInput ? betInput.value : 10);
+    const countVal = parseInt(minesInput ? minesInput.value : 3);
+    
+    if (isNaN(betVal) || betVal < 1.0 || betVal > 200.0) {
+      return showToast("error", "Ставка должна быть от 1 до 200 ₽");
+    }
+    
+    const curBalance = parseFloat(state.balance?.rub_balance || 0);
+    if (curBalance < betVal) {
+      return showToast("error", "Недостаточно средств на балансе");
+    }
+    
+    const btn = document.getElementById("mines-start-btn");
+    if (btn) btn.disabled = true;
+    
+    try {
+      const res = await apiPost("/api/games/mines/start", { bet: betVal, mines_count: countVal });
+      if (!res || !res.ok) {
+        throw new Error(res ? res.error : "Ошибка старта");
+      }
+      
+      tgHaptic("success");
+      
+      minesGameState = {
+        active: true,
+        bet: res.bet,
+        minesCount: res.mines_count,
+        uncovered: res.uncovered || [],
+        multiplier: res.multiplier || 1.0,
+        nextMultiplier: res.next_multiplier || 1.0
+      };
+      
+      if (res.rub_balance !== undefined) {
+        state.balance = state.balance || {};
+        state.balance.rub_balance = res.rub_balance;
+        renderProfile();
+      }
+      
+      renderMinesBoard(true);
+      updateMinesUI();
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(e.message || "Не удалось начать игру", "error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  window.startMinesGame = startMinesGame;
+
+  function renderMinesBoard(interactive) {
+    const board = document.getElementById("mines-board");
+    if (!board) return;
+    board.innerHTML = "";
+    
+    for (let i = 0; i < 16; i++) {
+      const cell = document.createElement("div");
+      cell.className = "mine-cell";
+      cell.dataset.index = i;
+      
+      if (interactive) {
+        if (minesGameState.uncovered.includes(i)) {
+          cell.classList.add("uncovered-gem");
+          cell.textContent = "💎";
+        }
+        cell.addEventListener("click", () => clickMinesCell(i));
+      } else {
+        cell.classList.add("disabled");
+      }
+      board.appendChild(cell);
+    }
+  }
+
+  function updateMinesUI() {
+    document.getElementById("mines-config-area").classList.add("hidden");
+    document.getElementById("mines-play-area").classList.remove("hidden");
+    
+    const statusText = document.getElementById("mines-status-text");
+    const multText = document.getElementById("mines-mult-text");
+    const cashoutBtn = document.getElementById("mines-cashout-btn");
+    
+    if (statusText) {
+      statusText.textContent = `Мин: ${minesGameState.minesCount} | Выигрыш x${minesGameState.multiplier.toFixed(2)}`;
+    }
+    if (multText) {
+      multText.style.display = "inline";
+      multText.textContent = `След: x${minesGameState.nextMultiplier.toFixed(2)}`;
+    }
+    
+    if (cashoutBtn) {
+      const potWin = minesGameState.bet * minesGameState.multiplier;
+      cashoutBtn.textContent = `Забрать выигрыш: ${potWin.toFixed(2)} ₽`;
+      cashoutBtn.disabled = (minesGameState.uncovered.length === 0);
+    }
+  }
+
+  async function clickMinesCell(index) {
+    if (!minesGameState.active) return;
+    if (minesGameState.uncovered.includes(index)) return;
+    
+    const cellEl = document.querySelector(`.mine-cell[data-index="${index}"]`);
+    if (!cellEl) return;
+    
+    cellEl.classList.add("disabled");
+    
+    try {
+      const res = await apiPost("/api/games/mines/flip", { cell_index: index });
+      if (!res || !res.ok) {
+        cellEl.classList.remove("disabled");
+        throw new Error(res ? res.error : "Ошибка хода");
+      }
+      
+      if (res.hit_bomb) {
+        tgHaptic("error");
+        cellEl.classList.add("uncovered-bomb");
+        cellEl.textContent = "💥";
+        
+        minesGameState.active = false;
+        revealMinesBoard(res.mines, index);
+        
+        showToast("warning", "💥 Взрыв! Вы проиграли ставку.");
+        
+        if (res.rub_balance !== undefined) {
+          state.balance = state.balance || {};
+          state.balance.rub_balance = res.rub_balance;
+          renderProfile();
+        }
+        
+        setTimeout(() => {
+          document.getElementById("mines-config-area").classList.remove("hidden");
+          document.getElementById("mines-play-area").classList.add("hidden");
+          document.getElementById("mines-mult-text").style.display = "none";
+          document.getElementById("mines-status-text").textContent = "Настройте игру";
+          renderMinesBoard(false);
+        }, 3000);
+      } else {
+        tgHaptic("light");
+        cellEl.classList.add("uncovered-gem");
+        cellEl.textContent = "💎";
+        
+        minesGameState.uncovered = res.uncovered || [];
+        minesGameState.multiplier = res.multiplier || 1.0;
+        minesGameState.nextMultiplier = res.next_multiplier || 1.0;
+        
+        updateMinesUI();
+      }
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(e.message || "Не удалось открыть ячейку", "error");
+    }
+  }
+
+  function revealMinesBoard(minesList, hitIndex) {
+    const cells = document.querySelectorAll(".mine-cell");
+    cells.forEach(cell => {
+      cell.classList.add("disabled");
+      const idx = parseInt(cell.dataset.index);
+      if (minesList.includes(idx)) {
+        if (idx !== hitIndex) {
+          cell.classList.add("uncovered-bomb");
+          cell.textContent = "💣";
+        }
+      } else {
+        if (!minesGameState.uncovered.includes(idx)) {
+          cell.style.opacity = "0.4";
+          cell.textContent = "💎";
+        }
+      }
+    });
+  }
+
+  async function cashoutMinesGame() {
+    if (!minesGameState.active) return;
+    if (minesGameState.uncovered.length === 0) return;
+    
+    const btn = document.getElementById("mines-cashout-btn");
+    if (btn) btn.disabled = true;
+    
+    try {
+      const res = await apiPost("/api/games/mines/cashout", {});
+      if (!res || !res.ok) {
+        throw new Error(res ? res.error : "Ошибка вывода");
+      }
+      
+      tgHaptic("success");
+      showToast("success", `✨ Победа! Вы забрали ${res.win_amount.toFixed(2)} ₽ (x${res.multiplier.toFixed(2)})`);
+      
+      minesGameState.active = false;
+      revealMinesBoard(res.mines, -1);
+      
+      if (res.rub_balance !== undefined) {
+        state.balance = state.balance || {};
+        state.balance.rub_balance = res.rub_balance;
+        renderProfile();
+      }
+      
+      setTimeout(() => {
+        document.getElementById("mines-config-area").classList.remove("hidden");
+        document.getElementById("mines-play-area").classList.add("hidden");
+        document.getElementById("mines-mult-text").style.display = "none";
+        document.getElementById("mines-status-text").textContent = "Настройте игру";
+        renderMinesBoard(false);
+      }, 3000);
+    } catch (e) {
+      tgHaptic("error");
+      tgAlert(e.message || "Не удалось забрать выигрыш", "error");
+      if (btn) btn.disabled = false;
+    }
+  }
+  window.cashoutMinesGame = cashoutMinesGame;
 
   // NOTE: showToast is already defined at top of file (line ~305) with signature (kind, message, title).
   // Do NOT redefine it here — that was causing "error" to show as text instead of the actual message.

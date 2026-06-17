@@ -135,7 +135,7 @@ async def on_startup():
     await setup_menu_button(bot)
     
     # 3. Multi-service health check
-    db_ok = await ping()
+    db_ok, _ = await ping()
     if not db_ok:
         logging.error("CRITICAL: Database ping failed on startup!")
     

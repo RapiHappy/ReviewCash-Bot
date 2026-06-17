@@ -118,8 +118,67 @@
 
   <div class="app-container">
 
+    <!-- MAIN MENU (HOME) -->
+    <section id="view-menu" class="anim-entry">
+      <!-- Title Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <img id="menu-avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:36px; height:36px; border-radius:50%; background:#333; object-fit:contain;" alt="Avatar">
+          <div>
+            <div style="font-size:11px; color:var(--text-dim);">Добро пожаловать,</div>
+            <div id="menu-username" style="font-weight:800; font-size:14px;">...</div>
+          </div>
+        </div>
+        <div class="level-badge" id="menu-level-badge" style="position:static; padding:4px 10px; font-size:11px;">LVL 1</div>
+      </div>
+
+      <!-- Description Banner -->
+      <button class="banner-desc-red" onclick="openModal('m-description')">
+        <span class="banner-desc-icon">🎗</span>
+        <span class="banner-desc-text">ReviewCash описание</span>
+      </button>
+
+      <!-- Grid Menu Buttons -->
+      <div class="home-grid-menu">
+        <button class="grid-btn btn-cabinet" onclick="showTab('profile')">
+          <span class="grid-btn-icon">💳</span>
+          <span class="grid-btn-title">Кабинет</span>
+        </button>
+        <button class="grid-btn btn-tasks" onclick="showTab('tasks')">
+          <span class="grid-btn-icon">🔨</span>
+          <span class="grid-btn-title">Задания</span>
+          <span class="grid-btn-badge">NEW</span>
+        </button>
+        <button class="grid-btn btn-bonus" onclick="claimDailyBonus()">
+          <span class="grid-btn-icon">🎁</span>
+          <span class="grid-btn-title">Бонус 24ч</span>
+        </button>
+        <button class="grid-btn btn-referral" onclick="showTab('friends')">
+          <span class="grid-btn-icon">🔗</span>
+          <span class="grid-btn-title">Ваша реф ссылка</span>
+        </button>
+        <button class="grid-btn btn-stats" onclick="showTab('statistics')">
+          <span class="grid-btn-icon">📊</span>
+          <span class="grid-btn-title">Статистика</span>
+        </button>
+        <button class="grid-btn btn-games" onclick="showTab('games')">
+          <span class="grid-btn-icon">🎮</span>
+          <span class="grid-btn-title">Игры</span>
+        </button>
+      </div>
+
+      <!-- Fast Info Banner -->
+      <div class="card" style="margin-top:20px; display:flex; justify-content:space-between; align-items:center; padding:15px; border-left:4px solid var(--accent-cyan);">
+        <div>
+          <div style="font-size:12px; color:var(--text-dim);">Ваш баланс:</div>
+          <div id="menu-balance" style="font-size:24px; font-weight:900; color:var(--text); margin-top:4px;">0.00 ₽</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="openModal('m-topup')" style="padding:10px 18px; font-size:12px; border-radius:12px;">Пополнить</button>
+      </div>
+    </section>
+
     <!-- TASKS VIEW -->
-    <section id="view-tasks" class="anim-entry">
+    <section id="view-tasks" class="hidden anim-entry">
       <div class="tasks-hero" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px;">
         <div>
           <div style="display:flex; align-items:center; gap:10px; margin-bottom:5px;" onclick="showTab('profile')">
@@ -434,18 +493,248 @@
         <button id="ops-withdrawal" class="ops-btn" onclick="setOpsFilter('withdrawal')" type="button">Выводы</button>
       </div>
       <div id="history-list" class="card" style="padding:0; overflow:hidden;"></div>
+    <!-- PERSONAL STATISTICS -->
+    <section id="view-statistics" class="hidden anim-entry">
+      <h2 style="font-size:28px; font-weight:900; margin-bottom:20px;">📊 Ваша статистика</h2>
+      
+      <!-- Stats Cards -->
+      <div id="stats-container" style="display:flex; flex-direction:column; gap:15px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="card" style="margin:0; padding:15px; text-align:center; position:relative; overflow:hidden;">
+            <div style="font-size:11px; color:var(--text-dim); margin-bottom:5px;">ВЫПОЛНЕНО ЗАДАНИЙ</div>
+            <div id="stat-completed-count" style="font-size:24px; font-weight:900; color:var(--accent-green);">0</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:5px;" id="stat-earned-rub">Заработано: 0 ₽</div>
+          </div>
+          <div class="card" style="margin:0; padding:15px; text-align:center; position:relative; overflow:hidden;">
+            <div style="font-size:11px; color:var(--text-dim); margin-bottom:5px;">НА ПРОВЕРКЕ</div>
+            <div id="stat-pending-count" style="font-size:24px; font-weight:900; color:var(--accent-cyan);">0</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:5px;" id="stat-rework-count">На доработке: 0</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="card" style="margin:0; padding:15px; text-align:center;">
+            <div style="font-size:11px; color:var(--text-dim); margin-bottom:5px;">ДРУЗЬЯ (РЕФЕРАЛЫ)</div>
+            <div id="stat-ref-count" style="font-size:24px; font-weight:900; color:var(--accent-gold);">0</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:5px;" id="stat-ref-earned">Бонус: 0 ₽</div>
+          </div>
+          <div class="card" style="margin:0; padding:15px; text-align:center;">
+            <div style="font-size:11px; color:var(--text-dim); margin-bottom:5px;">ВЫВЕДЕНО СРЕДСТВ</div>
+            <div id="stat-withdrawn-sum" style="font-size:24px; font-weight:900; color:#ff7a93;">0 ₽</div>
+            <div style="font-size:10px; color:var(--text-dim); margin-top:5px;" id="stat-withdrawn-count">Выплат: 0</div>
+          </div>
+        </div>
+
+        <!-- Level & XP Detailed Card -->
+        <div class="card" style="padding:15px; display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:800; font-size:15px;">Текущий уровень:</span>
+            <span class="level-badge" id="stat-level-badge" style="position:static;">LVL 1</span>
+          </div>
+          <div class="xp-track" style="height:12px; border-radius:6px; overflow:hidden;"><div class="xp-fill" id="stat-xp-fill" style="width:0%;"></div></div>
+          <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim);">
+            <span id="stat-xp-text-cur">0 / 100 XP</span>
+            <span id="stat-xp-text-left">До следующего: 100 XP</span>
+          </div>
+        </div>
+
+        <!-- Advertiser Stats Card -->
+        <div class="card" style="padding:15px; display:flex; flex-direction:column; gap:10px;">
+          <div style="font-weight:800; font-size:14px; color:var(--accent-cyan);">📊 Рекламодатель</div>
+          <div style="display:flex; justify-content:space-between; font-size:13px;">
+            <span>Создано заданий:</span>
+            <b id="stat-created-count">0 шт.</b>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:13px;">
+            <span>Всего потрачено:</span>
+            <b id="stat-created-spent" style="color:var(--accent-gold);">0 ₽</b>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GAMES -->
+    <section id="view-games" class="hidden anim-entry">
+      <h2 style="font-size:28px; font-weight:900; margin-bottom:20px;">🎮 Развлечения и Игры</h2>
+
+      <!-- Games List Menu -->
+      <div id="games-hub" class="games-hub">
+        <!-- Wheel card -->
+        <div class="game-hub-card" onclick="openGame('wheel')">
+          <div class="game-hub-emoji">🎡</div>
+          <div class="game-hub-info">
+            <div class="game-hub-title">Колесо Фортуны</div>
+            <div class="game-hub-desc">Крути бесплатно раз в сутки и выигрывай рубли или XP!</div>
+          </div>
+          <span class="game-hub-arrow">›</span>
+        </div>
+        <!-- Coin flip card -->
+        <div class="game-hub-card" onclick="openGame('coinflip')">
+          <div class="game-hub-emoji">🪙</div>
+          <div class="game-hub-info">
+            <div class="game-hub-title">Орел и Решка</div>
+            <div class="game-hub-desc">Быстрая игра с шансом 50/50. Выбери сторону и удвой ставку!</div>
+          </div>
+          <span class="game-hub-arrow">›</span>
+        </div>
+        <!-- Mines card -->
+        <div class="game-hub-card" onclick="openGame('mines')">
+          <div class="game-hub-emoji">💣</div>
+          <div class="game-hub-info">
+            <div class="game-hub-title">Минное Поле</div>
+            <div class="game-hub-desc">Открывай ячейки с алмазами и забирай выигрыш до взрыва!</div>
+          </div>
+          <span class="game-hub-arrow">›</span>
+        </div>
+      </div>
+
+      <!-- 1. Wheel of Fortune Section -->
+      <div id="game-wheel-sec" class="hidden anim-entry" style="margin-top:10px;">
+        <button class="btn btn-secondary btn-sm" onclick="closeGame()" style="margin-bottom:15px; padding:6px 12px; border-radius:10px;">← Назад в меню</button>
+        <div class="card" style="text-align:center; padding:20px; position:relative; overflow:hidden;">
+          <h3 style="margin:0 0 5px;">🎡 Колесо фортуны</h3>
+          <p style="font-size:12px; color:var(--text-dim); margin-bottom:25px;">Первый прокрут раз в 24 часа бесплатный. Последующие — 5 ₽ за спин.</p>
+          
+          <!-- Wheel spinner graphics wrapper -->
+          <div class="wheel-spinner-container">
+            <div class="wheel-pointer">▼</div>
+            <div class="wheel-outer" id="wheel-disc">
+              <div class="wheel-segment" style="transform: rotate(0deg);"><span class="ws-txt">0.5₽</span></div>
+              <div class="wheel-segment" style="transform: rotate(45deg);"><span class="ws-txt">10 XP</span></div>
+              <div class="wheel-segment" style="transform: rotate(90deg);"><span class="ws-txt">1.0₽</span></div>
+              <div class="wheel-segment" style="transform: rotate(135deg);"><span class="ws-txt">30 XP</span></div>
+              <div class="wheel-segment" style="transform: rotate(180deg);"><span class="ws-txt">2.0₽</span></div>
+              <div class="wheel-segment" style="transform: rotate(225deg);"><span class="ws-txt">100 XP</span></div>
+              <div class="wheel-segment" style="transform: rotate(270deg);"><span class="ws-txt">5.0₽</span></div>
+              <div class="wheel-segment" style="transform: rotate(315deg);"><span class="ws-txt">10₽</span></div>
+            </div>
+            <div class="wheel-center-pin">RC</div>
+          </div>
+
+          <button id="wheel-spin-btn" class="btn btn-main" style="width:100%; margin-top:25px; padding:15px;" onclick="spinWheel()">Крутить колесо (5 ₽)</button>
+        </div>
+      </div>
+
+      <!-- 2. Coin Flip Section -->
+      <div id="game-coinflip-sec" class="hidden anim-entry" style="margin-top:10px;">
+        <button class="btn btn-secondary btn-sm" onclick="closeGame()" style="margin-bottom:15px; padding:6px 12px; border-radius:10px;">← Назад в меню</button>
+        <div class="card" style="padding:20px; text-align:center;">
+          <h3 style="margin:0 0 5px;">🪙 Орел и Решка</h3>
+          <p style="font-size:12px; color:var(--text-dim); margin-bottom:20px;">Шанс 50/50. Выигрыш: ставка х1.95</p>
+
+          <div class="coin-container-wrapper" style="display:flex; justify-content:center; margin:20px 0;">
+            <div class="coin-container" id="coin-element">
+              <div class="coin-side coin-heads">🪙</div>
+              <div class="coin-side coin-tails">👑</div>
+            </div>
+          </div>
+
+          <div style="margin-top:25px;">
+            <label class="input-label" style="text-align:left;">СТАВКА (₽):</label>
+            <input type="number" id="coin-bet-input" value="10" min="1" max="200" style="margin-top:5px; text-align:center; font-size:18px; font-weight:800;">
+            <div class="quick-bets" style="display:flex; justify-content:center; gap:8px; margin-top:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('coin', 5)">5</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('coin', 10)">10</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('coin', 25)">25</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('coin', 50)">50</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('coin', 100)">100</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:20px;">
+            <button id="btn-flip-heads" class="btn btn-main" style="background:#2e78b8; color:#fff;" onclick="playCoinflip('heads')">Орел</button>
+            <button id="btn-flip-tails" class="btn btn-main" style="background:#c24b4b; color:#fff;" onclick="playCoinflip('tails')">Решка</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Mines Section -->
+      <div id="game-mines-sec" class="hidden anim-entry" style="margin-top:10px;">
+        <button class="btn btn-secondary btn-sm" onclick="closeGame()" style="margin-bottom:15px; padding:6px 12px; border-radius:10px;">← Назад в меню</button>
+        <div class="card" style="padding:15px; text-align:center;">
+          <h3 style="margin:0 0 5px;">💣 Минное поле</h3>
+          <p style="font-size:12px; color:var(--text-dim); margin-bottom:15px;">Открывайте ячейки. В каждой — алмаз (множит ставку) или мина (поражение).</p>
+
+          <div style="display:flex; justify-content:space-between; margin-bottom:15px; font-size:13px; background:var(--glass); padding:8px 12px; border-radius:10px;">
+            <span id="mines-status-text" style="font-weight:700;">Настройте игру</span>
+            <span id="mines-mult-text" style="color:var(--accent-gold); font-weight:800; display:none;">x1.00</span>
+          </div>
+
+          <div class="mines-grid" id="mines-board">
+            <!-- 16 cells dynamically generated -->
+          </div>
+
+          <div id="mines-config-area" style="margin-top:15px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; text-align:left;">
+              <div>
+                <label class="input-label">СТАВКА (₽):</label>
+                <input type="number" id="mines-bet-input" value="10" min="1" max="200" style="margin-top:5px;">
+              </div>
+              <div>
+                <label class="input-label">КОЛИЧЕСТВО МИН:</label>
+                <select id="mines-count-input" style="margin-top:5px; height:45px;">
+                  <option value="1">1 мина</option>
+                  <option value="2">2 мины</option>
+                  <option value="3" selected>3 мины</option>
+                  <option value="4">4 мины</option>
+                  <option value="5">5 мин</option>
+                  <option value="6">6 мин</option>
+                  <option value="8">8 мин</option>
+                  <option value="10">10 мин</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="quick-bets" style="display:flex; justify-content:center; gap:8px; margin-top:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('mines', 5)">5</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('mines', 10)">10</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('mines', 25)">25</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('mines', 50)">50</button>
+              <button class="btn btn-secondary btn-sm" onclick="setGameBet('mines', 100)">100</button>
+            </div>
+
+            <button id="mines-start-btn" class="btn btn-main" style="width:100%; margin-top:15px; padding:12px;" onclick="startMinesGame()">Начать игру</button>
+          </div>
+
+          <div id="mines-play-area" class="hidden" style="margin-top:15px;">
+            <button id="mines-cashout-btn" class="btn btn-main" style="width:100%; padding:15px; font-size:16px; background: linear-gradient(135deg,#16a34a,#22c55e); color:#fff;" onclick="cashoutMinesGame()">Забрать выигрыш: 0.00 ₽</button>
+          </div>
+        </div>
+      </div>
     </section>
 
   </div>
 
   <!-- NAVIGATION -->
   <nav class="nav-bar">
-    <div id="tab-tasks" class="nav-item active" onclick="showTab('tasks')"><span>📋</span>Задания</div>
-    <div id="tab-friends" class="nav-item" onclick="showTab('friends')"><span>👥</span>Друзья</div>
-    <div id="tab-top" class="nav-item" onclick="showTab('top')"><span>🏆</span>Топ</div>
-    <div id="tab-help" class="nav-item" onclick="showTab('help')"><span>❓</span>FAQ</div>
-    <div id="tab-profile" class="nav-item" onclick="showTab('profile')"><span>👤</span>Профиль</div>
+    <div id="tab-menu" class="nav-item active" onclick="showTab('menu')"><span>🏠</span>Меню</div>
+    <div id="tab-tasks" class="nav-item" onclick="showTab('tasks')"><span>📋</span>Задания</div>
+    <div id="tab-games" class="nav-item" onclick="showTab('games')"><span>🎮</span>Игры</div>
+    <div id="tab-statistics" class="nav-item" onclick="showTab('statistics')"><span>📊</span>Статы</div>
+    <div id="tab-profile" class="nav-item" onclick="showTab('profile')"><span>👤</span>Кабинет</div>
   </nav>
+
+  <!-- DESCRIPTION MODAL -->
+  <div id="m-description" class="overlay">
+    <div class="modal">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2 style="margin:0; font-size:20px; color:var(--accent-cyan);">🎗 Описание ReviewCash</h2>
+        <div style="opacity:0.5; font-size:20px; cursor:pointer;" onclick="closeModal()">✕</div>
+      </div>
+      <div style="font-size:14px; line-height:1.5; color:var(--text); max-height: 350px; overflow-y: auto; padding-right: 5px;">
+        <p><b>ReviewCash</b> — это современная биржа микрозаданий в Telegram, где рекламодатели могут заказывать активность, а исполнители зарабатывают реальные деньги!</p>
+        <h3 style="color:var(--accent-gold); margin:15px 0 8px; font-size:16px;">Как это работает?</h3>
+        <ol style="padding-left:20px; margin:0 0 15px 0;">
+          <li style="margin-bottom:8px;">Перейдите в раздел <b>«Задания»</b> и выберите любое активное предложение.</li>
+          <li style="margin-bottom:8px;">Внимательно изучите инструкцию и нажмите «Перейти к выполнению».</li>
+          <li style="margin-bottom:8px;">Выполните задание (например, оставьте отзыв или подпишитесь на канал) и пришлите скриншот/ник для проверки.</li>
+          <li style="margin-bottom:8px;">После проверки модератором деньги зачислятся на ваш баланс.</li>
+        </ol>
+        <p style="background:var(--glass); padding:10px; border-radius:10px; font-size:13px; color:var(--text-dim);">💡 Выводите заработанные средства на карты любых банков или по СБП при достижении минимальной суммы.</p>
+      </div>
+      <button class="btn btn-main" style="width:100%; margin-top:20px;" onclick="closeModal()">Понятно</button>
+    </div>
+  </div>
 
   <!-- FAB -->
   <div class="fab-wrap" id="fab-wrap" onclick="openModal('m-create')">

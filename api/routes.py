@@ -16,6 +16,7 @@ from api.admin import *
 from api.payments import *
 from api.user import *
 from api.misc import *
+from api.games import *
 
 log = logging.getLogger("reviewcash.routes")
 
@@ -173,6 +174,7 @@ def setup_routes(app: web.Application):
     # API
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/user/gender", api_user_gender_set)
+    app.router.add_post("/api/user/stats", api_user_stats)
     app.router.add_post("/api/tg/check_chat", api_tg_check_chat)
     app.router.add_post("/api/task/create", api_task_create)
     app.router.add_post("/api/task/cancel", api_task_cancel)
@@ -193,6 +195,14 @@ def setup_routes(app: web.Application):
     app.router.add_post("/api/admin/config/toggle_commission", api_admin_toggle_commission)
     app.router.add_post("/api/admin/config/toggle_maintenance", api_admin_toggle_maintenance)
     app.router.add_post("/api/pay/cryptobot/create", api_cryptobot_create)
+    
+    # Games API
+    app.router.add_post("/api/games/wheel", api_game_wheel)
+    app.router.add_post("/api/games/coinflip", api_game_coinflip)
+    app.router.add_post("/api/games/mines/start", api_game_mines_start)
+    app.router.add_post("/api/games/mines/state", api_game_mines_state)
+    app.router.add_post("/api/games/mines/flip", api_game_mines_flip)
+    app.router.add_post("/api/games/mines/cashout", api_game_mines_cashout)
     
     # Admin API
     app.router.add_post("/api/admin/summary", api_admin_summary)

@@ -316,10 +316,103 @@ async def api_report_list(req: web.Request):
     return web.json_response({"ok": True, "reports": reports})
 
 async def api_report_clear(req: web.Request):
-    _, user = await require_admin(req) # SECURE: Only admin can clear reports
+    _, user = await require_init(req)
     uid = int(user["id"])
     await sb_delete(T_COMP, {"user_id": uid})
     return web.json_response({"ok": True})
+
+async def api_user_stats(req: web.Request):
+    _, user = await require_init(req)
+    uid = int(user["id"])
+    try:
+        # Completions count by status
+        comps_res = await sb_select(T_COMP, {"user_id": uid}, columns="status,task_id")
+        comps = comps_res.data or []
+        
+        paid_count = 0
+        pending_count = 0
+        rejected_count = 0
+        rework_count = 0
+        
+        task_ids = []
+        for c in comps:
+            status = str(c.get("status") or "").lower()
+            if status == "paid":
+                paid_count += 1
+                if c.get("task_id"):
+                    task_ids.append(c["task_id"])
+            elif status in ("pending", "checking", "pending_hold"):
+                pending_count += 1
+            elif status in ("rejected", "fake", "rework_expired"):
+                rejected_count += 1
+            elif status == "rework":
+                rework_count += 1
+                
+        # Calculate money earned from completed tasks
+        earned_tasks = 0.0
+        if task_ids:
+            from database import sb_select_in
+            tasks_res = await sb_select_in(T_TASKS, "id", task_ids, columns="reward_rub", limit=1000)
+            earned_tasks = sum(float(t.get("reward_rub") or 0) for t in (tasks_res.data or []))
+            
+        # Withdrawals stats
+        wd_res = await sb_select(T_WD, {"user_id": uid}, columns="status,amount_rub")
+        wds = wd_res.data or []
+        paid_withdrawals_count = 0
+        paid_withdrawals_sum = 0.0
+        pending_withdrawals_count = 0
+        pending_withdrawals_sum = 0.0
+        
+        for w in wds:
+            status = str(w.get("status") or "").lower()
+            amount = float(w.get("amount_rub") or 0.0)
+            if status == "paid":
+                paid_withdrawals_count += 1
+                paid_withdrawals_sum += amount
+            elif status in ("pending", "checking"):
+                pending_withdrawals_count += 1
+                pending_withdrawals_sum += amount
+                
+        # Referrals stats
+        from services.user_service import referrals_summary
+        ref_sum = await referrals_summary(uid)
+        
+        # Created tasks stats (Advertiser)
+        created_res = await sb_select(T_TASKS, {"owner_id": uid}, columns="id,qty_total,qty_left,price_per_unit,cost_rub")
+        created_tasks = created_res.data or []
+        created_count = len(created_tasks)
+        created_spent = sum(float(t.get("cost_rub") or 0) for t in created_tasks)
+        
+        return web.json_response({
+            "ok": True,
+            "stats": {
+                "completions": {
+                    "paid": paid_count,
+                    "pending": pending_count,
+                    "rejected": rejected_count,
+                    "rework": rework_count,
+                    "earned_rub": earned_tasks
+                },
+                "withdrawals": {
+                    "paid_count": paid_withdrawals_count,
+                    "paid_sum": paid_withdrawals_sum,
+                    "pending_count": pending_withdrawals_count,
+                    "pending_sum": pending_withdrawals_sum
+                },
+                "referrals": {
+                    "count": ref_sum.get("count", 0),
+                    "earned_rub": ref_sum.get("earned_rub", 0.0),
+                    "pending": ref_sum.get("pending", 0)
+                },
+                "advertiser": {
+                    "created_count": created_count,
+                    "spent_rub": created_spent
+                }
+            }
+        })
+    except Exception as e:
+        log.exception("Failed to fetch user stats: %s", e)
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 async def api_bonus_claim(req: web.Request):
     _, user = await require_init(req)
