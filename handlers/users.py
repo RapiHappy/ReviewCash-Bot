@@ -218,7 +218,7 @@ async def bot_stats_handler(message: Message):
 @router.message(F.text == "🎮 Игры")
 async def bot_games_handler(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🎮 Играть в игры", web_app=WebAppInfo(url=get_miniapp_url()))
+        InlineKeyboardButton(text="🎮 Играть в игры", web_app=WebAppInfo(url=get_miniapp_url("games")))
     ]])
     await message.answer("Перейдите в раздел игр по кнопке ниже:", reply_markup=kb)
 

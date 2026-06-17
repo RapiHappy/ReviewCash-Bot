@@ -4293,8 +4293,19 @@ try { state.startParam = (tg.initDataUnsafe && tg.initDataUnsafe.start_param) ? 
     const loader = $("loader");
     if (loader) loader.style.display = "flex";
 
-    // initial tab
-    showTab("menu");
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlTab = urlParams.get("tab") || state.startParam;
+    
+    if (urlTab === "games") {
+      showTab("games");
+    } else if (urlTab === "profile") {
+      showTab("profile");
+    } else if (urlTab === "friends") {
+      showTab("friends");
+    } else {
+      showTab("tasks"); // default
+    }
+
     setFilter("all");
     setPlatformFilter(state.platformFilter);
     recalc();
