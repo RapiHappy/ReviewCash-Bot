@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import signal
+
+log = logging.getLogger("reviewcash.main")
 import json
 import uuid
 import sys
@@ -139,7 +141,8 @@ async def on_startup(app: web.Application):
     if not db_ok:
         logging.error("CRITICAL: Database ping failed on startup!")
     
-    if not await check_redis():
+    redis_ok, _ = await check_redis()
+    if not redis_ok:
         logging.critical("CRITICAL: Redis check failed! Bot requires Redis for locking and rate limiting.")
         raise RuntimeError("Redis is unavailable.")
     
