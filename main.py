@@ -102,10 +102,10 @@ def validate_envs():
         print(f"CRITICAL: Missing environment variables: {', '.join(missing)}")
         sys.exit(1)
 
-_bg_tasks = []
-
-async def on_startup():
-    global _bg_tasks
+async def on_startup(app: web.Application):
+    global _log_listener
+    if not _log_listener:
+        _log_listener = setup_logging()
     
     # 1. ENV Validation
     validate_envs()
@@ -149,28 +149,36 @@ async def on_startup():
     except Exception as e:
         logging.exception(f"Bot identity check failed: {e}")
         
-    _bg_tasks = start_background_workers(bot)
+    app["bg_tasks"] = start_background_workers(bot)
     
-    # 4. Webhook setup with secret token
+    # 4. Webhook setup / polling setup
     hook_base = SERVER_BASE_URL or BASE_URL
     if USE_WEBHOOK and hook_base:
         wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
         # Use BOT_TOKEN as base for secret token if no separate secret provided
-        # In a real enterprise app, this should be a unique random string
         secret_token = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()[:32]
         await bot.set_webhook(wh_url, secret_token=secret_token)
         logging.info(f"Webhook set to {wh_url} (with secret token)")
     else:
         await bot.delete_webhook(drop_pending_updates=True)
+        app["polling_task"] = asyncio.create_task(dp.start_polling(bot))
+        logging.info("Polling started")
 
-async def on_shutdown():
-    global _bg_tasks
+async def on_cleanup(app: web.Application):
     logging.info("Starting graceful shutdown...")
     
-    if _bg_tasks:
-        for task in _bg_tasks: task.cancel()
-        await asyncio.gather(*_bg_tasks, return_exceptions=True)
-        _bg_tasks.clear()
+    bg_tasks = app.get("bg_tasks")
+    if bg_tasks:
+        for task in bg_tasks: task.cancel()
+        await asyncio.gather(*bg_tasks, return_exceptions=True)
+    
+    polling_task = app.get("polling_task")
+    if polling_task:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
     
     try:
         from crypto_service import crypto
@@ -185,6 +193,7 @@ async def on_shutdown():
     if SENTRY_DSN:
         sentry_sdk.flush()
     
+    global _log_listener
     if _log_listener:
         try:
             _log_listener.stop()
@@ -228,43 +237,17 @@ async def access_log_mw(request, handler):
 
 _log_listener = None
 
-async def main():
-    global _log_listener
-    _log_listener = setup_logging()
-    
-    try: await on_startup()
-    except Exception as e:
-        logging.critical(f"Startup failed: {e}")
-        sys.exit(1)
-
-    app = web.Application(middlewares=[request_id_mw, access_log_mw, api_error_middleware, cors_middleware, no_cache_mw, security_headers_mw])
-    setup_routes(app)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info(f"API server started on port {PORT}")
-
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
-
-    polling_task = None
-    if not USE_WEBHOOK:
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        
-    await stop_event.wait()
-    
-    if polling_task:
-        polling_task.cancel()
-        try: await polling_task
-        except asyncio.CancelledError: pass
-
-    await on_shutdown()
-    await runner.cleanup()
+app = web.Application(middlewares=[
+    request_id_mw,
+    access_log_mw,
+    api_error_middleware,
+    cors_middleware,
+    no_cache_mw,
+    security_headers_mw
+])
+setup_routes(app)
+app.on_startup.append(on_startup)
+app.on_cleanup.append(on_cleanup)
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit): pass
+    web.run_app(app, host="0.0.0.0", port=PORT)
