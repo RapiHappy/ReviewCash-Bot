@@ -1233,9 +1233,13 @@ async function syncAll() {
     const pic = u.photo_url || "";
     const ha = $("header-avatar");
     const hn = $("header-name");
+    const na = $("nav-avatar");
     if (hn) hn.textContent = name;
     if (ha) {
       loadAvatarFast(ha, pic, name);
+    }
+    if (na) {
+      loadAvatarFast(na, pic, name);
     }
   }
 
