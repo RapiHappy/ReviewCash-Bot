@@ -233,7 +233,7 @@ function tgAlert(msg, kind = "info", title = "") {
   }
 
 
-  function loadAvatarFast(imgEl, url, displayName) {
+  function loadAvatarFast(imgEl, url, displayName, userId = null) {
     if (!imgEl) return;
     const initials = initialsFromName(displayName);
     const placeholder = svgInitialAvatarDataUrl(initials);
@@ -243,18 +243,28 @@ function tgAlert(msg, kind = "info", title = "") {
     imgEl.src = placeholder;
     imgEl.style.opacity = "0.96";
 
-    if (!url) return;
+    let finalUrl = url;
+    if (!finalUrl && userId) {
+        // Fallback to proxy
+        finalUrl = state.api + "/api/avatar/" + userId;
+    }
+
+    if (!finalUrl) return;
 
     // Load real image
-    if (isLowPerf) {
-      imgEl.src = url;
+    if (isLowPerf && finalUrl === url) {
+      // Direct load if low perf and it's a direct telegram url
+      imgEl.src = finalUrl;
       imgEl.style.opacity = "1";
     } else {
       const pre = new Image();
-      pre.src = url;
+      pre.src = finalUrl;
       pre.onload = () => {
-        imgEl.src = url;
+        imgEl.src = finalUrl;
         imgEl.style.opacity = "1";
+      };
+      pre.onerror = () => {
+        // failed to load, keep placeholder
       };
     }
   }
@@ -1236,10 +1246,10 @@ async function syncAll() {
     const na = $("nav-avatar");
     if (hn) hn.textContent = name;
     if (ha) {
-      loadAvatarFast(ha, pic, name);
+      loadAvatarFast(ha, pic, name, u.user_id);
     }
     if (na) {
-      loadAvatarFast(na, pic, name);
+      loadAvatarFast(na, pic, name, u.user_id);
     }
   }
 
@@ -1272,7 +1282,7 @@ async function syncAll() {
     const pic = u.photo_url || "";
     const upic = $("u-pic");
     if (upic) {
-      loadAvatarFast(upic, pic, name);
+      loadAvatarFast(upic, pic, name, u.user_id);
     }
 
     if ($("u-name")) $("u-name").textContent = name;

@@ -142,6 +142,29 @@ async def cryptobot_webhook(req: web.Request):
         log.exception("cryptobot webhook error: %s", e)
         return web.Response(text="ok", status=200)
 
+async def api_avatar(req: web.Request):
+    uid_str = req.match_info.get("user_id", "")
+    if not uid_str.isdigit():
+        return web.Response(status=404)
+    uid = int(uid_str)
+    from services.telegram_utils import bot
+    if not bot:
+        return web.Response(status=404)
+    try:
+        photos = await bot.get_user_profile_photos(uid, limit=1)
+        if not photos or photos.total_count == 0:
+            return web.Response(status=404)
+        file_id = photos.photos[0][0].file_id
+        file_info = await bot.get_file(file_id)
+        import io
+        result = io.BytesIO()
+        await bot.download_file(file_info.file_path, destination=result)
+        result.seek(0)
+        return web.Response(body=result.read(), content_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    except Exception as e:
+        log.warning(f"Failed to fetch avatar for {uid}: {e}")
+        return web.Response(status=404)
+
 def setup_routes(app: web.Application):
     app.router.add_get("/", health)
     app.router.add_get("/api/health", health)
@@ -172,6 +195,7 @@ def setup_routes(app: web.Application):
     app.router.add_post(CRYPTO_WEBHOOK_PATH, cryptobot_webhook)
 
     # API
+    app.router.add_get("/api/avatar/{user_id}", api_avatar)
     app.router.add_post("/api/sync", api_sync)
     app.router.add_post("/api/user/gender", api_user_gender_set)
     app.router.add_post("/api/user/stats", api_user_stats)
