@@ -133,6 +133,40 @@ async def sb_count(
         log.exception(f"sb_count failed table={table}: {e}")
         return 0
 
+async def sb_distinct_count(
+    table: str,
+    column: str,
+    match: dict | None = None,
+    batch: int = 1000,
+    max_rows: int = 100000,
+):
+    def _f():
+        seen = set()
+        start = 0
+        while True:
+            q = sb.table(table).select(column)
+            if match:
+                for k, v in match.items():
+                    q = q.eq(k, v)
+            q = q.order(column, desc=False).range(start, start + batch - 1)
+            res = q.execute()
+            rows = res.data or []
+            if not rows:
+                break
+            for row in rows:
+                val = row.get(column)
+                if val is not None and val != "":
+                    seen.add(val)
+            start += len(rows)
+            if len(rows) < batch or start >= max_rows:
+                break
+        return len(seen)
+    try:
+        return await sb_exec(_f)
+    except Exception as e:
+        log.warning(f"sb_distinct_count failed table={table} column={column}: {e}")
+        return 0
+
 async def sb_rpc(fn_name: str, params: dict):
     def _f():
         return sb.rpc(fn_name, params).execute()
