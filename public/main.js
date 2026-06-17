@@ -713,7 +713,10 @@ function tgAlert(msg, kind = "info", title = "") {
   }
 
   function setActiveTab(tabId) {
-    qsa(".nav-item", qs(".nav-bar")).forEach(el => el.classList.remove("active"));
+    const navBar = qs(".nav-bar");
+    if (navBar) {
+      qsa(".nav-item", navBar).forEach(el => el.classList.remove("active"));
+    }
     const el = $("tab-" + tabId);
     if (el) el.classList.add("active");
   }
@@ -738,6 +741,19 @@ function tgAlert(msg, kind = "info", title = "") {
     }
     try { setActiveTab(id); } catch (e) {}
     try { toggleFab(id === "tasks"); } catch (e) {}
+
+    // Control Telegram BackButton
+    try {
+      if (tg && tg.BackButton) {
+        if (id === "menu") {
+          tg.BackButton.hide();
+        } else {
+          tg.BackButton.show();
+        }
+      }
+    } catch (e) {
+      console.warn("Telegram BackButton error:", e);
+    }
   }
 
     function toggleFab(show) {
@@ -4219,6 +4235,11 @@ function extractTgWebAppDataFromUrl() {
       try {
         tg.ready();
         tg.expand();
+        if (tg.BackButton) {
+          tg.BackButton.onClick(() => {
+            showTab("menu");
+          });
+        }
       } catch (e) {}
       state.initData = (tg && typeof tg.initData === 'string' && tg.initData) ? tg.initData : '';
 

@@ -7,7 +7,14 @@ from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE
 log = logging.getLogger("reviewcash.db")
 
 # Supabase client initialization
-sb: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+sb: Client = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE:
+    try:
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE)
+    except Exception as e:
+        log.error(f"Failed to initialize Supabase client: {e}")
+else:
+    log.warning("SUPABASE_URL or SUPABASE_SERVICE_ROLE is not set. Database client not initialized.")
 
 async def sb_retry(fn, retries=3, delay=1.0, backoff=2.0):
     """Retry logic for Supabase operations with exponential backoff and jitter."""

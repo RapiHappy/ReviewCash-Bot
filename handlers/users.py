@@ -60,60 +60,67 @@ RATE_LIMIT_STATE: dict[tuple[int, str], dict] = {}
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    uid = message.from_user.id
-    args = (message.text or "").split(maxsplit=1)
-    ref = None
-    start_arg = ""
-    if len(args) == 2:
-        start_arg = str(args[1] or "").strip()
-    if start_arg.isdigit():
-        ref = int(start_arg)
-    else:
-        m_ref = re.match(r"(?i)^ref[_:\-]?(\d+)$", start_arg)
-        if m_ref:
-            ref = int(m_ref.group(1))
-
-    await ensure_user(message.from_user.model_dump(), referrer_id=ref)
-
-    sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
-    if not sub_ok:
-        channel_name = (sub_chat or 'канал').lstrip('@')
-        await message.answer(
-            f"👋 Привет\\! Рады тебя видеть\\!\n\n"
-            f"📢 Для начала подпишись на наш канал с новостями *@{channel_name}*\n\n"
-            f"Там мы публикуем:\n"
-            f"💎 Новые возможности заработка\n"
-            f"📊 Обновления сервиса\n"
-            f"🎁 Бонусы и акции\n\n"
-            f"После подписки нажми *«Проверить подписку»* ✅",
-            reply_markup=required_subscribe_kb(),
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        return
-
     try:
-        await tg_evt_touch(uid, "bot_start")
-    except Exception:
-        pass
+        uid = message.from_user.id
+        args = (message.text or "").split(maxsplit=1)
+        ref = None
+        start_arg = ""
+        if len(args) == 2:
+            start_arg = str(args[1] or "").strip()
+        if start_arg.isdigit():
+            ref = int(start_arg)
+        else:
+            m_ref = re.match(r"(?i)^ref[_:\-]?(\d+)$", start_arg)
+            if m_ref:
+                ref = int(m_ref.group(1))
 
-    user_gender = await tg_get_gender(uid)
-    if not user_gender:
-        gender_kb = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="👨 Мужской"), KeyboardButton(text="👩 Женский")]],
-            resize_keyboard=True,
-            one_time_keyboard=True,
-            selective=True,
-        )
+        await ensure_user(message.from_user.model_dump(), referrer_id=ref)
+
+        sub_ok, sub_chat, sub_msg = await tg_check_required_subscription(uid)
+        if not sub_ok:
+            channel_name = (sub_chat or 'канал').lstrip('@')
+            await message.answer(
+                f"👋 Привет\\! Рады тебя видеть\\!\n\n"
+                f"📢 Для начала подпишись на наш канал с новостями *@{channel_name}*\n\n"
+                f"Там мы публикуем:\n"
+                f"💎 Новые возможности заработка\n"
+                f"📊 Обновления сервиса\n"
+                f"🎁 Бонусы и акции\n\n"
+                f"После подписки нажми *«Проверить подписку»* ✅",
+                reply_markup=required_subscribe_kb(),
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            return
+
+        try:
+            await tg_evt_touch(uid, "bot_start")
+        except Exception:
+            pass
+
+        user_gender = await tg_get_gender(uid)
+        if not user_gender:
+            gender_kb = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="👨 Мужской"), KeyboardButton(text="👩 Женский")]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+                selective=True,
+            )
+            await message.answer(
+                "👤 *Последний шаг — выбери пол:*\n\n"
+                r"Это нужно, чтобы подбирать для тебя подходящие задания\. "
+                r"Некоторые заказчики ищут исполнителей определённого пола\.",
+                reply_markup=gender_kb,
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            return
+
+        await send_main_welcome(message, uid)
+    except Exception as e:
+        log.exception(f"Error in cmd_start handler: {e}")
         await message.answer(
-            "👤 *Последний шаг — выбери пол:*\n\n"
-            r"Это нужно, чтобы подбирать для тебя подходящие задания\. "
-            r"Некоторые заказчики ищут исполнителей определённого пола\.",
-            reply_markup=gender_kb,
-            parse_mode=ParseMode.MARKDOWN_V2,
+            "⚠️ Произошла временная ошибка при запуске бота. "
+            "Возможно, база данных временно недоступна. Пожалуйста, попробуйте позже."
         )
-        return
-
-    await send_main_welcome(message, uid)
 
 @router.message(F.text.in_(["👨 Мужской", "👩 Женский"]))
 async def handle_gender_pick(message: Message):

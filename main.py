@@ -112,6 +112,21 @@ async def on_startup(app: web.Application):
     # 1. ENV Validation
     validate_envs()
     
+    # DNS Diagnostics
+    from urllib.parse import urlparse
+    import socket
+    try:
+        parsed = urlparse(SUPABASE_URL)
+        hostname = parsed.hostname
+        if hostname:
+            logging.info(f"DNS DIAGNOSTICS: Resolving hostname '{hostname}' for SUPABASE_URL...")
+            ip = socket.gethostbyname(hostname)
+            logging.info(f"DNS DIAGNOSTICS: Hostname '{hostname}' successfully resolved to '{ip}'")
+        else:
+            logging.error(f"DNS DIAGNOSTICS: Could not extract hostname from SUPABASE_URL: '{SUPABASE_URL}'")
+    except Exception as e:
+        logging.error(f"DNS DIAGNOSTICS: Failed to resolve SUPABASE_URL hostname: {e}")
+    
     # 2. Sentry Init
     if SENTRY_DSN:
         sentry_sdk.init(
