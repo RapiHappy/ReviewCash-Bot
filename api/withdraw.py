@@ -3,7 +3,7 @@ import logging
 import asyncio
 from aiohttp import web
 
-from config import T_WD, T_COMP, FIRST_WITHDRAW_MIN_PAID_TASKS, FIRST_WITHDRAW_DONE_KEY, ADMIN_IDS
+from config import T_WD
 from database import sb, sb_select
 from services.balances import get_balance
 from services.limits import get_withdraw_ban_until, get_limit_until
