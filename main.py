@@ -20,7 +20,7 @@ from config import (
     USE_WEBHOOK, PORT, ADMIN_IDS, MAIN_ADMIN_ID, SENTRY_DSN, ENVIRONMENT, APP_BUILD,
     SUPABASE_URL, SUPABASE_SERVICE_ROLE, REDIS_URL
 )
-from services.telegram_utils import bot, dp, setup_menu_button
+from services.telegram_utils import bot, dp, setup_menu_button, tg_retry
 from api.middleware import MaintenanceMiddleware, cors_middleware, no_cache_mw, api_error_middleware, security_headers_mw
 from api.routes import setup_routes
 from services.background_workers import start_background_workers
@@ -134,7 +134,6 @@ async def on_startup(app: web.Application):
 
     dp.update.outer_middleware(ThrottlingMiddleware())
     dp.update.outer_middleware(MaintenanceMiddleware())
-    await setup_menu_button(bot)
     
     # 3. Multi-service health check
     db_ok, _ = await ping()
@@ -145,27 +144,34 @@ async def on_startup(app: web.Application):
     if not redis_ok:
         logging.critical("CRITICAL: Redis check failed! Bot requires Redis for locking and rate limiting.")
         raise RuntimeError("Redis is unavailable.")
-    
-    try:
-        me = await bot.get_me()
-        logging.info(f"Bot identity: @{me.username}")
-    except Exception as e:
-        logging.exception(f"Bot identity check failed: {e}")
         
     app["bg_tasks"] = start_background_workers(bot)
     
-    # 4. Webhook setup / polling setup
-    hook_base = SERVER_BASE_URL or BASE_URL
-    if USE_WEBHOOK and hook_base:
-        wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
-        # Use BOT_TOKEN as base for secret token if no separate secret provided
-        secret_token = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()[:32]
-        await bot.set_webhook(wh_url, secret_token=secret_token)
-        logging.info(f"Webhook set to {wh_url} (with secret token)")
-    else:
-        await bot.delete_webhook(drop_pending_updates=True)
-        app["polling_task"] = asyncio.create_task(dp.start_polling(bot))
-        logging.info("Polling started")
+    # 4. Webhook setup / polling setup / menu button (Non-blocking background task)
+    async def _tg_setup():
+        try:
+            try:
+                me = await tg_retry(bot.get_me())
+                logging.info(f"Bot identity: @{me.username}")
+            except Exception as e:
+                logging.exception(f"Bot identity check failed: {e}")
+
+            await setup_menu_button(bot)
+
+            hook_base = SERVER_BASE_URL or BASE_URL
+            if USE_WEBHOOK and hook_base:
+                wh_url = hook_base.rstrip("/") + WEBHOOK_PATH
+                secret_token = hashlib.sha256(BOT_TOKEN.encode()).hexdigest()[:32]
+                await tg_retry(bot.set_webhook(wh_url, secret_token=secret_token))
+                logging.info(f"Webhook set to {wh_url} (with secret token)")
+            else:
+                await tg_retry(bot.delete_webhook(drop_pending_updates=True))
+                app["polling_task"] = asyncio.create_task(dp.start_polling(bot))
+                logging.info("Polling started")
+        except Exception as e:
+            logging.exception(f"Background Telegram setup failed: {e}")
+
+    asyncio.create_task(_tg_setup())
 
 async def on_cleanup(app: web.Application):
     logging.info("Starting graceful shutdown...")
